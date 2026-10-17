@@ -1,0 +1,69 @@
+node_modules
+.next
+.env
+.env.local
+*.tsbuildinfo
+gui-test-screenshots
+.eslintcache
+
+.dev-log.txt
+.dev-err.txt
+
+# Rác sinh ra do lệnh redirect gõ nhầm (`curl -w` / `echo > -w`)
+-w
+
+# Thư mục làm việc của agent (ghi chú, memory) — không phải mã nguồn
+.workbuddy-ai/
+.agents/
+.opencode/
+opencode.json
+
+# State runtime của teamwork engine (worktree cách ly, audit)
+.teamwork/
+# CHỈ thư mục tài liệu teamwork sinh ra ở gốc repo (REQUEST/PLAN/PROGRESS.md).
+# Phải neo bằng dấu "/" đầu dòng: mẫu "teamwork/" không neo sẽ khớp mọi thư mục
+# tên "teamwork" ở mọi cấp — kể cả "lib/teamwork/", khiến TOÀN BỘ mã nguồn
+# multi-agent engine bị git bỏ qua và không bao giờ được commit.
+/teamwork/
+
+# Profile trình duyệt sinh ra khi test launcher desktop
+temp-test-profile/
+
+# Session CLI sinh lúc chạy (lịch sử hội thoại máy này, ghi bởi saveCliSession).
+# Chỉ .vyen/recipes và .vyen/skills là tài nguyên được commit — neo "/" đầu dòng
+# để không vô tình bỏ qua cả thư mục .vyen ở nơi khác.
+/.vyen/sessions/
+
+# Thư mục tạm do tests/sast.test.ts sinh ra (dọn ở finally, đây là lưới an toàn)
+tmp-sast-test-dir/
+# File tạm do tests/web-bridge.test.ts và tests/interactive-agent.test.ts sinh ra
+# (dọn ở finally, đây là lưới an toàn khi môi trường chặn xoá)
+tmp-test-*
+
+# Scratch ở gốc repo: script probe CDP, ảnh chụp màn hình, JSON kết quả debug.
+# Neo "/" đầu dòng như các mục trên — không neo sẽ khớp mọi thư mục tên "tmp"
+# ở mọi cấp, kể cả "components/tmp/".
+/tmp-*.mjs
+/tmp-*.png
+/tmp-*.json
+/tmp-*.css
+
+# Bản sao file đã xoá, giữ lại để khôi phục khi workspace chưa phải git repo.
+# Chỉ xoá thư mục này sau khi đã commit hoặc xác nhận không cần.
+/.audit-backup-*/
+
+# File backup cùng dạng — .bak không được commit, chỉ là rác phiên trước.
+*.bak
+
+# Hai cây backup này chứa .tsx/.css/.test.ts THẬT (không phải .bak) nên mọi
+# pattern ở trên không bắt được. Tất cả file trong đó đã đối chiếu và đều
+# cũ hơn bản đang làm — chỉ là rác phiên trước.
+/.backup/
+/.pre-ui-fix-backup/
+
+# Anchor log của tamper-chain audit: trạng thái runtime của máy đang chạy,
+# không phải tài nguyên. (/ .vyen/sessions/ đã bị chặn ở trên.)
+/.vyen/audit/
+
+# Log npm tràn ra ở gốc repo lúc cài đặt.
+_install.out

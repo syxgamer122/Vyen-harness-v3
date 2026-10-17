@@ -1,0 +1,155 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { Sidebar } from '@/components/sidebar';
+import ChatInterface from '@/components/chat-interface';
+import { ChatErrorBoundary } from '@/components/chat-error-boundary';
+import { useAppStore } from '@/lib/store';
+
+/**
+ * Settings tách khỏi bundle khởi động: đây là màn hình LỚN NHẤT (~40KB nguồn,
+ * kéo theo provider-manager + prompt library + usage-stats) nhưng chỉ mở khi
+ * người dùng bấm vào. Trước đây nó nằm trong chunk chính nên ai cũng phải tải
+ * dù không bao giờ mở.
+ *
+ * `ssr: false` là đúng ngữ nghĩa ở đây: toàn bộ nội dung đọc từ IndexedDB nên
+ * không render được phía server; hơn nữa page này đã nằm sau cổng `isMounted`.
+ */
+const SettingsDialog = dynamic(
+  () => import('@/components/settings-dialog').then((m) => m.SettingsDialog),
+  { ssr: false },
+);
+
+export default function Home() {
+  const [isMounted, setIsMounted] = useState(false);
+  const isSettingsOpen = useAppStore((s) => s.isSettingsOpen);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  const setCurrentChatId = useAppStore((s) => s.setCurrentChatId);
+  const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
+  const isSidebarCollapsed = useAppStore((s) => s.isSidebarCollapsed);
+  const animations = useAppStore((s) => s.settings.perf.animations);
+
+  /* Preload chunk Cài đặt lúc idle: lần bấm Cài đặt đầu tiên không còn đóng
+     băng main thread để parse chunk (CDP baseline: longtask đỉnh 353ms).
+     Chỉ tải, không pre-mount nội dung. */
+  useEffect(() => {
+    const load = () => { void import('@/components/settings-dialog'); };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(load, { timeout: 4000 });
+    } else {
+      const h = window.setTimeout(load, 2500);
+      return () => window.clearTimeout(h);
+    }
+  }, []);
+
+  /* P0.6: Yêu cầu quyền lưu trữ bền vững (persistent storage) cho IndexedDB để tránh bị trình duyệt tự dọn dẹp */
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+      navigator.storage.persist().catch(() => {});
+    }
+  }, []);
+
+  /* Trạng thái mới nhất cho handler phím tắt. Đọc qua ref để listener KHÔNG
+     phải gắn/gỡ lại mỗi lần thu gọn sidebar hay mở settings — trước đây
+     effect phụ thuộc `isSidebarCollapsed` + `isSettingsOpen` nên cứ đổi là
+     removeEventListener + addEventListener một vòng. */
+  const latest = useRef({ isSettingsOpen, isSidebarCollapsed });
+  latest.current = { isSettingsOpen, isSidebarCollapsed };
+
+  useEffect(() => {
+    setIsMounted(true);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      // Chat mới: Ctrl/Cmd+Alt+N. Ctrl+N và Ctrl+Shift+O là tổ hợp browser
+      // reserved (cửa sổ mới / bookmark manager) — preventDefault không chặn
+      // được nên phím tắt cũ không bao giờ chạy.
+      if (mod && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setCurrentChatId(null);
+      }
+      // Ctrl+\ — thu gọn/mở rộng sidebar trên desktop.
+      if (mod && e.key === '\\') {
+        e.preventDefault();
+        setSidebarCollapsed(!latest.current.isSidebarCollapsed);
+      }
+      // Ctrl+, — mở/đóng Cài đặt (Studio Settings).
+      if (mod && e.key === ',') {
+        e.preventDefault();
+        setSettingsOpen(!latest.current.isSettingsOpen);
+      }
+      if (e.key === 'Escape' && latest.current.isSettingsOpen) setSettingsOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // Các setter của Zustand ổn định — effect này chạy đúng MỘT lần.
+  }, [setCurrentChatId, setSettingsOpen, setSidebarCollapsed]);
+
+  /* Cờ tắt hiệu ứng — CSS trong globals.css đọc qua html[data-animations]. */
+  useEffect(() => {
+    const root = document.documentElement;
+    if (animations) root.removeAttribute('data-animations');
+    else root.setAttribute('data-animations', 'off');
+  }, [animations]);
+
+  useEffect(() => {
+    document.body.style.overflow = isSettingsOpen ? 'hidden' : 'unset';
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [isSettingsOpen]);
+
+  /* Liên kết share recipe (?recipe=deflate-base64url): decode rồi mở panel
+     ở chế độ XEM TRƯỚC — không tự chạy; user phải bấm Run sau khi đọc. Param
+     bị xoá khỏi URL ngay để refresh không decode lại lần nữa. */
+  useEffect(() => {
+    if (!isMounted) return;
+    const param = new URLSearchParams(window.location.search).get('recipe');
+    if (!param) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    void (async () => {
+      const { decodeRecipeParam } = await import('@/lib/recipes/share');
+      const decoded = decodeRecipeParam(param);
+      const { useRecipeUiStore } = await import('@/lib/recipes/run-store');
+      if (decoded.ok && decoded.recipe) {
+        useRecipeUiStore.getState().select({ recipe: decoded.recipe, origin: 'link' });
+      } else {
+        useRecipeUiStore.getState().select(null);
+      }
+      useRecipeUiStore.getState().openPanel();
+    })();
+  }, [isMounted]);
+
+  /* Mở session theo param URL (?chatId=... hoặc ?session=...) — phục vụ "Mở cửa sổ mới" (P2-8) */
+  useEffect(() => {
+    if (!isMounted) return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetChatId = urlParams.get('chatId') || urlParams.get('session');
+    if (targetChatId) {
+      setCurrentChatId(targetChatId);
+    }
+  }, [isMounted, setCurrentChatId]);
+
+  if (!isMounted) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-dvh items-center justify-center bg-surface text-sm text-tertiary"
+      >
+        Đang mở không gian làm việc…
+      </div>
+    );
+  }
+
+  return (
+    <main className="flex h-dvh overflow-hidden">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0 h-full">
+        <ChatErrorBoundary>
+          <ChatInterface />
+        </ChatErrorBoundary>
+      </div>
+
+      {isSettingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+    </main>
+  );
+}

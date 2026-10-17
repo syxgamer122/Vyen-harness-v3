@@ -1,0 +1,568 @@
+/**
+ * Backend web dùng chung cho server: /api/web route VÀ các agentic tools
+ * (web_search/web_fetch trong /api/chat). Tách khỏi route để tool của model
+ * gọi được cùng một đường ống đã qua kiểm soát SSRF/timeout/trần byte.
+ *
+ * Engine CÓ API key (SearXNG/TinyFish/Brave/Tavily) đã gỡ — dự án BYOK 100%,
+ * không giữ dịch vụ cần key của bên thứ ba. Chỉ còn engine công khai.
+ *
+ * Toán nhẹ (fetch + regex), không DOM parser — cùng triết lý với lib/web-extract.
+ */
+
+import { assertFetchableUrl, assertFetchableIp } from '@/lib/web-url-guard';
+import {
+  capText,
+  extractReadableText,
+  parseDdgHtml,
+  parseDdgLite,
+  parseYahoo,
+  unwrapDdgRedirect,
+} from '@/lib/web-extract';
+import { WEB_LIMITS } from '@/lib/web-context';
+
+export class WebOpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string,
+    /** Status THẬT của upstream khi mình bọc nó vào lỗi trung gian (vd 502 bọc 404). */
+    public readonly upstreamStatus?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** Trần byte khi tải HTML trang/web engine — hơn thế chắc không phải nội dung chữ đáng đọc. */
+const MAX_PAGE_BYTES = 1_500_000;
+const MAX_ENGINE_BYTES = 512 * 1024;
+export const FETCH_TIMEOUT_MS = 12_000;
+export const SEARCH_TIMEOUT_MS = 8_000;
+/** Số hop redirect tối đa khi tự đi tay (để kiểm tra SSRF TỪNG hop). */
+const MAX_REDIRECTS = 4;
+
+/**
+ * PERF: Cache DNS lookup function để tránh dynamic import mỗi lần fetch.
+ * Edge runtime không có node:dns → cachedDnsLookup = null, check một lần.
+ */
+let cachedDnsLookup: ((hostname: string) => Promise<{ address: string }>) | null | undefined =
+  undefined;
+async function getDnsLookup() {
+  if (cachedDnsLookup !== undefined) return cachedDnsLookup;
+  try {
+    const dns = await import('node:dns/promises');
+    cachedDnsLookup = dns.lookup;
+  } catch {
+    cachedDnsLookup = null; // Edge runtime hoặc môi trường không hỗ trợ
+  }
+  return cachedDnsLookup;
+}
+/** Trần ký tự nội dung mỗi trang đưa vào context (~2k token). */
+const MAX_TEXT_CHARS = WEB_LIMITS.pageContentChars;
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+/**
+ * Nhóm User-Agent xoay vòng cho engine scrape (kỹ thuật port từ Firecrawl,
+ * `apps/api/src/search/v2/ddgsearch.ts`). Một UA cố định cho MỌI request là
+ * dấu hiệu bot rõ ràng nhất.
+ *
+ * THỰC TẾ ĐO ĐƯỢC: kỹ thuật này giúp request ĐẦU thành công (200 + 10 kết
+ * quả) nơi cách gọi cũ chỉ nhận 202 rỗng — nhưng KHÔNG cứu được khi IP đã bị
+ * DuckDuckGo gắn cờ; lúc đó mọi biến thể UA/URL/method đều trả 202. Vì vậy
+ * đây chỉ là cải thiện tỷ lệ thành công, không phải giải pháp thay cho engine
+ * có API key.
+ */
+const SEARCH_USER_AGENTS: readonly string[] = Object.freeze([
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+]);
+
+function pickSearchUserAgent(): string {
+  return SEARCH_USER_AGENTS[Math.floor(Math.random() * SEARCH_USER_AGENTS.length)];
+}
+
+/** Header giống trình duyệt thật cho engine scrape (Firecrawl dùng bộ này). */
+function browserLikeHeaders(userAgent: string): Record<string, string> {
+  return {
+    'User-Agent': userAgent,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Upgrade-Insecure-Requests': '1',
+  };
+}
+
+/**
+ * DuckDuckGo trả HTTP 202 kèm trang rỗng, hoặc 200 kèm `.anomaly-modal__modal`,
+ * khi coi client là bot. Cả hai PHẢI được coi là "bị chặn" chứ không phải
+ * "không có kết quả" — nhầm lẫn này khiến log cũ báo "trang rỗng" và che mất
+ * nguyên nhân thật.
+ */
+export function isDdgBlockedResponse(status: number, html: string): boolean {
+  if (status === 202) return true;
+  return /anomaly-modal__modal|anomaly_modal|Unfortunately, bots use DuckDuckGo too/i.test(
+    html.slice(0, 4000),
+  );
+}
+
+/**
+ * Đọc response body với trần byte — dừng sớm và cancel stream khi vượt.
+ * Trang HTML có thể nặng hàng chục MB; đọc cả thì Node tốn RAM oan.
+ */
+async function readTextCapped(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8', { stream: true } as TextDecoderOptions);
+  let text = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if ((text += decoder.decode(value, { stream: true })).length > maxBytes) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return text.slice(0, maxBytes);
+}
+
+/**
+ * Fetch URL public với kiểm soát SSRF TỪNG hop redirect: dùng `redirect:
+ * 'manual'` rồi tự resolve Location — nếu để `follow`, request tới host private
+ * trong hop redirect ĐÃ xảy ra trước khi ta kịp nhìn URL cuối.
+ *
+ * `trusted = true`: bỏ kiểm SSRF cho endpoint do NGƯỜI VẬN HÀNH cấu hình —
+ * chặn theo guard sẽ vô lý vì chính owner đã chọn địa chỉ đó. Input người
+ * dùng vẫn KHÔNG BAO GIỜ được hưởng cờ này.
+ */
+export async function guardedFetch(
+  rawUrl: string,
+  timeoutMs: number,
+  trusted = false,
+  /** Header ghi đè (engine search dùng bộ giống trình duyệt để đỡ bị chặn). */
+  headers?: Record<string, string>,
+): Promise<Response> {
+  let current = rawUrl;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (!trusted) {
+      const check = assertFetchableUrl(current);
+      if (!check.ok) throw new WebOpError(check.error, 400, 'WEB_URL_BLOCKED');
+      // FIX #1: Chặn DNS rebinding - hostname public nhưng DNS trả về IP private.
+      // assertFetchableUrl chỉ kiểm tra hostname string; fetch() resolve DNS độc lập
+      // nên evil.example.com có thể trỏ về 127.0.0.1/169.254.x.x lúc TCP connect.
+      // PERF: Dùng cached DNS lookup thay vì dynamic import mỗi lần fetch.
+      try {
+        const dnsLookup = await getDnsLookup();
+        if (dnsLookup) {
+          const hostname = new URL(current).hostname;
+          const resolved = await dnsLookup(hostname);
+          const ipCheck = assertFetchableIp(resolved.address);
+          if (!ipCheck.ok) throw new WebOpError(ipCheck.error, 400, 'WEB_URL_BLOCKED');
+        }
+        // dnsLookup === null → Edge runtime, bỏ qua gracefully (đã cache)
+      } catch (dnsErr) {
+        if (dnsErr instanceof WebOpError) throw dnsErr;
+        // Lỗi DNS khác (NXDOMAIN, timeout...) → bỏ qua, fetch() sẽ báo lỗi sau
+      }
+    }
+
+    const res = await fetch(current, {
+      redirect: 'manual',
+      headers: headers ?? {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      cache: 'no-store',
+    });
+
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get('location');
+      if (!location) throw new WebOpError(`Redirect ${res.status} thiếu Location.`, 502, 'WEB_UPSTREAM_BAD_REDIRECT');
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return res;
+  }
+  throw new WebOpError(`Quá ${MAX_REDIRECTS} lần redirect.`, 502, 'WEB_TOO_MANY_REDIRECTS');
+}
+
+async function engineText(url: string, label: string): Promise<string> {
+  // Header giống trình duyệt + UA xoay vòng: cách gọi cũ (chỉ UA cố định)
+  // nhận 202 rỗng ngay từ request đầu.
+  const res = await guardedFetch(url, SEARCH_TIMEOUT_MS, false, browserLikeHeaders(pickSearchUserAgent()));
+  const html = res.ok ? await readTextCapped(res, MAX_ENGINE_BYTES) : '';
+
+  if (isDdgBlockedResponse(res.status, html)) {
+    throw new WebOpError(
+      `${label} chặn truy cập tự động (HTTP ${res.status}) — IP máy chủ có thể đã bị gắn cờ.`,
+      502,
+      'WEB_SEARCH_BLOCKED',
+    );
+  }
+  if (!res.ok) throw new WebOpError(`${label} trả ${res.status}.`, 502, 'WEB_SEARCH_UPSTREAM');
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('text/html')) throw new WebOpError(`${label} trả content-type lạ.`, 502, 'WEB_SEARCH_UPSTREAM');
+  return html;
+}
+
+/* ------------------------------------------------------------------ */
+/* Search                                                              */
+/* ------------------------------------------------------------------ */
+
+export interface WebSearchResult {
+  hits: Array<{ title: string; url: string; snippet: string }>;
+  engine: 'ddg-lite' | 'ddg-html' | 'yahoo' | 'ddg-ia';
+}
+
+/* ------------------------------------------------------------------ */
+/* DuckDuckGo Instant Answer API (không cần key)                       */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* DuckDuckGo Instant Answer API (không cần key)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Endpoint JSON CÔNG KHAI của DDG, khác hẳn hai endpoint scrape đã bị 403.
+ * Hạn chế: chỉ trả tri thức bách khoa (Abstract + RelatedTopics), KHÔNG có
+ * tin tức/thời sự. Vì vậy nó nằm CUỐI chuỗi — chỉ dùng khi mọi engine thật
+ * đều hỏng, để người dùng còn nhận được gì đó thay vì lỗi 502 trắng.
+ */
+export function parseDdgInstantAnswer(text: string): WebSearchResult['hits'] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const j = json as {
+    AbstractText?: unknown;
+    AbstractURL?: unknown;
+    Heading?: unknown;
+    RelatedTopics?: Array<Record<string, unknown>>;
+  };
+  const out: WebSearchResult['hits'] = [];
+
+  const absText = typeof j?.AbstractText === 'string' ? j.AbstractText.trim() : '';
+  const absUrl = typeof j?.AbstractURL === 'string' ? j.AbstractURL.trim() : '';
+  const heading = typeof j?.Heading === 'string' ? j.Heading.trim() : '';
+  if (absText && /^https?:\/\//i.test(absUrl)) {
+    out.push({ title: heading || absUrl, url: absUrl, snippet: absText });
+  }
+
+  for (const t of Array.isArray(j?.RelatedTopics) ? j.RelatedTopics : []) {
+    const url = typeof t?.FirstURL === 'string' ? t.FirstURL.trim() : '';
+    const txt = typeof t?.Text === 'string' ? t.Text.trim() : '';
+    // Bỏ link nội bộ duckduckgo.com/c/... (trang phân loại, không phải nguồn).
+    if (!txt || !/^https?:\/\//i.test(url) || /^https?:\/\/duckduckgo\.com\//i.test(url)) continue;
+    out.push({ title: txt.split(' - ')[0].slice(0, 120), url, snippet: txt });
+  }
+  return out;
+}
+
+async function searchDdgInstantAnswer(query: string): Promise<WebSearchResult['hits']> {
+  const res = await guardedFetch(
+    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`,
+    SEARCH_TIMEOUT_MS,
+  );
+  if (!res.ok) throw new WebOpError(`DDG API trả ${res.status}.`, 502, 'WEB_SEARCH_UPSTREAM');
+  return parseDdgInstantAnswer(await readTextCapped(res, MAX_ENGINE_BYTES));
+}
+
+/**
+ * Chuỗi engine, xếp theo độ tin cậy giảm dần (chỉ engine công khai, không key):
+ *   DDG HTML scrape → DDG Lite scrape → Yahoo → DDG Instant Answer
+ *
+ * BỐI CẢNH: hai endpoint scrape của DuckDuckGo (html/ và lite/) NAY TRẢ 403 —
+ * DDG gắn cờ IP máy chủ sau vài lượt, trả HTTP 202 kèm trang rỗng hoặc 503.
+ * Chúng vẫn nằm đầu chuỗi để dùng được ở máy chưa bị gắn cờ; Yahoo đứng giữa,
+ * Instant Answer (chỉ có tri thức bách khoa) là lưới cuối. Cả bốn đều công
+ * khai, không cần key.
+ */
+/* ------------------------------------------------------------------ */
+/* Cache kết quả search                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cache TTL cho truy vấn lặp (ý tưởng từ MindSearch: `TTLCache(maxsize=100,
+ * ttl=600)` bọc mọi backend search). Ở đây nó còn quan trọng hơn: mỗi request
+ * tiết kiệm được là một lần KHÔNG chạm vào engine đang chặn bot, nên giảm
+ * hẳn nguy cơ IP bị gắn cờ.
+ */
+const SEARCH_CACHE_TTL_MS = 10 * 60_000;
+const SEARCH_CACHE_MAX = 100;
+const searchCache = new Map<string, { at: number; value: WebSearchResult }>();
+
+function cacheGet(key: string): WebSearchResult | null {
+  const hit = searchCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > SEARCH_CACHE_TTL_MS) {
+    searchCache.delete(key);
+    return null;
+  }
+  // Chạm lại = đẩy lên cuối (LRU thô trên Map giữ thứ tự chèn).
+  searchCache.delete(key);
+  searchCache.set(key, hit);
+  return hit.value;
+}
+
+function cacheSet(key: string, value: WebSearchResult): void {
+  searchCache.set(key, { at: Date.now(), value });
+  while (searchCache.size > SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest === undefined) break;
+    searchCache.delete(oldest);
+  }
+}
+
+/** Chỉ dùng trong test. */
+export function __clearSearchCache(): void {
+  searchCache.clear();
+}
+
+export async function searchWeb(query: string): Promise<WebSearchResult> {
+  const cacheKey = query.trim().toLowerCase();
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const result = await searchWebUncached(query);
+  cacheSet(cacheKey, result);
+  return result;
+}
+
+async function searchWebUncached(query: string): Promise<WebSearchResult> {
+  const failures: string[] = [];
+
+  /* Dạng URL port từ Firecrawl: `html?q=…&kp=1` (KHÔNG có dấu / trước ?).
+     Đo thực tế cho thấy biến thể này trả 200 + kết quả ở request đầu, còn
+     dạng cũ `html/?q=…` nhận 202 rỗng ngay lập tức. `kp=1` = safe-search off. */
+  const q = encodeURIComponent(query);
+  /* Engine scrape KHÔNG cần key, xếp theo tỷ lệ thành công đo được.
+     Yahoo đứng sau DDG nhưng trước lưới cuối: khi IP bị DDG gắn cờ (mọi
+     endpoint DDG trả 202 rỗng), Yahoo vẫn phục vụ bình thường — đã kiểm
+     chứng bằng request thật với cả truy vấn tiếng Việt. */
+  const engines = [
+    ['ddg-html', `https://html.duckduckgo.com/html?q=${q}&kp=1`, 'DuckDuckGo HTML'],
+    ['ddg-lite', `https://lite.duckduckgo.com/lite/?q=${q}&kp=1`, 'DuckDuckGo Lite'],
+    ['yahoo', `https://search.yahoo.com/search?p=${q}`, 'Yahoo'],
+  ] as const;
+  for (const [engine, url, label] of engines) {
+    try {
+      const html = await engineText(url, label);
+      const parsedHits =
+        engine === 'yahoo'
+          ? parseYahoo(html)
+          : html.includes('result-link')
+            ? parseDdgLite(html)
+            : parseDdgHtml(html);
+      if (parsedHits.length > 0) return { hits: parsedHits, engine };
+      failures.push(`${label}: trang rỗng`);
+    } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /* Lưới cuối: chỉ có tri thức bách khoa, nhưng còn hơn không có gì. */
+  try {
+    const hits = await searchDdgInstantAnswer(query);
+    if (hits.length > 0) return { hits, engine: 'ddg-ia' };
+    failures.push('DDG Instant Answer: kết quả rỗng');
+  } catch (e) {
+    failures.push(`DDG Instant Answer: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  throw new WebOpError(
+    `${failures.join(' | ')}. Mọi công cụ tìm kiếm công khai đều đang chặn máy chủ này ` +
+      'hoặc không có kết quả cho truy vấn.',
+    502,
+    'SEARCH_UNAVAILABLE',
+  );
+}
+
+/** Kết quả đã cắt trần theo WEB_LIMITS — dùng cho cả route lẫn tool. */
+export function capHits(
+  hits: WebSearchResult['hits'],
+  count: number,
+): WebSearchResult['hits'] {
+  return hits.slice(0, count).map((h) => ({
+    title: capText(h.title, WEB_LIMITS.hitTitleChars),
+    url: h.url.slice(0, WEB_LIMITS.hitUrlChars),
+    snippet: capText(h.snippet, WEB_LIMITS.hitSnippetChars),
+  }));
+}
+
+/* ------------------------------------------------------------------ */
+/* Fetch + extract                                                     */
+/* ------------------------------------------------------------------ */
+
+const TEXT_CONTENT_TYPES = [
+  'text/html',
+  'application/xhtml+xml',
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'application/xml',
+  'text/xml',
+];
+
+export interface ReadablePage {
+  url: string;
+  title: string;
+  content: string;
+  truncated: boolean;
+}
+
+/** Fetch một URL public và trích văn bản "đủ đọc cho LLM". */
+async function fetchReadablePageOnce(rawUrl: string): Promise<ReadablePage> {
+  const res = await guardedFetch(rawUrl, FETCH_TIMEOUT_MS);
+  if (!res.ok) {
+    throw new WebOpError(
+      `Trang trả về HTTP ${res.status}.`,
+      502,
+      'WEB_UPSTREAM_STATUS',
+      res.status,
+    );
+  }
+
+  // Hop cuối sau redirect phải lại qua guard (guardedFetch đã kiểm từng hop,
+  // đây chỉ là chốt hạ với URL phản ánh cuối cùng — gồm cả giải mã redirect
+  // theo dõi click của DDG).
+  const finalUrl = unwrapDdgRedirect(res.url || rawUrl);
+  const finalCheck = assertFetchableUrl(finalUrl);
+  if (!finalCheck.ok) {
+    throw new WebOpError(finalCheck.error, 400, 'WEB_URL_BLOCKED');
+  }
+
+  const ct = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+  if (!TEXT_CONTENT_TYPES.some((t) => ct === t)) {
+    throw new WebOpError(
+      `Loại nội dung "${ct || 'không rõ'}" không đọc được — chỉ hỗ trợ trang văn bản.`,
+      415,
+      'WEB_UNSUPPORTED_CONTENT_TYPE',
+    );
+  }
+
+  const html = await readTextCapped(res, MAX_PAGE_BYTES);
+  const extracted = extractReadableText(html);
+
+  if (!extracted.text) {
+    /* Trang SPA/JS-heavy: HTML thô chỉ có <div id="root"></div>, bộ trích
+       theo regex không lấy được gì. Trước đây lượt này chết hẳn với
+       WEB_EMPTY_CONTENT.
+
+       Lưới cứu: Jina Reader (công khai không key, render được JS, hạn mức mơ
+       hồ). Nó đẩy URL người dùng qua bên thứ ba nên chỉ chạy ở đây, không nằm
+       trên đường chính. */
+    const viaReader = await fetchViaJinaReader(finalUrl);
+    if (viaReader) return viaReader;
+    throw new WebOpError('Trang không có nội dung văn bản nào đọc được.', 422, 'WEB_EMPTY_CONTENT');
+  }
+
+  return {
+    url: finalUrl.slice(0, WEB_LIMITS.hitUrlChars),
+    title: capText(extracted.title ?? '', WEB_LIMITS.pageTitleChars),
+    content: capText(extracted.text, MAX_TEXT_CHARS),
+    truncated: extracted.text.length > MAX_TEXT_CHARS,
+  };
+}
+
+/**
+ * Cứu link chết qua Internet Archive (lấy cảm hứng từ Hound, page 3 pi.dev —
+ * gói đó là extension-only không nối qua MCP được, nên port ý tưởng).
+ * Chỉ chạy cho 404/410: 403 là anti-bot (archive không giúp), 5xx là lỗi
+ * tạm thời của chính trang (nếu trang sống lại, lần fetch sau thành công).
+ */
+export function shouldTryArchive(error: unknown): boolean {
+  return (
+    error instanceof WebOpError &&
+    error.code === 'WEB_UPSTREAM_STATUS' &&
+    (error.upstreamStatus === 404 || error.upstreamStatus === 410)
+  );
+}
+
+/**
+ * URL Wayback cho link chết. Null khi không phải http(s) hoặc đích đã là
+ * archive — nếu không sẽ rơi vào vòng lặp tự-fallback.
+ */
+export function archiveFallbackUrl(rawUrl: string): string | null {
+  const trimmed = (rawUrl ?? '').trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  let hostname = '';
+  try {
+    hostname = new URL(trimmed).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (hostname === 'web.archive.org' || hostname.endsWith('.web.archive.org')) return null;
+  return `https://web.archive.org/web/2/${trimmed}`;
+}
+
+/**
+ * Wrapper công khai: trang gốc chết (404/410) → thử ĐÚNG MỘT lần bản lưu
+ * trữ của Wayback. Archive hụt → ném lại LỖI GỐC (404/410), không phải lỗi
+ * của archive — caller không cần biết fallback từng chạy. URL trả về giữ
+ * nguyên trang gốc để model trích dẫn đúng nguồn.
+ */
+export async function fetchReadablePage(rawUrl: string): Promise<ReadablePage> {
+  try {
+    return await fetchReadablePageOnce(rawUrl);
+  } catch (error) {
+    if (!shouldTryArchive(error)) throw error;
+    const archiveUrl = archiveFallbackUrl(rawUrl);
+    if (!archiveUrl) throw error;
+    try {
+      const page = await fetchReadablePageOnce(archiveUrl);
+      return {
+        ...page,
+        url: rawUrl.slice(0, WEB_LIMITS.hitUrlChars),
+        content: `[Nội dung từ Internet Archive — trang gốc đã chết]\n\n${page.content}`,
+      };
+    } catch {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Đọc trang qua Jina Reader (`https://r.jina.ai/<url>`) — dịch vụ công khai
+ * KHÔNG cần API key, trả về markdown đã render (chạy được JS).
+ *
+ * Chỉ dùng làm FALLBACK khi bộ trích tại chỗ trả rỗng: nó chậm hơn nhiều và
+ * đẩy URL người dùng qua bên thứ ba, nên không đặt ở đường chính.
+ * Endpoint search của Jina (`s.jina.ai`) CẦN key nên không dùng.
+ *
+ * Trả null khi thất bại — caller giữ nguyên lỗi gốc.
+ */
+async function fetchViaJinaReader(targetUrl: string): Promise<ReadablePage | null> {
+  try {
+    const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
+      headers: { Accept: 'text/plain', 'User-Agent': UA },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const md = await readTextCapped(res, MAX_PAGE_BYTES);
+    if (!md.trim()) return null;
+
+    /* Định dạng trả về: "Title: …\n\nURL Source: …\n\nMarkdown Content:\n…" */
+    const title = /^Title:\s*(.+)$/m.exec(md)?.[1]?.trim() ?? '';
+    const bodyStart = md.indexOf('Markdown Content:');
+    const body = (bodyStart >= 0 ? md.slice(bodyStart + 'Markdown Content:'.length) : md).trim();
+    if (!body) return null;
+
+    return {
+      url: targetUrl.slice(0, WEB_LIMITS.hitUrlChars),
+      title: capText(title, WEB_LIMITS.pageTitleChars),
+      content: capText(body, MAX_TEXT_CHARS),
+      truncated: body.length > MAX_TEXT_CHARS,
+    };
+  } catch {
+    return null;
+  }
+}

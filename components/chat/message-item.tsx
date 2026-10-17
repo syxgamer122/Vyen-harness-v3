@@ -1,0 +1,764 @@
+import React, { memo, useState } from 'react';
+import type { Message } from 'ai/react';
+import TextareaAutosize from 'react-textarea-autosize';
+import { RefreshCcw, Paperclip, Pencil, Copy, Check, ChevronDown, ChevronUp, BrainCircuit } from 'lucide-react';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
+import { ErrorBoundary } from '@/components/error-boundary';
+import { BranchSwitcher } from '@/components/branch-switcher';
+import { MessageStatusBadge } from '@/components/message-status-badge';
+import { VyenMark } from '@/components/vyen-logo';
+import { sanitizeContent, getFinishInfo } from '@/lib/chat-tree-persistence';
+import { stripEmulatedToolMarkup } from '@/lib/text-tool-guard';
+import { ToolTrace, buildToolTrace, displayText, type TimelineSegment } from '@/components/chat/tool-trace';
+import { MessageUsage } from '@/components/chat/message-usage';
+import { EvidenceBadge } from '@/components/evidence-badge';
+import { getSubagentAnnotations } from '@/components/subagent-card';
+import { extractMessageUsage, formatMessageUsage } from '@/lib/message-usage';
+import type { StoredMessageStatus } from '@/lib/db';
+
+function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming: boolean }) {
+  const [open, setOpen] = useState(false);
+  const lines = reasoning.trim().split('\n').filter(Boolean);
+  /*
+   * Tóm tắt là DÒNG ĐẦU, không phải dòng cuối: khi đang stream, dòng cuối đổi
+   * liên tục theo từng token nên bề rộng khối thu gọn nhảy, đọc như chữ bị rung.
+   * Dòng đầu là câu model đã nói ra trước khi đi tiếp — nó ổn định suốt lượt.
+   */
+  const preview = lines[0] || 'thinking...';
+
+  return (
+    /*
+     * Suy luận là CHROME, không phải nội dung: nó thuộc về quá trình, không
+     * thuộc về câu trả lời. Nó là MỘT DÒNG PHẲNG — chữ thuần trên nền hội
+     * thoại, bo `lg` đều cả bốn góc (§4.1), không viền không nền — chứ không
+     * phải thẻ bo tròn tô `reasoning/10`. §13.1 nói thẳng "không để thành mảng
+     * tím lớn", và thẻ viền + tô ở đáy lượt là thứ làm lượt nặng hơn. Màu
+     * `reasoning` còn ở icon; chữ vẫn `secondary` — dấu hiệu "đây là suy
+     * luận" đã đủ, không cần nền để nói ra.
+     */
+    <div className="mt-4 mb-1">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left transition-colors hover:bg-raised"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <BrainCircuit size={15} className="flex-shrink-0 text-reasoning animate-pulse" />
+          <span className="text-ui font-medium text-secondary">Quá trình suy luận (Reasoning)</span>
+          {isStreaming && <span className="terminal-cursor not-italic" aria-hidden="true" />}
+          {!open && <span className="truncate font-sans text-meta text-tertiary italic">· {preview}</span>}
+        </span>
+        <span className="flex items-center gap-1 text-meta text-tertiary flex-shrink-0">
+          <span>{open ? 'Thu gọn' : 'Chi tiết'}</span>
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap border-t border-subtle px-2 pt-3 font-sans text-meta leading-relaxed text-tertiary">
+          {reasoning}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface BranchInfo {
+  currentIndex: number;
+  total: number;
+}
+
+/**
+ * Nội dung bong bóng của lượt trả lời, và có vẽ ô tròn rỗng hay không.
+ *
+ * Tách ra khỏi thân component để TEST ĐƯỢC HÀNH VI thật, không chỉ đọc source:
+ * cả câu "dọn bằng `displayText`" lẫn điều kiện `showBubble` đều là loại quyết
+ * định mà người đọc source nhìn thấy hợp lý, nên đổi thành hỏng mà test kiểu
+ * regex vẫn xanh — đúng cái lỗ hổng đã bị reviewer chỉ ra ở file test này.
+ *
+ * `timeline === null` là tin nhắn CŨ: không event nào có offset `at`, nên
+ * không có timeline để cắt và bubble hiện nguyên `m.content`. Nhánh đó giữ ô
+ * tròn kể cả khi rỗng, đúng như trước — tin nhắn cũ không được đổi một chữ
+ * bố cục. Chỉ khi timeline BẬT thì đoạn lời đầu rỗng mới không vẽ ô tròn
+ * trắng (model gọi tool trước khi kịp nói gì), mở màn hình bằng chip tool.
+ *
+ * HAI NHÁNH DỌN KHÁC NHAU, và đó là cố ý — đừng gộp lại cho "đồng nhất":
+ *
+ *   • Nhánh timeline đi qua `displayText`, CÙNG hàm ToolTrace dùng cho mọi đoạn
+ *     xen kẽ. Ở đây `firstSegment` là lát CẮT, nên nó cần đủ ba việc:
+ *       - Vá fence hở. Offset `at` rơi vào GIỮA khối ``` thì lát đầu kết thúc
+ *         bằng fence chưa đóng; MarkdownRenderer coi phần còn lại của lượt là
+ *         code, nên kết luận của model hiện thành khối code.
+ *       - NFC hoá. Chuỗi gốc có thể ở dạng NFD; app nói tiếng Việt nên dấu tổ
+ *         hợp lơ lửng là hỏng dữ liệu hiển thị, không phải xấu xí.
+ *       - Bỏ đầu mảnh bị cắt đôi (`dropCutHead`), strip markup, rồi sanitize.
+ *     Ở nhánh này bubble và ToolTrace vẽ ĐÚNG CÙNG một chuỗi, nên lệch một chút
+ *     là hiện ra hai kiểu — đó là chỗ dễ trôi lệch nhất, và phải dùng chung hàm.
+ *
+ *   • Nhánh tin nhắn cũ giữ `stripEmulatedToolMarkup` + `sanitizeContent` như
+ *     trước, KHÔNG đi qua `displayText`. Lý do: `dropCutHead` sinh ra để đoán
+ *     "đoạn này bị `at` cắt đôi", mà ở đây không có lát cắt nào — cả tin nhắn
+ *     là nguyên vẹn. Hậu quả đo được: tin nhắn mở đầu bằng JSON (`{"r":1}`)
+ *     rồi kèm khối tool_call trọn vẹn, dấu đóng `</tool_call>` đứng riêng
+ *     dòng bị đọc thành "dấu đóng mồ côi" và nuốt MẤT cả mở đầu. Mất chữ thật
+ *     tệ hơn nhiều so với mất cân bằng fence, nên nhánh này giữ nguyên.
+ */
+export function bubbleOf(
+  content: string,
+  timeline: TimelineSegment[] | null,
+): { text: string; show: boolean } {
+  if (timeline === null) {
+    return { text: sanitizeContent(stripEmulatedToolMarkup(content).text), show: true };
+  }
+  const firstSegment = timeline[0];
+  const text = displayText(firstSegment?.kind === 'text' ? firstSegment.text : '');
+  return { text, show: text.trim() !== '' };
+}
+
+/*
+ * Thanh thao tác của tin nhắn — chỉ hiện khi cần, nhưng LUÔN với tới.
+ *
+ * Trước đây đây là class `.msg-actions` trong globals.css; khối đó đã bị xoá
+ * nhưng phép ẩn/hiện vẫn còn nguyên ở JSX dạng `opacity-0 group-hover:opacity-100`
+ * — thiếu hai nhánh còn lại, và cả hai đều là lỗi về khả dụng chứ không phải
+ * về thẩm mỹ:
+ *   • Bàn phím — phần tử `opacity-0` VẪN nhận focus, nên Tab đi tới một nút
+ *     mà mắt không thấy.
+ *   • Cảm ứng — không có `:hover` dạng hover-không, nên copy / sửa / chuyển
+ *     nhánh KHÔNG có đường vào nào trên điện thoại.
+ *
+ * Ba nhánh dưới đây bù lại đúng hai lỗi đó; `[@media(hover:none)]` và
+ * `[@media(pointer:coarse)]` thay cho hai truy vấn trong khối CSS cũ.
+ */
+const MSG_ACTIONS =
+  'opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100 ' +
+  '[@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:opacity-100';
+
+/*
+ * Vị trí của tin trong MỘT khối liên tiếp cùng vai (DESIGN.md §15.1 điểm 3+5).
+ *
+ * Đây là dữ liệu có thật, không phải suy đoán nội dung: nó chỉ nói tin này có
+ * tin liền trước / liền sau cùng `role` trong danh sách đang đọc hay không. Ai
+ * tính thì tính một chỗ (`message-list.tsx`) rồi truyền xuống, để hai màn hình
+ * không gom hai kiểu (§15.1 chốt trước: ranh giới lượt không được đoán lúc vẽ).
+ *
+ *   start  — mở khối: có avatar, khoảng trên vừa
+ *   middle — giữa khối: không avatar, khoảng trong khối NHỎ NHẤT
+ *   end    — đóng khối: không avatar, khoảng dưới lớn (mốc ngắt giữa các lượt)
+ */
+export type RunPosition = 'start' | 'middle' | 'end';
+
+/**
+ * Khoảng cách dọc theo vị trí trong khối — nguồn DUY NHẤT của nhịp §15.1 điểm 5.
+ *
+ * Trong khối nhỏ hơn giữa khối, và mốc ngắt giữa các lượt lớn hơn mọi khoảng
+ * trong khối. Khoảng trắng ở đây biểu đạt QUAN HỆ thông tin chứ không chia đều
+ * cho đẹp, nên nó phải là một hàm của vị trí — không phải ba con số rải trong
+ * JSX do từng nhánh tự chọn.
+ *
+ * Export để test hành vi đọc được đúng hàm này thay vì regex trên className.
+ */
+export function rowSpacing(position: RunPosition): string {
+  if (position === 'middle') return 'group relative w-full py-0.5';
+  if (position === 'end') return 'group relative w-full pb-5 pt-1.5';
+  return 'group relative w-full pt-1 pb-0.5';
+}
+
+interface MessageItemProps {
+  m: Message;
+  /**
+   * Vị trí trong khối liên tiếp cùng vai — xem `RunPosition`. Mặc định `end`
+   * (một tin đứng riêng vẫn là một khối trọn vẹn) để call site cũ không phải
+   * đổi hết một lượt, nhưng đường chính luôn truyền tường minh từ message list.
+   */
+  runPosition?: RunPosition;
+  branchInfo?: BranchInfo;
+  isStreaming: boolean;
+  isEditing: boolean;
+  isCopied: boolean;
+  draft: string;
+  isTouchDevice: boolean;
+  sendOnEnter: boolean;
+  throttleMs: number;
+  onCopy: (m: Message) => void;
+  onRegenerate: (id: string) => void;
+  onSwitchBranch: (messageId: string, direction: 'previous' | 'next') => void;
+  onStartEdit: (m: Message) => void;
+  onSaveEdit: (id: string) => void;
+  onCancelEdit: () => void;
+  onDraftChange: (text: string) => void;
+  onContinueGenerating?: () => void;
+  onContentResize?: () => void;
+}
+
+function ActionButton({
+  icon: Icon,
+  onClick,
+  label,
+  active,
+}: {
+  icon: React.ElementType;
+  onClick: () => void;
+  label: string;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={`relative flex h-6 w-6 items-center justify-center rounded-md transition-colors after:absolute after:-inset-[10px] after:content-[''] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
+        active ? 'bg-raised text-accent' : 'text-tertiary hover:bg-raised hover:text-primary'
+      }`}
+    >
+      <Icon size={13} />
+    </button>
+  );
+}
+
+export const MessageItem = memo(
+  function MessageItem({
+    m,
+    runPosition = 'end',
+    branchInfo,
+    isStreaming,
+    isEditing,
+    isCopied,
+    draft,
+    isTouchDevice,
+    sendOnEnter,
+    throttleMs,
+    onCopy,
+    onRegenerate,
+    onSwitchBranch,
+    onStartEdit,
+    onSaveEdit,
+    onCancelEdit,
+    onDraftChange,
+    onContinueGenerating,
+    onContentResize,
+  }: MessageItemProps) {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const isLongUserMsg = m.role === 'user' && m.content.length > 250;
+
+    if (m.role === 'user') {
+      return (
+        /*
+         * KHÔNG có padding ngang ở đây. Container cuộn của message list đã nắm
+         * gutter (`px-5 md:px-8`) và bọc cột ở `max-w-thread`; trước đây hàng
+         * lại tự thêm `px-4 sm:px-6` BÊN TRONG nên chữ lệch 56px về trái so với
+         * ô nhập (chỉ 16px) — cùng một nội dung nhưng hai mép không khớp.
+         * `max-w-4xl mx-auto` cũng là vô nghĩa ở đây: cha đã chặn ở 48rem.
+         */
+        /*
+         * Người dùng MỞ một lượt, nên hàng này luôn lấy khoảng thở lớn nhất —
+         * đó là mốc ngắt giữa hai lượt trong §15.1 điểm 5. Khoảng TRONG một lượt
+         * (các tin liên tiếp của trợ lý) do `rowSpacing` giữ nhỏ hơn.
+         */
+        <div className="group relative w-full py-5">
+          {!isEditing && (
+            <div
+              className={`absolute top-1.5 right-1 z-10 flex items-center gap-0.5 lift-sm rounded-lg border border-subtle bg-overlay px-1 py-0.5 ${MSG_ACTIONS}`}
+            >
+              {branchInfo && (
+                <BranchSwitcher
+                  currentIndex={branchInfo.currentIndex}
+                  total={branchInfo.total}
+                  isTouchDevice={isTouchDevice}
+                  disabled={isStreaming}
+                  onPrevious={() => onSwitchBranch(m.id, 'previous')}
+                  onNext={() => onSwitchBranch(m.id, 'next')}
+                />
+              )}
+              <ActionButton
+                icon={isCopied ? Check : Copy}
+                onClick={() => onCopy(m)}
+                label="Sao chép"
+                active={isCopied}
+              />
+              <ActionButton
+                icon={Pencil}
+                onClick={() => onStartEdit(m)}
+                label="Chỉnh sửa"
+              />
+            </div>
+          )}
+
+          {/*
+           * BONG BÓT TRUYỆN TRANH — nét mực 2px, bo bất đối xứng, đuôi chỉ vẽ
+           * tay ở góc dưới. KHÔNG có avatar: `.user-note` đã mang nền nhấn
+           * nhạt đủ để mắt đọc ra đó là lời người, nên một dấu hiệu thứ hai
+           * chỉ tốn chỗ mà không thêm thông tin.
+           *
+           * Bubble là MỘT hàng: `ml-auto` đẩy nó sang phải, nên mép phải của
+           * bubble vẫn chạm mép phải của cột hội thoại — giữ được bất biến
+           * gutter mà `tests/design-system.test.ts` canh. `justify-end` giữ
+           * đúng điều đó khi hàng rộng hơn bubble: tin ngắn bám mép phải,
+           * không bị đẩy về giữa hàng.
+           */}
+          <div className="ml-auto flex max-w-[72%] items-end justify-end">
+            {/*
+             * `.user-note` (globals.css) — khối compact: bo 12px (`xl`), nền nhấn
+             * nhạt, KHÔNG bóng. Bong bóng cũ bo 16px + `lift-sm`; §15.1 điểm 2
+             * đổi vai trò: bóng và khung dành cho thứ cần tách (code, diff,
+             * bằng chứng, yêu cầu quyết định), không dành cho lời nói.
+             *
+             * Trần 72% là trần của CHÍNH bubble, ăn đúng mức DESIGN.md §15.1
+             * nêu cho lời người. Trước khi gỡ avatar, trần 76% đặt trên cả cụm
+             * nên bubble phải chia chỗ cho avatar 26px + gap 8px, và phần chữ
+             * thực tế chỉ còn quanh 72%; giữ nguyên 76% sau khi gỡ avatar là
+             * bubble nở thêm 34px so với thiết kế.
+             */}
+            <div className="user-note">
+            {m.experimental_attachments && m.experimental_attachments.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {m.experimental_attachments.map((att, idx) => (
+                  <div key={idx} className="relative overflow-hidden lift-sm rounded-lg border border-subtle bg-surface">
+                    {att.contentType?.startsWith('image/') ? (
+                      <img
+                        src={att.url}
+                        alt={att.name ?? 'attachment'}
+                        className="max-h-48 max-w-xs object-cover"
+                        loading="eager"
+                        decoding="async"
+                        onLoad={onContentResize}
+                        onError={onContentResize}
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 px-3 py-2 font-mono text-ui text-primary">
+                        <Paperclip size={12} className="text-accent" />
+                        <span className="truncate max-w-[150px]">{att.name}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isEditing ? (
+              <div className="flex w-full min-w-[280px] flex-col gap-2 lift-sm rounded-lg border border-default bg-base p-3">
+                <TextareaAutosize
+                  value={draft}
+                  onChange={(e) => onDraftChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (sendOnEnter && e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      onSaveEdit(m.id);
+                    }
+                    if (e.key === 'Escape') onCancelEdit();
+                  }}
+                  aria-label="Sửa nội dung tin nhắn"
+                  /* Bỏ `outline-none`: ring `:focus-visible` toàn cục ở globals.css là dấu hiệu focus duy nhất của ô này. */
+                  className="w-full resize-none bg-transparent font-sans text-body text-primary placeholder:text-tertiary"
+                  autoFocus
+                />
+                <div className="flex justify-end gap-2 border-t border-subtle pt-2 font-sans text-ui">
+                  <button
+                    type="button"
+                    onClick={onCancelEdit}
+                    className="rounded-lg px-2.5 py-1 text-tertiary transition-colors hover:bg-overlay hover:text-primary hover:text-primary"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSaveEdit(m.id)}
+                    className="rounded-lg bg-accent px-3.5 py-1.5 font-medium text-on-fill transition-colors hover:bg-accent/85"
+                  >
+                    Lưu & Gửi lại
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                className={`relative flex items-start gap-2 ${
+                  isLongUserMsg && !isExpanded ? 'max-h-36 overflow-hidden' : ''
+                }`}
+              >
+                <span className="sr-only">Bạn:</span>
+                <div className="min-w-0 flex-1 whitespace-pre-wrap break-words font-sans text-read leading-relaxed text-primary">
+                  {sanitizeContent(m.content)}
+                </div>
+
+                {isLongUserMsg && !isExpanded && (
+                  /*
+                   * Lớp mờ dần phải dừng đúng ở màu BUBBLE, không phải ở một hex
+                   * viết tay và cũng không phải ở nền app: bubble nay là nền
+                   * nhấn nhạt (`bg-accent-soft`), nên gradient phải kết thúc
+                   * bằng chính màu đó. Dùng `from-raised` sẽ để lộ một vệt
+                   * xám ở chỗ hai lớp gặp nhau.
+                   */
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-accent-soft from-70% to-transparent" />
+                )}
+              </div>
+            )}
+
+            {isLongUserMsg && !isEditing && (
+              <button
+                type="button"
+                onClick={() => setIsExpanded((prev) => !prev)}
+                aria-expanded={isExpanded}
+                className="mt-1.5 inline-flex items-center gap-1 font-sans text-meta font-medium text-accent transition-colors hover:text-primary"
+              >
+                {isExpanded ? (
+                  <>
+                    <ChevronUp size={12} />
+                    <span>Thu gọn</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={12} />
+                    <span>Xem thêm ({m.content.length.toLocaleString('vi-VN')} ký tự)</span>
+                  </>
+                )}
+              </button>
+            )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /*
+     * TIMELINE: model nói, chạy tool, nói tiếp — dựng lại đúng thứ tự thời
+     * gian thay vì dồn hết tool xuống cuối.
+     *
+     * `timeline === null` là tin nhắn CŨ (không sự kiện nào có offset `at`):
+     * bubble hiện nguyên `m.content` đã dọn, đúng như trước, và ToolTrace tự
+     * vẽ lại bảng kê cũ. Đây là nhánh không được đổi một chữ.
+     *
+     * `buildTimeline` cắt trên `m.content` NGUYÊN BẢN, còn bubble luôn dọn
+     * trước khi hiện. Hai việc đó không mâu thuẫn: dọn chỉ áp dụng cho thứ
+     * đang vẽ ra, offset thì đã được server ghi sẵn theo bản gốc. Dọn sớm
+     * hơn một chữ là timeline cắt lệch, mà lệch thì ra vẫn có chữ, rất khó
+     * nhận ra bằng mắt (đo được: lệch 38 ký tự trên một đoạn markup 38 ký tự,
+     * kết luận của model bị đẩy lên TRÊN tool).
+     *
+     * Lý do dọn và lý do quyết định vẽ bubble nằm ở `bubbleOf` (đặt cùng file,
+     * xem chú thích ở đó) — giữ ngoài thân component để test được bằng hàm
+     * thật chứ không bằng regex trên source.
+     */
+    const annotations = (m as any).annotations as Array<Record<string, unknown>> | undefined;
+    const toolInvocations = (m as any).toolInvocations as Array<{
+      toolCallId?: string;
+      state?: string;
+    }> | undefined;
+    /*
+     * MỘT lần dựng cho cả lượt, dùng chung kết quả.
+     *
+     * `events` và `timeline` là hai mặt của một lần quét, và chỗ DUY NHẤT quyết
+     * định cờ `abandoned` bật khi nào là lệnh `isStreaming !== false` ngay dưới
+     * đây. Trước đây `ToolTrace` tự gọi `collectToolEvents` + `buildTimeline`
+     * lần nữa với đúng bộ đối số đó: mỗi token stream quét lại cả lượt hai
+     * lần (đo được 3,6 ms mỗi lượt ở content 8.000 ký tự), và lệch số đối số
+     * là bubble với chip list nói hai chuyện khác nhau về `abandoned`.
+     *
+     * `buildToolTrace` cắt trên `m.content` NGUYÊN BẢN: `at` là chỉ số ký tự
+     * trong bản gốc, mà hàm strip markup xoá các khối nên mọi vị trí sau khối
+     * bị xoá đều lệch.
+     */
+    const { events, timeline } = buildToolTrace(
+      m.content,
+      annotations,
+      toolInvocations,
+      isStreaming !== false,
+    );
+    const { text: bubbleContent, show: showBubble } = bubbleOf(m.content, timeline);
+
+    /*
+     * TRẠNG THÁI LƯU của tin — `StoredMessageStatus`, đóng dấu ở
+     * `toChatMessage` (`lib/chat-tree-persistence.ts`) lúc GHI, không phải
+     * lúc vẽ. Đọc qua một khai báo có kiểu thay vì `(m as any).status` rải
+     * khắp file: `Message` của SDK không khai `status`, nên kiểu nó thật là
+     * trường mở rộng do tầng persist gắn vào.
+     */
+    const messageStatus = (m as { status?: StoredMessageStatus }).status;
+    /*
+     * Trạng thái ĐỦ ĐỂ VẼ dưới lượt: lượt hỏng, hoặc lượt bị dừng giữa chừng
+     * (thì kèm nút tạo nhánh mới — vì nội dung dở thì chỉ có một đường ra là
+     * làm lại).
+     *
+     * Truyền `messageStatus` thay vì viết cứng `"aborted"`: nhánh `error` của
+     * `MessageStatusBadge` là code chết khi call site chỉ truyền hằng, và
+     * `streaming` không kéo vào đây vì lúc đó caret đã nháy ngay trên câu
+     * trả lời — nhãn thứ hai nói lại một chuyện đã hiện.
+     */
+    const failedTurn =
+      m.role === 'assistant' && (messageStatus === 'error' || messageStatus === 'aborted');
+
+    /*
+     * HÀNG RỖNG → không vẽ.
+     *
+     * §15.1: lượt không có tool, lượt bị hủy giữa chừng vẫn phải là lượt hợp
+     * lệ, nhưng "không được hiển thị khung rỗng hay mục trống cho đủ khuôn".
+     * Trước đây hàng assistant không có nội dung, không tool, không usage, không
+     * reasoning vẫn render `<div class="min-w-0 flex-1 space-y-2">` + một nhãn
+     * `sr-only` "Trợ lý:" — tức chiếm bề cao và đẩy một nhãn mồ côi vào luồng
+     * đọc, dù lượt không có gì để đọc.
+     *
+     * Mỗi vế là một câu hỏi "khối con này có vẽ gì không", và câu trả lời lấy
+     * từ ĐÚNG hàm mà khối con đó tự dùng — không đoán lại điều kiện của nó ở
+     * đây, vì đoán thì hai chỗ sẽ trôi lệch theo thời gian.
+     */
+    const usageStats = extractMessageUsage(annotations);
+    const reasoningText = (m as { reasoning?: unknown }).reasoning;
+    const hasReasoning = typeof reasoningText === 'string' && reasoningText.trim() !== '';
+    const hasEvidence = Boolean(
+      annotations?.some(
+        (a) => a && typeof a === 'object' && ('evidenceLevel' in a || 'routeReceipt' in a),
+      ),
+    );
+    const rowIsEmpty =
+      !showBubble &&
+      events.length === 0 &&
+      getSubagentAnnotations(annotations).length === 0 &&
+      !m.experimental_attachments?.length &&
+      !hasReasoning &&
+      !getFinishInfo(m).truncated &&
+      !(usageStats !== null && formatMessageUsage(usageStats) !== '') &&
+      !hasEvidence &&
+      !failedTurn;
+    if (rowIsEmpty) return null;
+
+    return (
+      <div className={rowSpacing(runPosition)}>
+        {!isStreaming && (
+          <div
+            className={`absolute top-1 right-1 z-10 flex items-center gap-0.5 lift-sm rounded-lg border border-subtle bg-overlay px-1 py-0.5 ${MSG_ACTIONS}`}
+          >
+            <ActionButton
+              icon={isCopied ? Check : Copy}
+              onClick={() => onCopy(m)}
+              label="Sao chép"
+              active={isCopied}
+            />
+            <ActionButton
+              icon={RefreshCcw}
+              onClick={() => onRegenerate(m.id)}
+              label="Tạo lại"
+            />
+            {branchInfo && (
+              <BranchSwitcher
+                currentIndex={branchInfo.currentIndex}
+                total={branchInfo.total}
+                isTouchDevice={isTouchDevice}
+                disabled={isStreaming}
+                onPrevious={() => onSwitchBranch(m.id, 'previous')}
+                onNext={() => onSwitchBranch(m.id, 'next')}
+              />
+            )}
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1 space-y-2">
+          <span className="sr-only">Trợ lý:</span>
+          {m.experimental_attachments && m.experimental_attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {m.experimental_attachments.map((att, idx) => (
+                <div key={idx} className="relative overflow-hidden lift-sm rounded-lg border border-subtle bg-surface">
+                  {att.contentType?.startsWith('image/') ? (
+                    <img
+                      src={att.url}
+                      alt={att.name ?? 'attachment'}
+                      className="max-h-48 max-w-xs object-cover"
+                      loading="eager"
+                      decoding="async"
+                      onLoad={onContentResize}
+                      onError={onContentResize}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 font-mono text-ui text-primary">
+                      <Paperclip size={12} className="text-accent" />
+                      <span className="truncate max-w-[150px]">{att.name}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/*
+           * TRẢ LỜI LÀ NỘI DUNG BIÊN TẬP, KHÔNG PHẢI BONG BÓNG CHAT.
+           *
+           * §15.1 điểm 2: văn bản trả lời đặt TRỰC TIẾP trên nền hội thoại;
+           * CHỈ code, diff, bằng chứng và yêu cầu quyết định mới có khung riêng
+           * (khung của chúng nằm ở component tương ứng — `.claude-code-block`,
+           * `diff-confirm`, `evidence-badge`). Khung cũ (`.bubble-bot`, bo 16px +
+           * `lift-sm` + viền) đã bị gỡ khỏi `globals.css`: bọc lời nói trong một
+           * hộp viền làm mọi khối trông cùng độ nổi, nên mắt phải tự đi tìm chỗ
+           * quan trọng — đúng thứ điểm 1 cấm.
+           *
+           * Dấu hiệu CHỈ hiện ở tin mở khối (`runPosition === 'start'`), và
+           * là dấu thương hiệu Vyen chứ không phải mặt vẽ tay: một hệ phải có
+           * MỘT nét, mọi bộ phận cùng bút — đây là lý do gỡ hẳn avatar chibi.
+           * Tin thứ hai trở đi giữ nguyên cột bằng một ô đệm cùng kích thước
+           * (26px) chứ không bỏ hẳn: bỏ đệm thì chữ thụt sang trái 34px so với
+           * tin đầu khối, tức cùng một đoạn văn mà hai lề tuỳ vị trí.
+           *
+           * Khi timeline bật (`timeline !== null`), model đã xen lẫn lời với
+           * tool, nên ở đây chỉ lấy ĐOẠN LỜI ĐẦU TIÊN. Các đoạn lời sau tool do
+           * ToolTrace vẽ ra ngoài, đúng thứ tự thời gian: nói, chạy tool, nói
+           * tiếp. Không có đoạn lời đầu (model gọi tool trước khi nói gì) thì
+           * không vẽ khối rỗng, chỉ mở màn hình bằng chip tool.
+           */}
+          {showBubble && (
+          <div className="flex items-start gap-2">
+            {runPosition === 'start' ? (
+              <VyenMark size={26} className="mt-1 flex-shrink-0" />
+            ) : (
+              <span aria-hidden="true" className="mt-1 h-[26px] w-[26px] flex-shrink-0" />
+            )}
+          <div
+            data-testid="reply-text"
+            className={`min-w-0 flex-1 claude-prose text-primary ${isStreaming ? 'streaming-caret' : ''}`}
+            aria-busy={isStreaming}
+          >
+            <ErrorBoundary resetKey={`${m.id}:${m.content.length}`}>
+              <MarkdownRenderer
+                content={bubbleContent}
+                isStreaming={isStreaming}
+                throttleMs={throttleMs}
+              />
+            </ErrorBoundary>
+          </div>
+          </div>
+          )}
+
+          {/*
+           * ToolTrace đứng SAU bubble, không phải trên: lượt agent đọc được là
+           * câu trả lời trước, bảng kê công việc sau (xem PLAN.md 10.6).
+           *
+           * `content` phải là `m.content` NGUYÊN BẢN, tuyệt đối không phải
+           * `stripEmulatedToolMarkup(...).text`: offset `at` mà server ghi là
+           * chỉ số ký tự trong bản gốc, còn hàm strip xoá các khối markup nên
+           * mọi vị trí sau khối bị xoá đều lệch. Đưa chuỗi đã strip vào đây thì
+           * timeline cắt lệch chỗ, hiện tượng rất khó nhận ra vì vẫn ra chữ.
+           * `buildTimeline` trả null cho tin nhắn cũ không có `at`, khi đó
+           * ToolTrace tự vẽ lại đúng bố cục cũ.
+           *
+           * `isStreaming` là tín hiệu DUY NHẤT cho biết lượt đã hết stream, và
+           * `ToolTrace` mặc định là "chưa biết" (coi như còn chạy). Không truyền
+           * ở đây thì trạng thái "bị bỏ dở" của một tool bị dừng giữa chừng là
+           * code chết: chip quay mãi như thể việc đó còn đang chạy. Mặc định bịa
+           * ra chip "bị bỏ dở" oan còn tệ hơn, nên thiếu tín hiệu thì giữ hành vi
+           * cũ — ở đây có mặt đúng là lúc nói ra sự thật.
+           *
+           * `events` + `timeline` là KẾT QUẢ của lần dựng duy nhất ở trên,
+           * truyền xuống để `ToolTrace` không dựng lại lần nữa mỗi token
+           * (xem `buildToolTrace`). `isStreaming` vẫn phải truyền: đó là đường
+           * dựng dự phòng khi không có ai dựng sẵn.
+           *
+           * Comparator của `MessageItem` đã so `isStreaming` sẵn (dòng dưới),
+           * nên việc truyền thêm này không sinh thêm lần render nào.
+           */}
+          <ToolTrace
+            content={m.content}
+            annotations={annotations}
+            toolInvocations={toolInvocations}
+            isStreaming={isStreaming}
+            events={events}
+            timeline={timeline}
+          />
+
+          {(() => {
+            const { truncated, message: note } = getFinishInfo(m);
+            if (!truncated || isStreaming) return null;
+            return (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 lift-sm rounded-lg border border-warning/30 bg-raised px-4 py-2.5 font-sans text-ui text-warning">
+                <span className="min-w-0">{note ?? 'Câu trả lời có thể chưa hoàn chỉnh.'}</span>
+                {onContinueGenerating && (
+                  <button
+                    type="button"
+                    onClick={onContinueGenerating}
+                    className="flex-shrink-0 rounded-lg bg-warning px-3 py-1.5 font-medium text-on-fill transition-colors hover:bg-warning/85"
+                  >
+                    Viết tiếp
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
+          {m.role === 'assistant' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <MessageUsage annotations={(m as { annotations?: unknown }).annotations} />
+              {(() => {
+                const annotations = (m as any).annotations as Array<Record<string, unknown>> | undefined;
+                if (!annotations) return null;
+                const evidenceAnn = annotations.find(
+                  (a) => a && typeof a === 'object' && ('evidenceLevel' in a || 'routeReceipt' in a),
+                ) as { evidenceLevel?: string; routeReceipt?: unknown } | undefined;
+                if (!evidenceAnn) return null;
+                /*
+                 * Mặc định 'reported_done' chỉ đúng khi lượt thật sự chạy xong.
+                 * Lượt bị dừng giữa chừng thì không có gì để "đã báo xong": mặc định
+                 * hoá thành reported_done là in ra một khẳng định lượt đó chưa đạt,
+                 * và nó nằm ngay trên nhãn "aborted" ở ngay dưới. Server có ghi
+                 * evidenceLevel thì tin server, chỉ khi thiếu mới suy.
+                 */
+                const level =
+                  evidenceAnn.evidenceLevel ??
+                  (isStreaming
+                    ? 'running'
+                    : (m as any).status === 'aborted'
+                      ? 'blocked'
+                      : 'reported_done');
+                return <EvidenceBadge level={level} />;
+              })()}
+            </div>
+          )}
+
+          {failedTurn && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-subtle pt-2 font-sans">
+              <div className="flex items-center gap-1.5">
+                <MessageStatusBadge status={messageStatus} />
+                <span className="text-meta text-tertiary">· Bạn có thể tạo lại</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRegenerate(m.id)}
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-meta text-accent transition-colors hover:bg-raised hover:text-primary"
+              >
+                <RefreshCcw size={12} />
+                <span>Tạo nhánh mới</span>
+              </button>
+            </div>
+          )}
+
+          {/*
+           * Suy luận đứng CUỐI CÙNG, dưới cả bảng kê công việc. Nó là một chuỗi
+           * phẳng không chia đoạn được nên không đưa vào timeline được; đặt nó
+           * cuối là để thứ tự đọc là: câu trả lời, việc đã làm, rồi mới là lý do.
+           * Đặt nó trên bubble như trước đây là đẩy câu trả lời xuống dưới tầm
+           * mắt bằng hai khối viền liền nhau.
+           */}
+          {(() => {
+            const reasoning = (m as any).reasoning;
+            if (typeof reasoning === 'string' && reasoning.trim()) {
+              return <ThinkingBlock reasoning={reasoning} isStreaming={isStreaming} />;
+            }
+            return null;
+          })()}
+        </div>
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.m.id === next.m.id &&
+    prev.m.content === next.m.content &&
+    (prev.m as any).reasoning === (next.m as any).reasoning &&
+    prev.m.role === next.m.role &&
+    (prev.m as any).status === (next.m as any).status &&
+    prev.m.annotations === next.m.annotations &&
+    (prev.m as any).toolInvocations === (next.m as any).toolInvocations &&
+    prev.m.experimental_attachments === next.m.experimental_attachments &&
+    prev.branchInfo?.currentIndex === next.branchInfo?.currentIndex &&
+    prev.branchInfo?.total === next.branchInfo?.total &&
+    prev.isStreaming === next.isStreaming &&
+    prev.isEditing === next.isEditing &&
+    prev.isCopied === next.isCopied &&
+    prev.draft === next.draft &&
+    prev.isTouchDevice === next.isTouchDevice &&
+    prev.sendOnEnter === next.sendOnEnter &&
+    prev.throttleMs === next.throttleMs,
+);

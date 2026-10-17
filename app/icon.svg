@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="vyen-icon-grad" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#81EE61" />
+      <stop offset="100%" stop-color="#0B7A53" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="#FFFFFF" />
+  <rect width="32" height="32" rx="8" stroke="#E5E5E5" stroke-width="1" />
+  <path
+    d="M 16 6.4 C 18.2 5 20 4.4 22.2 4.4 C 25.6 4.4 28.5 7.4 28.5 11.8 C 28.5 14.5 27.2 16.5 26.2 17.5 C 25.2 18.2 25.2 18.8 26.2 19.5 C 27.2 20.5 28 22.2 27 24.2 C 25.8 26.5 23.5 27.5 20.5 27.5 C 18.5 27.5 17.2 26.8 16 25.6 C 14.8 26.8 13.5 27.5 11.5 27.5 C 8.5 27.5 6.2 26.5 5 24.2 C 4 22.2 4.8 20.5 5.8 19.5 C 6.8 18.8 6.8 18.2 5.8 17.5 C 4.8 16.5 3.5 14.5 3.5 11.8 C 3.5 7.4 6.4 4.4 9.8 4.4 C 12 4.4 13.8 5 16 6.4 Z"
+    stroke="url(#vyen-icon-grad)"
+    stroke-width="2.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- Circuit Eyes -->
+  <line x1="11.5" y1="13.5" x2="14.6" y2="13.5" stroke="#0B7A53" stroke-width="1.7" stroke-linecap="round" />
+  <circle cx="11.5" cy="13.5" r="1.5" fill="#0B7A53" />
+  <line x1="17.4" y1="13.5" x2="20.5" y2="13.5" stroke="#0B7A53" stroke-width="1.7" stroke-linecap="round" />
+  <circle cx="20.5" cy="13.5" r="1.5" fill="#0B7A53" />
+  <!-- Circuit Mouth -->
+  <line x1="12.5" y1="19.5" x2="19.5" y2="19.5" stroke="#0B7A53" stroke-width="1.7" stroke-linecap="round" />
+  <circle cx="12.5" cy="19.5" r="1.5" fill="#0B7A53" />
+  <circle cx="19.5" cy="19.5" r="1.5" fill="#0B7A53" />
+</svg>

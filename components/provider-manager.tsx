@@ -1,0 +1,509 @@
+'use client';
+
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Check, ExternalLink, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2, X,
+} from 'lucide-react';
+import { db } from '@/lib/db';
+import {
+  deleteProvider,
+  ensureProviderSeed,
+  listProviders,
+  newProviderId,
+  syncActiveProviderSnapshot,
+  upsertProvider,
+  isSecureKeyPointer,
+  resolveProviderApiKey,
+  secureKeyOf,
+  SECURE_KEY_MARKER,
+  type ProviderConfig,
+} from '@/lib/providers';
+import { providerNeedsApiKey, validateProviderBaseUrl } from '@/lib/provider-url';
+import { useAppStore } from '@/lib/store';
+import { desktopSecureStore } from '@/lib/desktop-bridge';
+
+/**
+ * Trang lấy API key theo hostname — hiển thị link trực tiếp cạnh ô nhập key
+ * để user không phải tự mò. Không chứa key nào trong code.
+ */
+const KEY_GUIDES: Array<{ test: RegExp; url: string; note: string }> = [
+  {
+    test: /(^|\.)openrouter\.ai$/i,
+    url: 'https://openrouter.ai/keys',
+    note: 'Chọn model đuôi :free để dùng miễn phí.',
+  },
+];
+
+function keyGuideFor(baseUrl: string): { url: string; note: string } | null {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return KEY_GUIDES.find((g) => g.test.test(host)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Quản lý nhà cung cấp API (provider presets) trong Settings. */
+export function ProviderManager() {
+  const activeProviderId = useAppStore((s) => s.activeProviderId);
+  const setActiveProvider = useAppStore((s) => s.setActiveProvider);
+
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [editing, setEditing] = useState<ProviderConfig | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  /** Ô nhập key nhanh ngay trên card provider đang chọn (id -> giá trị đang gõ). */
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  /* Kho mã hoá key (giai đoạn 2 — desktop tự chủ): chỉ tồn tại trên desktop
+   * có safeStorage. secureVaultOn = lựa chọn OPT-IN của người dùng cho lần lưu
+   * key kế tiếp (mặc định tắt — tôn trọng chủ ý "không tự đổi cách lưu key"). */
+  const [vaultAvailable, setVaultAvailable] = useState(false);
+  const [secureVaultOn, setSecureVaultOn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const vault = desktopSecureStore();
+    if (!vault) return;
+    void vault
+      .available()
+      .then(({ available }) => {
+        if (alive) setVaultAvailable(available);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    await ensureProviderSeed();
+    setProviders(await listProviders());
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const choose = async (id: string) => {
+    setActiveProvider(id);
+    await syncActiveProviderSnapshot(id);
+    const p = await db.providers.get(id);
+    if (!p) return;
+    // Provider nào chưa có key cũng chưa có model → nhắc dán key trước.
+    if (!p.apiKey && !p.models?.length && providerNeedsApiKey(p.baseUrl)) {
+      // Key cá nhân (OpenRouter…) trả 401 khi chưa có key — nói rõ để user
+      // dán key thay vì thấy "lỗi kết nối" không hiểu vì sao.
+      setStatus(`"${p.name}" cần API key cá nhân — dán key vào ô bên dưới rồi bấm "Lưu & test".`);
+      return;
+    }
+    if (!p.models?.length) {
+      // Có key nhưng chưa có model → tự tải luôn để dùng được ngay.
+      await testAndLoadModels(p);
+    } else {
+      setStatus(`Đã chuyển sang "${p.name}" (${p.models.length} model).`);
+    }
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    const name = editing.name.trim() || 'Provider';
+    if (!editing.baseUrl.trim()) {
+      setStatus('Thiếu địa chỉ baseURL.');
+      return;
+    }
+    // save() cũng GHI record vào DB — validate giống testAndLoadModels bên dưới,
+    // nếu không một baseUrl http/địa chỉ nội bộ sẽ được persist lặng lẽ.
+    const baseUrlCheck = validateProviderBaseUrl(editing.baseUrl.trim());
+    if (!baseUrlCheck.ok) {
+      setStatus(`Địa chỉ nhà cung cấp không hợp lệ: ${baseUrlCheck.error}`);
+      return;
+    }
+    const record = { ...editing, name, updatedAt: Date.now() };
+    await upsertProvider(record);
+    await refresh();
+    setEditing(null);
+    setStatus(`Đã lưu "${name}".`);
+    // Đang active provider này → refresh snapshot (baseUrl/key có thể đổi).
+    if (useAppStore.getState().activeProviderId === record.id) {
+      await syncActiveProviderSnapshot(record.id);
+    }
+  };
+
+  /** Test kết nối + tải danh sách model về provider record. */
+  const testAndLoadModels = async (p: ProviderConfig) => {
+    // Nút test cũng GHI record vào DB — validate trước như save(), nếu không
+    // một form đang sửa dở (baseUrl rỗng/sai) sẽ bị persist lặng lẽ.
+    if (!p.baseUrl.trim()) {
+      setStatus('Thiếu địa chỉ baseURL.');
+      return;
+    }
+    const baseUrlCheck = validateProviderBaseUrl(p.baseUrl.trim());
+    if (!baseUrlCheck.ok) {
+      setStatus(`Địa chỉ nhà cung cấp không hợp lệ: ${baseUrlCheck.error}`);
+      return;
+    }
+    setBusyId(p.id);
+    setStatus(`Đang kết nối ${p.name}…`);
+    try {
+      /* Key trong DB có thể chỉ là CON TRỎ "@secure:" tới vault desktop —
+         route /api/providers/models cần key THẬT nên resolve trước khi gửi. */
+      const apiKey = await resolveProviderApiKey(p.apiKey, p.id);
+      const res = await fetch('/api/providers/models', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+              },
+        body: JSON.stringify({ baseUrl: p.baseUrl, apiKey }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // 401/403 do thiếu hoặc sai key là ca phổ biến nhất — nói rõ cách sửa.
+        const needsKey =
+          !apiKey &&
+          /40[13]|unauthor|forbidden|key/i.test(`${res.status} ${data?.error ?? ''}`);
+        setStatus(
+          needsKey
+            ? `${p.name}: cần API key cá nhân. Dán key vào ô "API key cá nhân" rồi bấm "Lưu & test".`
+            : `${p.name}: ${data?.error ?? 'lỗi kết nối'}`,
+        );
+        return;
+      }
+      const models = (data.models ?? []) as ProviderConfig['models'];
+      await upsertProvider({ ...p, models, modelsFetchedAt: data.fetchedAt });
+      await refresh();
+      if (useAppStore.getState().activeProviderId === p.id) {
+        await syncActiveProviderSnapshot(p.id);
+      }
+      setStatus(`${p.name}: kết nối OK — ${models?.length ?? 0} model.`);
+    } catch {
+      setStatus(`${p.name}: không gọi được /api/providers/models.`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (p: ProviderConfig) => {
+    // Xóa provider là hành động không hoàn tác — hỏi lại cho nhất quán với
+    // các chỗ xóa khác (chat, prompt).
+    if (!window.confirm(`Xóa nhà cung cấp "${p.name}"?`)) return;
+    // Dọn cả key mã hoá trong vault (nếu có) — entry mồ côi không ai đọc lại.
+    const vault = desktopSecureStore();
+    if (vault) {
+      try {
+        await vault.delete(secureKeyOf(p.id));
+      } catch {
+        /* best-effort: vault hỏng không được chặn việc xóa provider. */
+      }
+    }
+    await deleteProvider(p.id);
+    await refresh();
+    setStatus(`Đã xóa "${p.name}".`);
+  };
+
+  /**
+   * Lưu key gõ trực tiếp trên card provider rồi thử tải model luôn. Trước đây
+   * ô nhập key chỉ nằm trong form "Sửa" (phải bấm bút chì mới thấy) nên với
+   * provider yêu cầu key, người dùng không có chỗ nào để dán key cá nhân.
+   */
+  const saveKeyInline = async (p: ProviderConfig) => {
+    const draft = keyDraft[p.id];
+    const next = (draft ?? '').trim();
+    /* Không có gì mới để lưu (ô chưa gõ, hoặc gõ lại y hệt key đang lưu) —
+     * thoát ở ĐÂY, trước mọi side effect. Nếu không, nhấn Enter trên ô rỗng sẽ
+     * ghi apiKey: '' đè lên key đang có. Nút "Lưu & test" đã disable ở trường
+     * hợp này, nhưng phím Enter thì không — chặn ở đây cho cả hai đường. */
+    if (draft === undefined || next === p.apiKey) return;
+    /* Opt-in mã hoá (desktop): key thật vào vault (credential manager của
+     * OS), IndexedDB chỉ giữ con trỏ "@secure:". Vault lỗi → lưu dạng thường
+     * + báo rõ, không chặn người dùng vì một lựa chọn tăng cường. */
+    const vault = desktopSecureStore();
+    let storedKey = next;
+    if (next && secureVaultOn && vault) {
+      try {
+        await vault.set(secureKeyOf(p.id), next);
+        storedKey = SECURE_KEY_MARKER;
+      } catch (e) {
+        setStatus(
+          `Không mã hoá được key (${e instanceof Error ? e.message : String(e)}) — lưu dạng thường.`,
+        );
+      }
+    }
+    /* saveKeyInline chỉ chạy từ event handler (onKeyDown/onClick), KHÔNG trong
+       render — updatedAt là mốc thời điểm LƯU. Rule react-hooks/purity heuristic
+       nên false positive ở đây (pattern Date.now() y hệt save() dòng ~120 không
+       bị flag). */
+    // eslint-disable-next-line react-hooks/purity
+    const record: ProviderConfig = { ...p, apiKey: storedKey, updatedAt: Date.now() };
+    await upsertProvider(record);
+    setKeyDraft((d) => {
+      const { [p.id]: _drop, ...rest } = d;
+      return rest;
+    });
+    await refresh();
+    if (useAppStore.getState().activeProviderId === p.id) {
+      await syncActiveProviderSnapshot(p.id);
+    }
+    // Có key mới → test luôn để nạp danh sách model, khỏi bắt user bấm 🔄.
+    await testAndLoadModels(record);
+  };
+
+  const startNew = () =>
+    setEditing({
+      id: newProviderId(),
+      name: '',
+      baseUrl: '',
+      apiKey: '',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+  return (
+    <div className="space-y-3 font-sans">
+      {providers.length === 0 && (
+        <p className="border border-subtle bg-raised p-2.5 text-meta leading-relaxed text-tertiary">
+          Chưa có nhà cung cấp nào. Thêm một nhà cung cấp chuẩn OpenAI-compatible
+          bên dưới rồi dán API key của bạn — Vyen chỉ dùng provider bạn tự khai.
+        </p>
+      )}
+
+      {/* Giai đoạn 2: opt-in lưu key mã hoá — chỉ hiện trên desktop có
+          safeStorage. Ảnh hưởng lần LƯU key kế tiếp (ô key bên dưới / form Sửa). */}
+      {vaultAvailable && (
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-subtle bg-raised px-3.5 py-2.5 text-meta leading-relaxed text-primary">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded-full accent-accent"
+            checked={secureVaultOn}
+            onChange={(e) => setSecureVaultOn(e.target.checked)}
+          />
+          <span>
+            Lưu API key sắp nhập <strong>mã hoá bằng Credential Manager của hệ điều hành</strong>{' '}
+            — IndexedDB chỉ giữ con trỏ, key thật không nằm trong database trình duyệt.
+          </span>
+        </label>
+      )}
+
+      {providers.map((p) => {
+        const active = activeProviderId === p.id;
+        const guide = keyGuideFor(p.baseUrl);
+        const draft = keyDraft[p.id];
+        return (
+          <div
+            key={p.id}
+            className={`rounded-lg border px-3.5 py-3 transition-colors ${
+              active ? 'border-accent/60 bg-accent/10' : 'border-subtle bg-raised'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                <input
+                  type="radio"
+                  name="provider"
+                  className="rounded-full accent-accent"
+                  checked={active}
+                  onChange={() => void choose(p.id)}
+                />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-ui font-medium text-primary">{p.name}</span>
+                    {p.apiKey ? (
+                      <span
+                        title="Đã lưu API key"
+                        className="flex items-center gap-0.5 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-micro font-medium text-success"
+                      >
+                        <KeyRound size={9} /> có key
+                      </span>
+                    ) : (
+                      <span
+                        title="Chưa có API key"
+                        className="flex items-center gap-0.5 rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-micro font-medium text-warning"
+                      >
+                        <KeyRound size={9} /> chưa key
+                      </span>
+                    )}
+                  </span>
+                  <span className="block truncate text-meta text-tertiary">
+                    {p.baseUrl} · {p.models?.length ?? 0} model
+                  </span>
+                </span>
+              </label>
+              <span className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={`Kiểm tra kết nối ${p.name}`}
+                  title="Kiểm tra kết nối + tải danh sách model"
+                  onClick={() => void testAndLoadModels(p)}
+                  disabled={busyId === p.id}
+                  className="icon-btn icon-btn-sm"
+                >
+                  {busyId === p.id ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Sửa ${p.name}`}
+                  title="Sửa"
+                  onClick={() => setEditing(p)}
+                  className="icon-btn icon-btn-sm"
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Xóa ${p.name}`}
+                  title="Xóa"
+                  onClick={() => void remove(p)}
+                  className="icon-btn icon-btn-sm icon-btn-danger"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
+            </div>
+
+            {/*
+              * Ô dán key cá nhân ngay tại chỗ — hiện khi provider đang được chọn
+              * hoặc khi chưa có key. Không phải mở form "Sửa" mới nhập được.
+              */}
+            {active || !p.apiKey ? (
+              <div className="mt-2 border-t border-subtle pt-2">
+                <label
+                  htmlFor={`pv-key-${p.id}`}
+                  className="field-label mb-1 block"
+                >
+                  API key cá nhân {p.apiKey ? '(đã lưu — nhập mới để thay)' : '(dán vào đây)'}
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    id={`pv-key-${p.id}`}
+                    type="password"
+                    autoComplete="off"
+                    className="field-sm flex-1 font-sans"
+                    placeholder={p.apiKey ? '••••••••  (nhập key mới)' : 'sk-... / dán key tại đây'}
+                    value={draft ?? ''}
+                    onChange={(e) => setKeyDraft((d) => ({ ...d, [p.id]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void saveKeyInline(p);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveKeyInline(p)}
+                    disabled={busyId === p.id || draft === undefined || draft.trim() === p.apiKey}
+                    className="btn-primary flex-shrink-0 px-2.5 py-1.5"
+                  >
+                    {busyId === p.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    Lưu &amp; test
+                  </button>
+                </div>
+                {guide && (
+                  <p className="field-hint mt-1">
+                    Lấy key tại{' '}
+                    <a
+                      href={guide.url}
+                      target="_blank"
+                      rel="noreferrer noopener nofollow"
+                      className="inline-flex items-center gap-0.5 text-accent underline-offset-2 hover:underline"
+                    >
+                      {new URL(guide.url).hostname}
+                      <ExternalLink size={9} />
+                    </a>{' '}
+                    — {guide.note}
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+          </div>
+        );
+      })}
+
+      {editing ? (
+        <div className="settings-card settings-card-body border-accent/40">
+          <div className="flex items-center justify-between">
+            <span className="field-label text-ui">
+              {providers.some((x) => x.id === editing.id) ? 'Sửa nhà cung cấp' : 'Thêm nhà cung cấp'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditing(null)}
+              aria-label="Đóng biểu mẫu nhà cung cấp"
+              className="icon-btn icon-btn-sm"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <input
+            className="field-sm"
+            aria-label="Tên nhà cung cấp"
+            placeholder="Tên (vd: Nhà cung cấp của tôi)"
+            value={editing.name}
+            onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+          />
+          <input
+            className="field-sm font-sans"
+            aria-label="Base URL"
+            placeholder="Base URL (vd: https://api.openai.com/v1)"
+            value={editing.baseUrl}
+            onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })}
+          />
+          <input
+            className="field-sm font-sans"
+            type="password"
+            aria-label="API key"
+            placeholder={
+              isSecureKeyPointer(editing.apiKey)
+                ? '(key đã lưu mã hoá — nhập mới để thay)'
+                : 'API key (có thể bỏ trống)'
+            }
+            /* Key mã hoá chỉ là con trỏ "@secure:" — hiển thị trống; người
+               dùng không gõ gì thì state vẫn giữ con trỏ, save() giữ nguyên. */
+            value={isSecureKeyPointer(editing.apiKey) ? '' : editing.apiKey}
+            onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void save()}
+              className="btn-primary py-1.5"
+            >
+              <Check size={13} /> Lưu
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void testAndLoadModels({
+                  ...editing,
+                  name: editing.name.trim() || 'Provider',
+                })
+              }
+              disabled={busyId === editing.id}
+              className="btn-secondary py-1.5"
+            >
+              {busyId === editing.id ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RefreshCw size={13} />
+              )}
+              Kiểm tra kết nối &amp; lưu model
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={startNew}
+          className="btn-secondary w-full border-dashed py-2"
+        >
+          <Plus size={14} /> Thêm nhà cung cấp
+        </button>
+      )}
+
+      {status && <p role="status" className="text-meta text-tertiary">{status}</p>}
+    </div>
+  );
+}

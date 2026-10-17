@@ -1,0 +1,60 @@
+{
+  "name": "vyen",
+  "productName": "Vyen",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "app": "node scripts/launch-desktop.cjs",
+    "lint": "eslint . --cache",
+    "typecheck": "tsc --noEmit",
+    "check": "node scripts/check-supply-chain.cjs",
+    "docs:check": "node scripts/check-docs-sync.cjs",
+    "test": "vitest run",
+    "verify:security": "node tests/phase1-security-verification.cjs && node tests/sprint-s1-verification.cjs && node tests/sprint-s2-verification.cjs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "1.3.24",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@tanstack/react-virtual": "3.14.10",
+    "ai": "4.3.19",
+    "dexie": "4.4.5",
+    "dexie-react-hooks": "1.1.7",
+    "katex": "0.16.47",
+    "lucide-react": "0.453.0",
+    "next": "16.3.1",
+    "pako": "3.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "9.1.0",
+    "react-syntax-highlighter": "16.1.1",
+    "react-textarea-autosize": "8.5.9",
+    "rehype-katex": "7.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "unpdf": "1.8.1",
+    "yaml": "2.9.0",
+    "zod": "3.25.76",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "@types/pako": "2.0.4",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@types/react-syntax-highlighter": "15.5.13",
+    "autoprefixer": "10.5.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "postcss": "8.5.26",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-win32-x64-msvc": "1.2.11"
+  }
+}

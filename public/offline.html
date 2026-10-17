@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Không có kết nối — Vyen</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #F7F9FC;
+      background-image: radial-gradient(900px 420px at 50% -180px, rgba(10, 126, 140, 0.06), transparent 70%);
+      background-repeat: no-repeat;
+      color: #1f2937;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+      padding: 24px;
+    }
+    .bubble {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: #ffffff;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 8px 24px -12px rgba(10, 126, 140, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+    }
+    .bubble svg { display: block; }
+    h1 { font-size: 20px; font-weight: 600; margin-bottom: 8px; color: #111113; }
+    p { font-size: 14px; color: #64748b; line-height: 1.6; }
+    button {
+      margin-top: 24px;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 12px;
+      background: #0A7E8C;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:hover { background: #086E7A; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="bubble" aria-hidden="true">
+      <svg width="36" height="36" viewBox="0 0 32 32" fill="none">
+        <defs>
+          <linearGradient id="vyen" x1="8" y1="7" x2="24" y2="25" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#0A7E8C" />
+            <stop offset="1" stop-color="#4ECB71" />
+          </linearGradient>
+        </defs>
+        <path d="M10 7.5L16 24.5" stroke="url(#vyen)" stroke-width="3.2" stroke-linecap="round"/>
+        <path d="M22 7.5L16 24.5" stroke="url(#vyen)" stroke-width="3.2" stroke-linecap="round"/>
+        <circle cx="10" cy="7.5" r="2.4" fill="#0A7E8C"/>
+        <circle cx="22" cy="7.5" r="2.4" fill="#4ECB71"/>
+      </svg>
+    </div>
+    <h1>Không có kết nối mạng</h1>
+    <p>Lịch sử chat của bạn vẫn an toàn trên thiết bị.<br />Kết nối lại mạng rồi thử nhé.</p>
+    <button onclick="location.reload()">Thử lại</button>
+  </main>
+</body>
+</html>

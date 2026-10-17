@@ -1,0 +1,43 @@
+name: CI
+
+# Trước đây repo KHÔNG có workflow nào chạy test/lint/typecheck — cả 226 file
+# test chỉ chạy khi developer tự gọi `npx vitest`. Workflow này là lưới an
+# toàn cho các sửa đổi về an ninh (dual-gate, CapBAC) và cho việc dọn dead code.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # --ignore-scripts: khớp AGENTS.md §9 và workflow supply-chain-audit.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run check
+      - run: npm run typecheck
+
+      # --cache để lint không phải quét lại toàn bộ repo mỗi lần chạy.
+      - run: npm run lint
+
+      - run: npx vitest run
+
+  security-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci --ignore-scripts
+      # Ba script .cjs trong tests/ chỉ được gọi tay trước đây. Chạy ở đây
+      # để chúng không chết âm thầm cùng code mà chúng kiểm tra.
+      - run: npm run verify:security

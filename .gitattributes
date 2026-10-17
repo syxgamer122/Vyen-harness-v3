@@ -1,0 +1,24 @@
+# Repo này phát triển trên Windows nhưng phải chạy được ở Linux CI.
+# Không có file này, git checkout trên Windows sẽ đổi LF -> CRLF và mọi
+# commit sau đó lại đổi ngược, tạo diff hỗn độn ở mọi file.
+* text=auto eol=lf
+
+# Script và cấu hình chạy trực tiếp: giữ LF để shebang không hỏng,
+# kể cả khi ai đó clone trên Windows.
+*.sh text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Ảnh nhị phân — không được đụng line ending.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+
+# File sinh tự động: giữ diff gọn khi tool regenerate.
+package-lock.json -diff

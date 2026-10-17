@@ -1,0 +1,219 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { SETTINGS_TABS } from '@/components/settings-dialog';
+import { Z_INDEX, Z_CLASS } from '@/lib/ui-z';
+
+const ROOT = resolve(__dirname, '..');
+
+function readComponent(relPath: string): string {
+  return readFileSync(resolve(ROOT, relPath), 'utf-8');
+}
+
+/** Các component vẽ overlay (backdrop/drawer/toast) — nơi z-index quyết định thứ tự chồng. */
+const OVERLAY_FILES = [
+  'components/settings-dialog.tsx',
+  'components/diff-confirm.tsx',
+  'components/shell-confirm.tsx',
+  'components/staging-panel.tsx',
+  'components/tools-panel.tsx',
+  'components/audit-viewer-dialog.tsx',
+  'components/workspace-checkpoints.tsx',
+  'components/mcp/tool-approval-dialog.tsx',
+  'components/recipes/recipes-panel.tsx',
+  'components/sidebar.tsx',
+  'components/toast.tsx',
+  // Các lớp nổi đè lên nội dung, cũng là nơi xung đột chồng xảy ra. Composer
+  // `z-20` là chính thứ từng vẽ đè lên modal khi backdrop rơi về `z-index:auto`.
+  'components/composer.tsx',
+  'components/model-selector.tsx',
+  'components/chat-export-menu.tsx',
+];
+
+describe('A11y Contract & Accessibility Compliance', () => {
+  describe('Settings Dialog Tab & Panel ARIA linkage', () => {
+    it('declares the 6 unified semantic tabs', () => {
+      const tabIds = SETTINGS_TABS.map((t) => t.id);
+      expect(tabIds).toEqual(['appearance', 'providers', 'safety', 'extensions', 'memory', 'data']);
+    });
+
+    it('ensures each role="tab" aria-controls points to a matching static tabpanel id', () => {
+      const src = readComponent('components/settings-dialog.tsx');
+
+      // Assert tab button markup uses static id pattern
+      expect(src).toContain('id={`settings-tab-${t.id}`}');
+      expect(src).toContain('aria-controls={`settings-panel-${t.id}`}');
+
+      // Assert each tab has its own dedicated tabpanel element with matching id and aria-labelledby
+      for (const t of SETTINGS_TABS) {
+        expect(src).toContain(`id="settings-panel-${t.id}"`);
+        expect(src).toContain(`aria-labelledby="settings-tab-${t.id}"`);
+      }
+    });
+  });
+
+  describe('Modal Dialogs & Focus Containment', () => {
+    /*
+     * z-index nay lấy từ thang tập trung `lib/ui-z.ts` chứ không viết cứng, nên
+     * test kiểm tra việc DÙNG ĐÚNG LỚP thay vì khớp chuỗi `z-[NN]`.
+     */
+    const MODAL_FILES = [
+      { path: 'components/diff-confirm.tsx', name: 'DiffConfirm', layer: 'approval' },
+      { path: 'components/shell-confirm.tsx', name: 'ShellConfirm', layer: 'approval' },
+      { path: 'components/staging-panel.tsx', name: 'StagingPanel', layer: 'approval' },
+      { path: 'components/mcp/tool-approval-dialog.tsx', name: 'McpToolApprovalDialog', layer: 'approvalCritical' },
+      { path: 'components/tools-panel.tsx', name: 'ToolsPanel', layer: 'navigation' },
+      { path: 'components/recipes/recipes-panel.tsx', name: 'RecipesPanel', layer: 'navigation' },
+    ];
+
+    for (const modal of MODAL_FILES) {
+      it(`${modal.name} conforms to dialog a11y and focus trap contract`, () => {
+        const src = readComponent(modal.path);
+
+        expect(src).toContain('role="dialog"');
+        expect(src).toContain('aria-modal="true"');
+        expect(src).toMatch(/aria-labelledby=|aria-label=/);
+        expect(src).toContain('useFocusTrap');
+        expect(src, `${modal.name} phải dùng Z_CLASS.${modal.layer}`).toContain(
+          `Z_CLASS.${modal.layer}`,
+        );
+      });
+    }
+
+    it('ensures ToastHost dùng lớp toast (trên dropdown, dưới modal)', () => {
+      const src = readComponent('components/toast.tsx');
+      expect(src).toContain('Z_CLASS.toast');
+    });
+
+    it('SettingsDialog nằm TRÊN mọi modal — lớp system', () => {
+      /*
+       * Lỗi cũ: Settings ở `z-50`, thấp hơn cả modal phê duyệt (80) lẫn panel
+       * điều hướng (90). Mở Cài đặt trong lúc có modal đang mở thì modal vẽ
+       * ĐÈ lên Cài đặt.
+       */
+      const src = readComponent('components/settings-dialog.tsx');
+      expect(src).toContain('Z_CLASS.system');
+      expect(src).not.toContain('fixed inset-0 z-50');
+    });
+
+    it('menu ngữ cảnh sidebar KHÔNG được nổi trên modal', () => {
+      const src = readComponent('components/sidebar.tsx');
+      expect(src).not.toContain('z-[100]');
+    });
+
+    it('chat-interface dùng trọng tài phê duyệt chung, không phải hai hàng đợi song song', () => {
+      /*
+       * Lỗi cũ: diff và shell mỗi loại có hàng đợi riêng (`diffQueueRef` /
+       * `shellQueueRef` + `diffOpenRef` / `shellOpenRef`). Khi agent gọi SONG
+       * SONG một fs_edit và một shell_run trong cùng step, cả hai modal cùng
+       * render ở z-[80] — chồng lên nhau và modal dưới không bấm được.
+       *
+       * Hành vi của trọng tài được kiểm chứng thật ở tests/approval-queue.test.ts.
+       * Ở đây chỉ chốt rằng component DÙNG module chung thay vì tự viết lại.
+       */
+      const src = readComponent('components/chat-interface.tsx');
+
+      /*
+       * Hàng đợi phê duyệt dùng chung được dựng MỘT lần trong
+       * `useApprovalBridge`; `chat-interface.tsx` chỉ tiêu thụ bridge. Trước đây
+       * file này còn import `ApprovalQueue` + destructure `approvalQueue` mà
+       * không dùng — đã xoá, nên assertion phải chốt ở đúng chỗ dựng queue.
+       */
+      expect(readComponent('react/use-approval-bridge.ts')).toMatch(
+        /import \{[^}]*ApprovalQueue[^}]*\} from '@\/lib\/approval-queue'/,
+      );
+      expect(src, 'chat-interface không được tự dựng hàng đợi thứ hai').not.toContain(
+        'ApprovalQueue',
+      );
+
+      for (const stale of ['diffQueueRef', 'shellQueueRef', 'diffOpenRef', 'shellOpenRef']) {
+        expect(src, `còn sót hàng đợi riêng "${stale}" — nguy cơ chồng modal`).not.toContain(stale);
+      }
+
+      /* API công khai không đổi: nơi gọi không phải sửa. */
+      expect(src).toContain('showDiffModal');
+      expect(src).toContain('showShellModal');
+      expect(src).toContain('closeDiffModal');
+      expect(src).toContain('closeShellModal');
+    });
+  });
+
+  describe('Thang z-index tập trung (lib/ui-z.ts)', () => {
+    it('bất biến approval < approvalCritical < navigation < system', () => {
+      expect(Z_INDEX.approval).toBeLessThan(Z_INDEX.approvalCritical);
+      expect(Z_INDEX.approvalCritical).toBeLessThan(Z_INDEX.navigation);
+      expect(Z_INDEX.navigation).toBeLessThan(Z_INDEX.system);
+      expect(Z_INDEX.dropdown).toBeLessThan(Z_INDEX.popover);
+      expect(Z_INDEX.popover).toBeLessThan(Z_INDEX.toast);
+      expect(Z_INDEX.toast).toBeLessThan(Z_INDEX.approval);
+    });
+
+    it('Z_CLASS khớp giá trị số', () => {
+      expect(Z_CLASS.approval).toBe(`z-[${Z_INDEX.approval}]`);
+      expect(Z_CLASS.navigation).toBe(`z-[${Z_INDEX.navigation}]`);
+      expect(Z_CLASS.system).toBe(`z-[${Z_INDEX.system}]`);
+      expect(Z_CLASS.toast).toBe(`z-[${Z_INDEX.toast}]`);
+    });
+
+    it('Tailwind quét `lib/` — nếu không, mọi `z-[NN]` trong Z_CLASS rơi về z-index auto', () => {
+      /*
+       * Lỗi đã từng xảy ra: `Z_CLASS` đặt ở `lib/ui-z.ts`, mà `content` glob của
+       * Tailwind chỉ có pages|components|app. Tailwind là bộ quét TEXT thô, không
+       * theo import, nên nó không thấy `z-[100]` nằm trong hằng số → KHÔNG sinh
+       * rule `.z-\[100\]` → backdrop rơi về `z-index:auto` và nội dung trang
+       * (composer `z-20`) vẽ đè lên modal. Mọi assertion z-index còn lại đều là
+       * so chuỗi nên vẫn xanh; chỉ kiểm tra glob mới bắt được.
+       */
+      const config = readComponent('tailwind.config.ts');
+      const contentBlock = config.slice(config.indexOf('content:'), config.indexOf('theme:'));
+      expect(contentBlock, 'content glob phải quét lib/ để sinh class z-[NN] của Z_CLASS').toMatch(
+        /['"]\.\/lib\/\*\*\/\*\.(?:\{[^}]*\}|js|ts)['"]/,
+      );
+    });
+
+    it('không overlay nào bỏ qua thang, dùng z viết tay', () => {
+      /*
+       * Ngược lại với trên: số trong className phải đến từ `Z_CLASS`, không gõ
+       * tay. Gõ tay là cách `settings-dialog.tsx` từng có `z-50` thấp hơn mọi
+       * modal khác (xem chú thích đầu `lib/ui-z.ts`).
+       *
+       * Phải bắt CẢ hai dạng: `z-50` (class có sẵn của Tailwind) lẫn `z-[100]`
+       * (arbitrary). Bản đầu chỉ khớp dạng arbitrary, nên đúng lỗi lịch sử mà
+       * test này viết ra — `z-50` — lại lọt qua. `Z_CLASS` cũng có `z-0`,
+       * `z-40`, `z-50`, nên so sánh bằng danh sách giá trị sẽ hợp lệ cho cả hai.
+       *
+       * Chỉ soi ELEMENT BACKDROP (`fixed inset-0`), không soi mọi `z-` trong
+       * file: `z-10` cho header dính hay `z-20` cho dropdown là chồng lấp
+       * TRONG một khối, không cạnh tranh với modal, và không thuộc thang này.
+       * Đó là lý do `OVERLAY_FILES` mở rộng thêm composer/model-selector/
+       * chat-export-menu/stream-bubble vẫn không sinh phản đối: các `z` đó
+       * không nằm trên backdrop.
+       */
+      const allowed = new Set<string>(Object.values(Z_CLASS));
+      const offenders: string[] = [];
+      for (const rel of OVERLAY_FILES) {
+        const src = readComponent(rel);
+        for (const m of src.matchAll(/<div[^>]*\bfixed inset-0\b[^>]*>/g)) {
+          for (const z of m[0].matchAll(/\bz-(\[?\d+\]?)/g)) {
+            // Backdrop đã khai báo ý định qua hằng số thì không cần class.
+            if (!allowed.has(z[0]) && !m[0].includes('Z_CLASS.')) {
+              offenders.push(`${rel}: ${z[0]}`);
+            }
+          }
+        }
+      }
+      expect(offenders, 'backdrop dùng z viết tay thay vì lấy từ Z_CLASS').toEqual([]);
+    });
+  });
+
+  describe('Keyboard navigation in menus', () => {
+    it('TaskMenu implements APG arrow key navigation and Escape dismissal', () => {
+      const src = readComponent('components/composer.tsx');
+      expect(src).toContain('ArrowDown');
+      expect(src).toContain('ArrowUp');
+      expect(src).toContain('Escape');
+      expect(src).toContain('Home');
+      expect(src).toContain('End');
+    });
+  });
+});
