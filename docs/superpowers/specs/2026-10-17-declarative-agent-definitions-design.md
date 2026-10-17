@@ -157,8 +157,12 @@ Danh sách được sinh từ registry tại runtime, nên luôn khớp với fi
 | `tests/core-state-machine.test.ts` | giữ `validateShellAllowlist` case | cắt còn case đó |
 | `SCOUT_DENIED_CLIENT_TOOLS` | `subagent.ts` | xoá, thay bằng allowlist theo agent |
 | `defaultSubagentScope` | `subagent.ts` | xoá (mục 5) |
+| `withSubagentWriteScope` | `subagent.ts` | xoá (mục 5) |
+| `core/agent-runtime/capability-context.ts` | `lib/subagent.ts` + `tests/subagent-write-scope.test.ts` + `tests/capability-projection.test.ts` | xoá cả file và test |
 
-Giữ nguyên: `capability-context.ts` (`validateSubagentPermission` còn dùng ở `subagent.ts`), `tab-lock.ts`, `runtime-actor.ts`, `actor-registry.ts`, `types.ts` — chúng nằm trên đường chạy qua `react/use-agent-runtime.ts`.
+Lưu ý về dòng cuối: đây là hệ quả trực tiếp của mục 5, không phải việc dọn có sẵn. `validateSubagentPermission` và `createCapabilityScope` chỉ tồn tại để phục vụ CapBAC; bỏ CapBAC thì chúng không còn đường nào gọi tới. Đã grep xác minh: không nơi nào khác import chúng.
+
+Giữ nguyên: `tab-lock.ts`, `runtime-actor.ts`, `actor-registry.ts`, `types.ts` — chúng nằm trên đường chạy qua `react/use-agent-runtime.ts` (`use-chat-orchestration.ts:6405`).
 
 ## 9. Thành phần mới
 
@@ -208,7 +212,7 @@ Không trường hợp nào trong bảng này làm hỏng lượt chat hiện t�
 | `agent-tool-scope.test.ts` | giao đúng; `delegate` luôn bị loại; agent khai báo rỗng = không có tool |
 | `agent-catalog-projection.test.ts` | mô tả `delegate` khớp file trên đĩa |
 | `subagent.test.ts` (sửa) | bỏ case scout/worker; thêm case lọc theo agent |
-| `capability-projection.test.ts` (sửa) | `defaultSubagentScope` không còn |
+| — | `tests/subagent-write-scope.test.ts` và `tests/capability-projection.test.ts` bị xoá cùng CapBAC; case tương đương được viết lại trong `agent-tool-scope.test.ts` |
 
 Test hành vi đầu-cuối: một agent chỉ-đọc được gọi với `fs_write` trong tham số → phải không thấy `fs_write` trong bộ tool, và không có `execute` nào nhận lời gọi đó.
 
