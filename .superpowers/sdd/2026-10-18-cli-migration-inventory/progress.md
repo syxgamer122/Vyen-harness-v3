@@ -51,3 +51,17 @@ Nên `.ts` thắng trên cả ba tiêu chí: `tsc` kiểm được, `node script
 vitest import native được. Đã sửa 14 chỗ trong plan.
 
 Chi phí nếu sai: không có — `.ts` là lựa chọn chặt hơn, không nới gì.
+
+## Task 1: complete (tests: npx vitest run tests/cli-migration-scan.test.ts → 4 passed)
+
+- **RED:** `Cannot find package '@/scripts/cli-migration/scan-browser-apis'` — đúng lý do plan dự đoán.
+- **GREEN:** 4/4. typecheck 0 lỗi.
+- **Mutation:** đổi `Dexie: /\bDexie\b/` → `/\bZZZNOKHOP\b/` → **2 failed | 2 passed**.
+  - Test tự kiểm đỏ với đúng thông báo dự kiến: `lib/db.ts chắc chắn có Dexie`.
+  - Test thứ tư (chuẩn hoá đường dẫn) vẫn xanh — đúng, nó kiểm thuộc tính khác
+    (đường dẫn), không kiểm API. Đây là bằng chứng các test **không** bị gộp
+    chung một điều kiện, nên đỏ của test kia không kéo theo test này.
+- **Ruling: bỏ `BROWSER_APIS` khỏi import của test.** Plan Task 1 viết
+  `import { scanBrowserApis, BROWSER_APIS }` nhưng không test nào dùng
+  `BROWSER_APIS`. Import thừa sẽ bị lint bắt và cũng là dấu hiệu test viết
+  cho interface thay vì viết cho hành vi. Chi phí nếu sai: không có.

@@ -15,7 +15,9 @@
  * Spec: docs/superpowers/specs/2026-10-18-cli-core-design.md §4
  */
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
+import { CORE_ENTRIES, reachableFrom, unreached } from '@/scripts/cli-migration/import-graph';
 
 describe('scanFile', () => {
   it('dò đúng API trình duyệt và trả về số dòng', () => {
@@ -66,6 +68,36 @@ describe('scanBrowserApis — cơ chế quét tự được kiểm', () => {
     for (const h of hits) {
       expect(h.file, `đường dẫn phải dùng "/": ${h.file}`).not.toContain('\\');
       expect(h.file.startsWith('lib/')).toBe(true);
+    }
+  });
+});
+
+/**
+ * Task 2: đồ thị import — file nào còn dùng bởi lõi.
+ *
+ * Test quan trọng nhất ở đây là "đồ thị phải lớn hơn 5 file": nếu regex
+ * `from '@/x'` sai, hàm sẽ trả tập rỗng, mọi file trông như "không ai dùng"
+ * — và kế hoạch phía sau sẽ kết luận **xoá hết**. Đây là hướng hại hại nhất
+ * của cả công việc này: `AGENTS.md` §6 đã ghi đúng trường hợp đó.
+ */
+describe('import-graph', () => {
+  it('đi từ entry tới được qua chuỗi import nhiều tầng', () => {
+    const s = reachableFrom(['lib/agent-tools-server.ts']);
+    // agent-tools-server -> tool-limits -> secret-registry: 3 tầng.
+    expect(s.has('lib/secret-registry.ts')).toBe(true);
+  });
+
+  it('đồ thị phải lớn hơn 5 file — quét hỏng sẽ báo "không thấy gì" và trả về rỗng', () => {
+    expect(reachableFrom(['lib/agent-tools-server.ts']).size).toBeGreaterThan(5);
+  });
+
+  it('file treo lơ lửng không nằm trong đồ thị lõi', () => {
+    expect(unreached(['lib/db.ts'], ['lib/agent-tools-server.ts'])).toContain('lib/db.ts');
+  });
+
+  it('mọi entry mặc định đều là file có thật — entry sai là kết luận sai', () => {
+    for (const e of CORE_ENTRIES) {
+      expect(existsSync(e), `CORE_ENTRIES chứa file không tồn tại: ${e}`).toBe(true);
     }
   });
 });
