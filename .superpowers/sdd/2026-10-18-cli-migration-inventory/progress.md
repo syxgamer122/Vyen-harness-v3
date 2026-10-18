@@ -65,3 +65,22 @@ Chi phí nếu sai: không có — `.ts` là lựa chọn chặt hơn, không n�
   `import { scanBrowserApis, BROWSER_APIS }` nhưng không test nào dùng
   `BROWSER_APIS`. Import thừa sẽ bị lint bắt và cũng là dấu hiệu test viết
   cho interface thay vì viết cho hành vi. Chi phí nếu sai: không có.
+
+## Task 2: complete (tests: npx vitest run tests/cli-migration-scan.test.ts → 8 passed)
+
+- **RED:** `Cannot find package '@/scripts/cli-migration/import-graph'`.
+- **Quy tắc "ném khi không giải được" bắt được 2 lỗi của chính tôi.** Đây là
+  bằng chứng quy tắc đó đáng giá:
+  1. Tôi giả định `@/` trỏ tới `lib/`, thực ra trỏ tới **gốc repo** — spec đã có
+     `lib/` sẵn. Nếu im lặng bỏ qua, đồ thị thiếu mấy file và kết luận "xoá" sai.
+  2. Tôi nối thêm đuôi vào spec **đã có sẵn đuôi** (`@/lib/ipc.cjs` → `ipc.cjs.cjs`).
+  Cả hai đều ra thông báo tường minh thay vì đồ thị sai lặng lẽ.
+- **GREEN:** 8/8. typecheck 0 lỗi.
+- **Mutation:** `['"]` → `["]` trong regex import → **2 failed | 6 passed**, với
+  `expected 1 to be greater than 5`. Đồ thị sụp từ 8 xuống 1 file và test tự kiểm
+  bắt được. Đây chính là hướng hại nhất của công việc này — đồ thị rỗng dẫn tới
+  kết luận "xoá hết" — và giờ nó bị chặn bằng test chứ không bằng hy vọng.
+- **Ruling: thêm test thứ tư cho Task 2 — `mọi entry mặc định đều là file có thật`.**
+  Không có trong plan. Lý do: `CORE_ENTRIES` là đầu vào của cả bảng kiểm kê; một
+  entry sai đường dẫn làm mọi file ngoài đồ thị bị gán `XOA` — tức kết luận sai
+  theo cả diện. Chi phí nếu bỏ: một gõ nhầm đường dẫn đủ để bảng báo xoá hàng loạt.

@@ -15,9 +15,10 @@
  * Spec: docs/superpowers/specs/2026-10-18-cli-core-design.md §4
  */
 import { describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
 import { CORE_ENTRIES, reachableFrom, unreached } from '@/scripts/cli-migration/import-graph';
+import { countTsFiles } from '@/scripts/cli-migration/build-inventory';
 
 describe('scanFile', () => {
   it('dò đúng API trình duyệt và trả về số dòng', () => {
@@ -98,6 +99,44 @@ describe('import-graph', () => {
   it('mọi entry mặc định đều là file có thật — entry sai là kết luận sai', () => {
     for (const e of CORE_ENTRIES) {
       expect(existsSync(e), `CORE_ENTRIES chứa file không tồn tại: ${e}`).toBe(true);
+    }
+  });
+});
+
+/**
+ * Task 3: bảng kiểm kê.
+ *
+ * Cả hai test dưới đây canh cách bảng **âm thầm** báo sai:
+ *   - bỏ sót file mới trong `lib/` → bảng vẫn trông đầy đủ
+ *   - nhãn rỗn hoặc sai → người đọc vẫn tưởng đã được phân loại
+ */
+describe('bảng kiểm kê', () => {
+  const MD = 'docs/cli-migration-inventory.md';
+
+  it('bảng phải phủ hết file chạm API trình duyệt — không file nào vô hình', () => {
+    const md = readFileSync(MD, 'utf8');
+    const rows = md.split('\n').filter((l) => l.startsWith('| `lib/'));
+    // So với QUẾT SỐNG, không so với bảng: bảng là file trên đĩa, còn đây là
+    // script chạy lúc test. Thêm file mới dùng localStorage mà quên chạy lại
+    // build-inventory.ts thì hai bên lệch nhau và test đỏ — đúng thứ cần chặn.
+    const live = new Set(scanBrowserApis('lib').map((h) => h.file));
+    expect(rows.length, 'bảng cũ hơn quét sống — chạy lại node scripts/cli-migration/build-inventory.ts').toBe(
+      live.size,
+    );
+  });
+
+  it('bảng không được vượt quá số file .ts thật trong lib', () => {
+    const md = readFileSync(MD, 'utf8');
+    const rows = md.split('\n').filter((l) => l.startsWith('| `lib/'));
+    expect(rows.length).toBeLessThanOrEqual(countTsFiles('lib'));
+  });
+
+  it('mọi dòng đều có nhãn hợp lệ', () => {
+    const md = readFileSync(MD, 'utf8');
+    const rows = md.split('\n').filter((l) => l.startsWith('| `lib/'));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row, `nhãn phải là GHIU | VIET-LAI | XOA: ${row}`).toMatch(/\| (GHIU|VIET-LAI|XOA) \|/);
     }
   });
 });
