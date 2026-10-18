@@ -38,7 +38,7 @@ import {
   type EmulatedLoopOptions,
   type EmulatedLoopResult,
 } from '@/lib/emulated-agent';
-import type { AgentToolSet } from '@/lib/agent-tools';
+import type { AgentToolSet } from '@/lib/agent-tools-server';
 import type { AgentDefinition } from '@/lib/agents/agent-definition';
 import { type AgentRegistry, resolveAgentDefinition } from '@/lib/agents/agent-registry';
 import { resolveAgentToolNames } from '@/lib/agents/agent-tool-scope';

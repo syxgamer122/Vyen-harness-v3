@@ -19,12 +19,12 @@ import {
   resolveToolEntry,
   toolsByCategory,
 } from '@/lib/tool-catalog';
+import { CLIENT_TOOL_DEFS } from '@/lib/agent-tools';
 import {
   ALL_TOOL_PROTOCOL_NAMES,
-  CLIENT_TOOL_DEFS,
   TOOL_SHORT_LABELS,
   formatToolProtocolManual,
-} from '@/lib/agent-tools';
+} from '@/lib/agent-tools-server';
 
 describe('RED TEAM catalog — getToolEntry / resolveToolEntry trên mọi tên và alias', () => {
   it('getToolEntry trả đúng entry cho mọi tên trong catalog', () => {

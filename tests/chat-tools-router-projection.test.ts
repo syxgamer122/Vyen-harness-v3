@@ -30,7 +30,7 @@ import {
   ROUTER_DEFAULT_TOP_K,
   ROUTER_META_TOOL_DEFS,
 } from '@/lib/mcp/tool-router';
-import { formatToolProtocolManual } from '@/lib/agent-tools';
+import { formatToolProtocolManual } from '@/lib/agent-tools-server';
 import { buildProtocolHeader } from '@/lib/emulated-agent';
 
 const ROUTE_PATH = path.resolve(__dirname, '../app/api/chat/route.ts');

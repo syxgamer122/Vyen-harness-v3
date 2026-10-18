@@ -28,11 +28,10 @@ import { generateText } from 'ai';
 import type { CoreMessage, LanguageModel } from 'ai';
 import { parseLooseJson } from '@/lib/json-repair';
 import {
-  formatToolProtocolManual,
   summarizeToolArgs,
   summarizeToolResult,
-  type AgentToolSet,
 } from '@/lib/agent-tools';
+import { formatToolProtocolManual, type AgentToolSet } from '@/lib/agent-tools-server';
 import { stripEmulatedToolMarkup } from '@/lib/text-tool-guard';
 import { executeToolBatch, type ToolBatchItem } from '@/lib/tool-batch';
 import {

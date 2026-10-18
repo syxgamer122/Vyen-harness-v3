@@ -16,7 +16,7 @@ import path from 'node:path';
 import { createOpenAI } from '@ai-sdk/openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runEmulatedLoop } from '@/lib/emulated-agent';
-import type { AgentToolSet } from '@/lib/agent-tools';
+import type { AgentToolSet } from '@/lib/agent-tools-server';
 import { loadAgentRegistryFromEntries } from '@/lib/agents/agent-registry';
 import { executeDelegate, type DelegateCallArgs } from '@/lib/subagent';
 

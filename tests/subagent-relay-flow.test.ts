@@ -19,7 +19,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { runEmulatedLoop } from '@/lib/emulated-agent';
 import { executeDelegate } from '@/lib/subagent';
 import { loadAgentRegistryFromEntries } from '@/lib/agents/agent-registry';
-import type { AgentToolSet } from '@/lib/agent-tools';
+import type { AgentToolSet } from '@/lib/agent-tools-server';
 
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {

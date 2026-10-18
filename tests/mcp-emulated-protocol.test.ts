@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { buildProtocolHeader } from '../lib/emulated-agent';
-import { formatToolProtocolManual } from '../lib/agent-tools';
+import { formatToolProtocolManual } from '../lib/agent-tools-server';
 import { mapMcpTools, mcpToolKey, type McpToolInfo } from '../lib/mcp/tool-mapper';
 
 const mcpTool: McpToolInfo = {

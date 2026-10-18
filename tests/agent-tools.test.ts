@@ -1,12 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __clearSearchCache } from '@/lib/web-backend';
 import { __clearAllToolCallBudgets } from '@/lib/tool-call-budget';
-import {
-  buildAgentTools,
-  summarizeToolArgs,
-  summarizeToolResult,
-  validateMemoryProposal,
-} from '@/lib/agent-tools';
+import { summarizeToolArgs, summarizeToolResult } from '@/lib/agent-tools';
+import { buildAgentTools, validateMemoryProposal } from '@/lib/agent-tools-server';
 
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {

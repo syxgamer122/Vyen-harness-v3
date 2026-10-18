@@ -14,7 +14,7 @@ import {
   formatToolNameList,
   formatToolProtocolManual,
   ALL_TOOL_PROTOCOL_NAMES,
-} from '@/lib/agent-tools';
+} from '@/lib/agent-tools-server';
 import {
   __clearAllToolCallBudgets,
   getToolCallBudget,

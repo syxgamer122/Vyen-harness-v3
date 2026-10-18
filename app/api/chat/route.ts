@@ -42,16 +42,18 @@ import { formatWebContextBlock, type WebContextPayload } from '@/lib/web-context
 import { markModelUnsupported } from '@/lib/model-negative-cache';
 import { isToolUnsupported, markToolsUnsupported } from '@/lib/tool-support-cache';
 import {
-  buildAgentTools,
   summarizeToolArgs,
   summarizeToolResult,
   toolResultBody,
-  formatToolNameList,
   CLIENT_TOOL_DEFS,
   CLIENT_TOOL_NAMES,
-  buildDelegateTool,
   NATIVE_EXCLUDED_CLIENT_TOOLS,
 } from '@/lib/agent-tools';
+import {
+  buildAgentTools,
+  formatToolNameList,
+  buildDelegateTool,
+} from '@/lib/agent-tools-server';
 import { extractLessons, formatLessonsBlock } from '@/lib/lessons';
 import { RecipeSchema } from '@/lib/recipes/schema';
 import {

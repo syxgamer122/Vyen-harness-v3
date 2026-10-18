@@ -8,7 +8,7 @@ import {
   parseToolCallBlocks,
   runEmulatedLoop,
 } from '@/lib/emulated-agent';
-import { buildAgentTools } from '@/lib/agent-tools';
+import { buildAgentTools } from '@/lib/agent-tools-server';
 
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {

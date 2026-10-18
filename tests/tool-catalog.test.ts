@@ -18,13 +18,13 @@ import {
   toolShortLabel,
   toolsByCategory,
 } from '@/lib/tool-catalog';
+import { CLIENT_TOOL_DEFS } from '@/lib/agent-tools';
 import {
   ALL_TOOL_PROTOCOL_NAMES,
-  CLIENT_TOOL_DEFS,
   TOOL_SHORT_LABELS,
   buildAgentTools,
   formatToolProtocolManual,
-} from '@/lib/agent-tools';
+} from '@/lib/agent-tools-server';
 
 /** 30 tên mong đợi, viết tường minh để bắt cả thêm lẫn xoá tool một cách vô ý. */
 const EXPECTED_NAMES = [

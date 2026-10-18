@@ -12,7 +12,7 @@ import { tool, type LanguageModel, type ToolSet } from 'ai';
 import { z } from 'zod';
 import { runPool } from '@/lib/orchestrator/scheduler';
 import { runSubagent, type SubagentOptions, type SubagentResult } from '@/lib/subagent';
-import type { AgentToolSet } from '@/lib/agent-tools';
+import type { AgentToolSet } from '@/lib/agent-tools-server';
 import { prepareRecipeRun } from './run';
 import {
   SUBRECIPE_BATCH_TOOL,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { searchMemories } from '@/lib/agent-tools';
+import { searchMemories } from '@/lib/agent-tools-server';
 import {
   isToolUnsupported,
   markToolsUnsupported,
