@@ -363,9 +363,9 @@ git commit -m "fix(settings): ẩn khối Model Chains chưa được nối vào
 Bối cảnh: `setTheme` được khai báo và implement nhưng **không nơi nào gọi**. Theme cũng không được áp dụng ở đâu: không có `data-theme`, không có `<html class="dark">`, `app/globals.css:133-135` có `.dark { color-scheme: light }` — một no-op có chủ đích.
 
 Đây là **hợp đồng thiết kế**, không phải sơ suất:
-- `DESIGN.md:433-448` §7 "Light-only, không có nhánh tối"
-- `DESIGN.md:32` ràng buộc cứng #6: thêm biến thể `dark:` là dựng nhánh sáng nửa vời thứ hai
-- `DESIGN.md:41-44` dặn rõ "đừng xoá khối `.dark` và đừng biến nó thành theme tối"
+- `docs/DESIGN-2026-10-06.md` (bản lưu trữ) §7 "Light-only, không có nhánh tối"
+- `docs/DESIGN-2026-10-06.md` (bản lưu trữ) ràng buộc cứng #6: thêm biến thể `dark:` là dựng nhánh sáng nửa vời thứ hai
+- `docs/DESIGN-2026-10-06.md` (bản lưu trữ) dặn rõ "đừng xoá khối `.dark` và đừng biến nó thành theme tối"
 - `tests/design-system.test.ts:1746-1754` và `tests/tool-trace.test.ts:772-774` cấm `dark:`
 
 Vì sao **xoá** chứ không thêm UI: một nút bấm không đổi màu là bug tự tạo. Làm theme tối thật cần bảng token cho ~30 biến trong `app/globals.css:25-119`, mở khoá 2 test trên, sửa `DESIGN.md`, và tính lại contrast toàn bảng màu.

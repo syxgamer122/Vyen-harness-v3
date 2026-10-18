@@ -58,7 +58,16 @@ const CODE_EXT = /\.(ts|tsx|cjs|mjs|js|json)$/;
 
 const ENV_READ_RE = /[a-zA-Z]+\s*\.\s*env\s*(?:\.([A-Z][A-Z0-9_]*)|\[\s*['"]([A-Z][A-Z0-9_]*)['"]\s*\])/g;
 
-const PATH_RE = /`([A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:ts|tsx|cjs|mjs|js|json|md|ya?ml))`/g;
+/*
+ * Đường dẫn trong backtick.
+ *
+ * Lớp ký tự đầu PHẢI có `.`, không chỉ `[A-Za-z0-9_]`: trước đây nó bắt đầu bằng
+ * `[A-Za-z0-9_]` nên mọi đường dẫn bắt đầu bằng dấu chấm — `.vyen/…`,
+ * `.github/…`, `.env.example` — rơi khỏi regex và **không bao giờ được kiểm**.
+ * Đó là lý do `README.md` khẳng định `.vyen/schedules.json` trong khi file đó
+ * không tồn tại mà `docs:check` vẫn báo 0 lệch.
+ */
+const PATH_RE = /`([.A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:ts|tsx|cjs|mjs|js|json|md|ya?ml))`/g;
 /** Route API được nhắc trong docs phải có `app/api/<đoạn>/route.ts` thật. */
 const ROUTE_RE = /`?\/api\/([a-z0-9-]+(?:\/[a-z0-9-]+)*)`?/g;
 const CMD_RE = /npm run ([A-Za-z0-9:_-]+)/g;

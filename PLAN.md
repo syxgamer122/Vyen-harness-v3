@@ -1,7 +1,18 @@
 # Kế hoạch nâng cấp UI Vyen Harness (P0–P5) — Lấy cảm hứng từ DeepSeek Harness
 
+> **TÀI LIỆU LỊCH SỬ — KHÔNG PHẢI CHỈ DẪN ĐANG CHẠY.** Chụp ngày 2026-10-10, phần
+> lớn đã hoàn tất. Dán nhãn 2026-10-18.
+>
+> **Đừng dùng file này để quyết định gì.** Nó ghi ở thì mệnh lệnh nhưng **không
+> mệnh lệnh nào được test bảo vệ**, nên lệch khỏi code ngay từ khi viết. Mọi tham
+> chiếu `file:dòng` và đường dẫn trong đây **đã chết** — đừng bấm theo.
+>
+> **Quy tắc đang chạy:** `AGENTS.md` (quy ước làm việc) và `DESIGN.md` (định
+> hướng). Ràng buộc thật nằm ở `tests/`.
+
 Ngày cập nhật: 11/10/2026 (bản 2 — đã đối chiếu với mã nguồn thật).
-Logo chính thức: `Downloads/Gemini_Generated_Image_wfrhj5wfrhj5wfrh.png`.
+
+~~Logo chính thức: `Downloads/Gemini_Generated_Image_wfrhj5wfrhj5wfrh.png`.~~ **�Ã THAY 2026-10-18.** Logo hiện tại đo từ ảnh chủ repo cung cấp, nằm ở `brand/logo-source.png`; hình và màu dùng lúc chạy nằm ở **`brand/mark.json`**. Bốn màu nêu dưới đây (`#81ee61`, `#6bd265`, `#11835f`, `#138762`) **không còn đúng** — bảng màu đang chạy là `#82E767` / `#2F9462` / `#1B7455` / `#158360`.
 
 > **Bản 2 sửa lại 8 điểm của bản 1** sau khi đọc code, đo màu từ ảnh logo và
 > chạy phép tính tương phản. Mục tiêu giữ nguyên; phần hiện thực phải theo các
@@ -81,7 +92,7 @@ Vậy đây là **phân tách có chủ đích**, không phải trùng lặp. Ch
 | `border-default` | `#949494` (**3.03:1**) | `rgba(0,0,0,0.12)` | Xem §4 — đây là quyết định lớn nhất |
 | `border-strong` | `#525252` | `rgba(0,0,0,0.20)` | |
 
-**Luật bất di bất dịch:** sửa token ⇒ sửa **cùng một lượt** `tailwind.config.ts` + `app/globals.css` + `tests/design-system.test.ts` (DESIGN.md:22-24).
+**Luật bất di bất dịch:** sửa token ⇒ sửa **cùng một lượt** `tailwind.config.ts` + `app/globals.css` + `tests/design-system.test.ts` (xem `docs/DESIGN-2026-10-06.md`).
 
 ### 3.3 `components/ui/` — làm, nhưng vì lý do khác
 
@@ -737,7 +748,7 @@ Audit reverse-dependency (3 subagent, mọi claim chính đã tự grep lại) t
 | A4 | `formatRecallBanner` | grep chỉ `tests/memory-reviewer.test.ts` | typecheck · `memory-reviewer.test.ts` xanh |
 | A5 | import `PointInTimeReplayEngine` không dùng ở `lib/teamwork/cli.ts` | `--ledger-replay` chạy vòng `ledger.query` nội tuyến; class vẫn sống cho tests | typecheck · lint |
 
-Tài liệu sửa cùng lượt — `npm run docs:check` đỏ nếu doc còn nhắc file đã xoá: `README.md:159` (bullet orchestrator), `DESIGN.md:770` (nhắc `orchestrator-badge.tsx`). Comment trong `lib/db.ts:452` liệt kê annotation không còn ai ghi.
+Tài liệu sửa cùng lượt — `npm run docs:check` đỏ nếu doc còn nhắc file đã xoá: `README.md:159` (bullet orchestrator), `docs/DESIGN-2026-10-06.md` (bản lưu trữ) (nhắc `orchestrator-badge.tsx`). Comment trong `lib/db.ts:452` liệt kê annotation không còn ai ghi.
 
 **Không xoá test nào còn khoá hành vi đang chạy**: `tests/skills.test.ts` và `tests/orchestrator-badge.test.ts` xoá cùng mã chết; `annotation-persist-cap.test.ts` chỉ bỏ đúng một phần tử fixture.
 

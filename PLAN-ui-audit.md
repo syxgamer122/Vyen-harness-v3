@@ -1,5 +1,20 @@
 # PLAN — Kết quả audit UI/UX + kế hoạch đẹp hơn Codex
 
+> **TÀI LIỆU LỊCH SỬ — KHÔNG PHẢI CHỈ DẪN ĐANG CHẠY.** Chụp ngày 2026-10-10.
+> Dán nhãn 2026-10-18.
+>
+> **Đừng dùng file này để quyết định gì.** Mọi tham chiếu `file:dòng` và đường dẫn
+> trong đây **đã chết** — đừng bấm theo.
+>
+> **Quy tắc đang chạy:** `AGENTS.md` (quy ước làm việc) và `DESIGN.md` (định
+> hướng). Ràng buộc thật nằm ở `tests/`.
+>
+> **Một tuyên bố trong file này đã được chứng minh SAI:** phần "Bối cảnh quyết
+> định cách đọc" dưới đây nói `DESIGN.md` *mô tả hệ thống đang chạy, gồm 7 ràng
+> buộc cứng được `tests/design-system.test.ts` canh*. Đo 2026-10-18: **xoá hẳn
+> `DESIGN.md` khỏi repo thì test vẫn 47/47 xanh.** Không test nào đọc nội dung
+> tài liệu — tuyên bố đó không có cơ sở.
+
 Ngày: 2026-10-10. Audit READ-ONLY, chưa sửa file UI nào.
 6 subagent chạy song song, mỗi agent một vùng file không overlap; mọi claim
 quan trọng đã được tự kiểm chứng lại bằng code/CSS đã build + công thức WCAG
@@ -305,8 +320,8 @@ dùng thật ở `audit-viewer-dialog.tsx:289`.)
 
 `components/chat/stream-bubble.tsx` **không component nào mount** (grep toàn repo
 chỉ ra chính nó + `data-testid`), nhưng:
-- `DESIGN.md:500` dùng nó làm **ngoại lệ duy nhất** cho `backdrop-blur`
-- `DESIGN.md:612-615` mô tả "khối suy luận đã sửa" nằm trong đó
+- `docs/DESIGN-2026-10-06.md` (bản lưu trữ) dùng nó làm **ngoại lệ duy nhất** cho `backdrop-blur`
+- `docs/DESIGN-2026-10-06.md` (bản lưu trữ) mô tả "khối suy luận đã sửa" nằm trong đó
 
 ⇒ App thật không có blur nào, hợp đồng đang bảo vệ một file chết. Cùng cơ chế:
 `components/ui/text-shimmer.tsx` cũng 0 importer, và còn **trùng chức năng** với
@@ -416,7 +431,7 @@ tầng dưới không có dữ liệu, hoặc hai chỗ cùng cấu hình một 
    trong danh sách làm đẹp của đợt 1 dựa trên con số sai ⇒ **mục đích vẫn đúng**
    (không có thang), nhưng mức độ không tệ như đã ghi.
 3. **"`tests/message-item-timeline.test.ts:75,77` trái §15.1".** Agent tự bác bỏ
-   sau khi đọc: §15.1 (`DESIGN.md:1265-1271`) chỉ chốt thứ tự đọc của **bản tổng kết**
+   sau khi đọc: §15.1 (`docs/DESIGN-2026-10-06.md` (bản lưu trữ)) chỉ chốt thứ tự đọc của **bản tổng kết**
    và nguyên tắc "lời giải thích, tool và kết luận không được cùng một độ nổi";
    reasoning không được nêu tên. Test khoá reasoning dưới `<MessageUsage>` **không
    trái**. Muốn đổi thì phải thêm mục vào `DESIGN.md` trước, không phải sửa test.

@@ -99,7 +99,7 @@ Hệ thống Cài đặt được tổ chức lại theo 6 nhóm chức năng tr
 
 - **Biểu thức Cron tiêu chuẩn**: Hỗ trợ 5 trường cron (`phút giờ ngày tháng thứ`), bước nhảy `*/n`, khoảng, danh sách và alias (`@hourly`, `@daily`, `@weekly`). Tự động giải nghĩa bằng câu tiếng Việt và hiển thị mốc chạy tiếp theo.
 - **Thực thi ngầm qua Node bridge & CLI**: Bộ timer tick mỗi 30 giây chạy headless, tự động tạo chat session mới chứa kết quả thực thi và liên kết danh sách `sessions[]` vào lịch trình.
-- **Bảng Dexie `schedules` (v16)**: Lưu trữ `id, recipeId, cron, enabled, lastRunAt, lastStatus, sessions[]`, hỗ trợ đồng bộ hai chiều giữa Web UI và bridge daemon (`.vyen/schedules.json`).
+- **Bảng Dexie `schedules` (v16)**: Lưu trữ `id, recipeId, cron, enabled, lastRunAt, lastStatus, sessions[]` — nơi duy nhất lịch trình được lưu, dùng chung giữa Web UI và bộ chạy desktop/CLI.
 - **Giao diện Scheduler trực quan**: Tab riêng trong Cài đặt và panel quản trị — hỗ trợ Tạo / Sửa / Tạm dừng (Pause) / Kích hoạt (Resume) / Chạy ngay (Run now), xem lịch sử các session do lịch trình sinh ra và click để mở trực tiếp xem kết quả.
 - **Lệnh CLI `vyen schedule`**:
   - `vyen schedule list`: Liệt kê các lịch trình và trạng thái lần chạy gần nhất.
