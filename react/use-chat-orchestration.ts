@@ -16,11 +16,10 @@ import { syncActiveProviderSnapshot } from '@/lib/providers';
 import {
   db,
   appendMessage,
-  fromParentKey,
-  toParentKey,
   type StoredMessage,
   type RecipeRecord,
 } from '@/lib/db';
+import { fromParentKey, toParentKey } from '@/lib/parent-keys';
 import { shouldShowThinkingControl } from '@/lib/reasoning-capability';
 import { createApprovalToken } from '@/lib/approval-binding';
 import { recordAuditLog } from '@/lib/audit-log';

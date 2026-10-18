@@ -1,8 +1,9 @@
+import { ROOT_KEY } from './parent-keys';
 import type { StoredMessage } from './db';
 
 /**
  * Sentinel cũ của cây (thời BranchSelection). Chấp nhận thêm khi đọc để không
- * mất dữ liệu legacy; sentinel chính thức hiện nay là '__ROOT__' (lib/db.ts).
+ * mất dữ liệu legacy; sentinel chính thức hiện nay là ROOT_KEY (lib/parent-keys.ts).
  */
 const LEGACY_ROOT_KEY = '\u0000root';
 
@@ -17,7 +18,7 @@ interface TreeIndex {
 }
 
 function rawParentId(m: StoredMessage): string | null {
-  if (m.parentId == null || m.parentId === '__ROOT__' || m.parentId === LEGACY_ROOT_KEY) return null;
+  if (m.parentId == null || m.parentId === ROOT_KEY || m.parentId === LEGACY_ROOT_KEY) return null;
   return m.parentId;
 }
 

@@ -44,7 +44,6 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/backup.ts` — Đọc/ghi file backup dạng base64
 - `lib/chat-recall.ts` — Tra cứu full-text toàn bộ lịch sử trò chuyện (P2-8)
 - `lib/chat-search.ts` — Tìm full-text trong lịch sử chat; bỏ là mất tìm kiếm hội thoại
-- `lib/chat-tree-persistence.ts` — Logic lưu cây hội thoại — hàm thuần, tách khỏi chat-interface
 - `lib/memory/agent-memory-client.ts` — Lấy workspaceKey bền (desktop hỏi bridge, web đọc cache)
 - `lib/memory/store.ts` — Chống trùng lặp digest cho memory của agent
 - `lib/providers.ts` — Cấu hình nhà cung cấp lưu trong Dexie; bỏ là mất provider đã cấu hình
@@ -52,14 +51,13 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/skills/client-adapters.ts` — Bọc khác biệt desktop bridge ↔ web FSA cho disk skills + hints
 - `lib/tool-permissions.ts` — Map tool sang 8 nhóm phân quyền
 - `lib/tree-repair.ts` — Sửa cây hội thoại hỏng — ưu tiên deepest leaf, sentinel __ROOT__
-- `lib/tree-validation.ts` — Kiểm tra chuỗi parent từ leaf lên root còn nguyên
 - `lib/use-cross-tab-chat-sync.ts` — Hook React đồng bộ chat giữa các tab
 - `lib/workspace-checkpoints.ts` — Trần số checkpoint mỗi lượt
 - `lib/zeromem/auto-ingest.ts` — Nạp trace vào memory khi hội thoại đóng
 - `lib/zeromem/memory-block.ts` — Dựng khối memory gửi kèm lượt
 - `lib/zeromem/persistence.ts` — Giới hạn số trace zeromem giữ lại
 
-19 file **không tự chạm** API trình duyệt nào, nhưng kéo được
+17 file **không tự chạm** API trình duyệt nào, nhưng kéo được
 một module chạm, nên cũng không chạy được trên Node. Chúng không có mặt ở bảng
 trên vì quét chỉ thấy phụ thuộc TRỰC TIẾP — `lib/tool-permissions.ts` là ví dụ:
 không viết chữ `Dexie`, chỉ gọi `db.toolPermissions.put`.
@@ -75,4 +73,4 @@ rơi vào danh sách này. Thêm `CORE_ENTRIES` mà kéo theo Dexie thì test đ
 
 ## File chạm API trình duyệt
 
-`lib/auto-backup.ts`:29,32,59,59,77,87,88,97,132,133<br>`lib/chat-broadcast.ts`:48,57<br>`lib/client-identity.ts`:37,37,45<br>`lib/db.ts`:1,511,1042,1043,1049,1049<br>`lib/fs-access.ts`:79,91
+`lib/auto-backup.ts`:29,32,59,59,77,87,88,97,132,133<br>`lib/chat-broadcast.ts`:48,57<br>`lib/client-identity.ts`:37,37,45<br>`lib/db.ts`:1,503,1034,1035,1041,1041<br>`lib/fs-access.ts`:79,91

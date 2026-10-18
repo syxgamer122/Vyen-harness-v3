@@ -233,8 +233,20 @@ describe('browserBound — file kéo trình duyệt vào qua cạnh runtime', ()
     expect(allLibFiles().has('lib/tool-permissions.ts')).toBe(true);
   });
 
-  it('`tree-validation.ts` — import GIÁ TRỊ `ROOT_KEY` → bị coi là kéo trình duyệt', () => {
-    expect(allLibFiles().has('lib/tree-validation.ts')).toBe(true);
+  it('`tree-repair.ts` — import GIÁ TRỊ `db` → vẫn bị kéo trình duyệt', () => {
+    // Tách hằng thuần KHÔNG cứu được file này: nó còn gọi `db` thật.
+    expect(allLibFiles().has('lib/tree-repair.ts')).toBe(true);
+  });
+
+  it('`tree-validation.ts` — chỉ dùng ROOT_KEY thuần → KHÔNG bị kéo trình duyệt', () => {
+    // ROOT_KEY sống ở `lib/parent-keys.ts` (không Dexie) nên file này chạy được
+    // Node. Trước khi tách, nó import ROOT_KEY từ `@/lib/db` và bị kéo Dexie vào
+    // chỉ vì MỘT hằng thuần — đúng loại phụ thuộc oan.
+    expect(allLibFiles().has('lib/tree-validation.ts')).toBe(false);
+  });
+
+  it('`chat-tree-persistence.ts` — chỉ dùng toParentKey/fromParentKey thuần → KHÔNG bị kéo', () => {
+    expect(allLibFiles().has('lib/chat-tree-persistence.ts')).toBe(false);
   });
 
   it('`date-groups.ts` — CHỈ `import type` → KHÔNG bị tính là kéo trình duyệt', () => {

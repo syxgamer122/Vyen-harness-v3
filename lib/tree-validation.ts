@@ -1,4 +1,5 @@
-import { ROOT_KEY, type StoredMessage } from "@/lib/db";
+import { ROOT_KEY } from "@/lib/parent-keys";
+import type { StoredMessage } from "@/lib/db";
 
 export type TreeValidationReason =
   | "missing-leaf"

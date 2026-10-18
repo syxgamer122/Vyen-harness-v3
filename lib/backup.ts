@@ -1,4 +1,5 @@
-import { db, toParentKey, type ChatSession, type StoredAttachment, type StoredMessage } from '@/lib/db';
+import { db, type ChatSession, type StoredAttachment, type StoredMessage } from '@/lib/db';
+import { toParentKey } from '@/lib/parent-keys';
 import { tokenize } from '@/lib/search-utils';
 
 export const BACKUP_FORMAT = 'vyen-backup';

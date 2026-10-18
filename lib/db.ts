@@ -5,20 +5,12 @@ import type { AgentMemoryRecord } from '@/lib/memory/agent-memory';
 import type { ZeroMemTrace, ZeroMemEntity, ZeroMemRelation } from '@/lib/zeromem/types';
 import { resetTurnTaint } from '@/lib/taint-tracker';
 import { redactSecretText } from '@/lib/secret-registry';
+import { ROOT_KEY, toParentKey, fromParentKey } from '@/lib/parent-keys';
 
-/**
- * IndexedDB KHÔNG index được `null`. Message gốc phải mang sentinel này,
- * nếu không sẽ biến mất khỏi [chatId+parentId] và làm sập cấp phát branchOrder.
- * `null` chỉ tồn tại ở tầng domain; DB luôn thấy string.
- */
-export const ROOT_KEY = '__ROOT__';
-
-export function toParentKey(parentId: string | null | undefined): string {
-  return parentId == null || parentId === ROOT_KEY ? ROOT_KEY : parentId;
-}
-export function fromParentKey(key: string | null | undefined): string | null {
-  return key == null || key === ROOT_KEY ? null : key;
-}
+/* `ROOT_KEY` / `toParentKey` / `fromParentKey` đã chuyển sang `@/lib/parent-keys`.
+ * Chúng không chạm IndexedDB mà lại nằm trong file import Dexie, nên mọi file
+ * chỉ cần một hằng thuần cũng bị kéo Dexie vào và không chạy được trên Node.
+ * Cố tình KHÔNG re-export từ đây — xem lib/parent-keys.ts để hiểu vì sao. */
 
 export type StoredMessageRole = 'user' | 'assistant' | 'system' | 'data';
 export type StoredMessageFinishReason = 'stop' | 'abort' | 'error';

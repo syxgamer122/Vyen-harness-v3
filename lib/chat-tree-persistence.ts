@@ -3,7 +3,8 @@
  * Toàn bộ hàm thuần (không React), dễ unit-test độc lập.
  */
 import type { Message } from 'ai/react';
-import { toParentKey, fromParentKey, type StoredMessage, type StoredAttachment } from '@/lib/db';
+import { toParentKey, fromParentKey } from '@/lib/parent-keys';
+import type { StoredMessage, StoredAttachment } from '@/lib/db';
 import { reconstructActiveThread } from '@/lib/tree-utils';
 import { toPersistableText } from '@/lib/message-text';
 import { nextTurnId, type TurnIntent } from '@/lib/turns';

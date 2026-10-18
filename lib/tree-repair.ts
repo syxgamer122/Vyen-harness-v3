@@ -1,4 +1,5 @@
-import { db, ROOT_KEY, type ChatSession, type StoredMessage } from "@/lib/db";
+import { db, type ChatSession, type StoredMessage } from "@/lib/db";
+import { ROOT_KEY } from "@/lib/parent-keys";
 import { findDeepestLeafId } from "@/lib/tree-utils";
 import {
   getClientId,
