@@ -1043,6 +1043,43 @@ export function formatToolNameList(toolNames: Iterable<string>): string {
   return parts.join(', ');
 }
 
+/**
+ * Schema của tool `delegate`, tách riêng để `CLIENT_TOOL_DEFS` (schema-only, phục
+ * vụ doc registry của đường emulated) và `buildDelegateTool` (bản chạy thật, mô tả
+ * động) dùng chung MỘT nguồn. Viết schema hai lần là cách chắc chắn nhất để chúng
+ * trôi lệch nhau.
+ */
+export const DELEGATE_PARAMETERS = z.object({
+  agent: z
+    .string()
+    .max(60)
+    .optional()
+    .describe('Tên file agent trong .vyen/agents/. Bỏ trống = bộ tool đầy đủ.'),
+  task: z
+    .string()
+    .min(10)
+    .max(5000)
+    .describe('Việc cụ thể cần làm. Không viết lại mô tả của agent.'),
+  steps: z
+    .number()
+    .int()
+    .min(1)
+    .max(25)
+    .optional()
+    .describe('Ghi đè số vòng tối đa khai báo trong file agent.'),
+  model: z.string().max(80).optional().describe('Ghi đè model khai báo trong file agent.'),
+  context: z
+    .enum(['fresh', 'brief'])
+    .optional()
+    .describe("'brief' = kèm tóm tắt bối cảnh phiên cha; mặc định 'fresh'."),
+});
+
+/** Mô tả dự phòng khi chưa nạp được danh sách agent — đủ để không mô tả sai hình dạng tool. */
+const DELEGATE_STATIC_DESCRIPTION =
+  'GIAO VIỆC cho subagent chạy context RIÊNG (không thấy lịch sử chat này). ' +
+  'Chọn `agent` theo việc cần làm rồi viết `task` cụ thể cho nó. ' +
+  "context: 'brief' kèm tóm tắt bối cảnh phiên cha.";
+
 export const CLIENT_TOOL_DEFS = {
   fs_list: tool({
     description:
@@ -1224,10 +1261,15 @@ export const CLIENT_TOOL_DEFS = {
   }),
 
   /* ------------------------------------------------------------------ */
-  /* Subagent Delegation — xem buildDelegateTool() ở cuối file.           */
-  /* Không nằm trong CLIENT_TOOL_DEFS: mô tả phải liệt kê agent đọc từ  */
-  /* đĩa ở MỖI request, còn hằng module-level bị đóng băng lúc import.  */
+  /* Subagent Delegation — SCHEMA-ONLY. Ban chay dung buildDelegateTool() o
+     cuoi file de lay danh sach agent tu dia; ban nay chi con trong CLIENT_TOOL_DEFS
+     de registry tai (mo ta tool cho duong emulated) co dung chu ky args. */
   /* ------------------------------------------------------------------ */
+
+  delegate: tool({
+    description: DELEGATE_STATIC_DESCRIPTION,
+    parameters: DELEGATE_PARAMETERS,
+  }),
   /* ------------------------------------------------------------------ */
   /* Background shell — lệnh chạy NGỀM, hỏi kết quả sau                  */
   /* (port ý tưởng pi-background-tasks; process sống qua restart app)     */
@@ -1480,33 +1522,6 @@ export function buildDelegateTool(registry: AgentRegistry): Tool {
       'Agent chỉ có đúng các tool trong khai báo của nó — ví dụ agent chỉ-đọc không có ' +
       'fs_write, nên đừng bảo nó sửa code.\n' +
       'context: "brief" kèm tóm tắt bối cảnh phiên cha, dùng khi task cần hiểu chuyện đã xảy ra trước đó.',
-    parameters: z.object({
-      agent: z
-        .string()
-        .max(60)
-        .optional()
-        .describe('Tên file agent trong .vyen/agents/. Bỏ trống = bộ tool đầy đủ.'),
-      task: z
-        .string()
-        .min(10)
-        .max(5000)
-        .describe('Việc cụ thể cần làm. Không viết lại mô tả của agent.'),
-      steps: z
-        .number()
-        .int()
-        .min(1)
-        .max(25)
-        .optional()
-        .describe('Ghi đè số vòng tối đa khai báo trong file agent.'),
-      model: z
-        .string()
-        .max(80)
-        .optional()
-        .describe('Ghi đè model khai báo trong file agent.'),
-      context: z
-        .enum(['fresh', 'brief'])
-        .optional()
-        .describe("'brief' = kèm tóm tắt bối cảnh phiên cha; mặc định 'fresh'."),
-    }),
+    parameters: DELEGATE_PARAMETERS,
   });
 }

@@ -2259,7 +2259,16 @@ export async function POST(req: Request) {
                        đi kèm: chúng không nằm trong registry tĩnh của
                        formatToolProtocolManual nên thiếu là bị bỏ qua âm thầm
                        (model được bảo có 2 tool này mà không có chữ ký args). */
-                    extraToolDocs: { ...mcpTools.defs, ...routerMetaTools },
+                    extraToolDocs: {
+                      ...mcpTools.defs,
+                      ...routerMetaTools,
+                      /* `delegate` cũng phải vào đây: nó không nằm trong
+                         registry tĩnh của `agent-tools` (dựng động vì mô tả liệt
+                         kê agent trên đĩa). Thiếu nó thì model đường emulated —
+                         tức model KHÔNG có native tool-calling — sẽ không thấy
+                         sub-agent nào cả. */
+                      ...(delegateAvailable ? { delegate: buildDelegateTool(agentRegistry) } : {}),
+                    },
                     onClientToolCall: (call) => {
                       /* Forward part 'tool_call' — useChat populates
                          toolInvocations + onToolCall chạy trên máy user. */
