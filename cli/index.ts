@@ -30,7 +30,20 @@
  *   $env:VYEN_API_KEY = "sk-ant-..."
  *   $env:VYEN_MODEL   = "claude-3-5-haiku-20241022"
  *   $env:VYEN_KIND    = "anthropic"
- *   node cli/index.ts "xin chào"
+ *   npm run cli -- "xin chào"
+ *
+ * ============ CÁCH CHẠY — LUÔN DÙNG `npm run cli` ============
+ *
+ * Lệnh đúng:
+ *
+ *   $env:VYEN_API_KEY = "sk-..."
+ *   $env:VYEN_MODEL   = "gpt-4o-mini"
+ *   npm run cli -- "xin chào"
+ *
+ * KHÔNG chạy `node cli/index.ts` thẳng. File này import `@/lib/provider/
+ * upstream-diagnosis`, mà Node không đọc `paths` trong `tsconfig.json` — nên
+ * cách đó chết ngay với `Cannot find package '@/lib'`. `npm run cli` đi qua
+ * `tsx` nên resolve được. Đây là lý do `tsx` nằm trong devDependencies.
  *
  * Biến môi trường:
  *   VYEN_API_KEY   bắt buộc. Key được đọc TỪ BIẾN MÔI TRƯỜNG, không bao giờ
@@ -46,6 +59,8 @@
  *   VYEN_MAX_TOKENS trần token đầu ra, mặc định 2048. **Đừng bỏ trống** — xem
  *                  ghi chú cạnh chỗ dùng: gateway tính credit sẽ từ chối vì
  *                  trần mặc định của provider quá lớn.
+ *   VYEN_DEBUG     đặt `1` để in thêm `devLog` (req id, host, body upstream).
+ *                  Mặc định KHÔNG in — người dùng chỉ cần thông báo sạch.
  *
  * ============ VẤN ĐỀ ĐÃ GẶP, CHƯA GIẢI ============
  *
@@ -56,10 +71,16 @@
  * alias) trước khi làm bước kế tiếp. Ghi lại ở đây để không mất.
  */
 
+import { randomUUID } from 'node:crypto';
 import { streamText } from 'ai';
 import type { AdapterKind } from '../lib/provider/adapter.ts';
 import { resolveOpenAIModel } from '../lib/provider/openai-adapter.ts';
 import { resolveAnthropicModel } from '../lib/provider/anthropic-adapter.ts';
+// Hai dòng dưới ĐỂ ĐÚNG alias `@/` để chứng minh lý do phải có `tsx`: chạy
+// `node cli/index.ts` thẳng thì hai import này hỏng. Chạy `npm run cli` thì
+// được. Nếu sau này đổi alias, sửa cả hai chỗ cùng lúc.
+import { diagnoseUpstreamError } from '@/lib/provider/upstream-diagnosis';
+import { getKeyLabel } from '@/lib/api-keys';
 
 /**
  * Bọc trong hàm async thay vì dùng top-level `await`.
@@ -163,9 +184,33 @@ async function main(): Promise<void> {
     if (wrote) process.stdout.write('\n');
 
     if (streamError) {
-      const msg = streamError instanceof Error ? streamError.message : String(streamError);
-      const name = streamError instanceof Error ? streamError.name : 'Error';
-      console.error(`\n> LOI (${name}): ${msg}`);
+      /* Chuyển lỗi thô thành chẩn đoán có nghĩa (spec §7).
+       *
+       * Không in `streamError.message` thẳng nữa: message của provider là tiếng
+       * Anh dài dòng, và quan trọng hơn là **không phân biệt được lỗi mạng với
+       * lỗi key** — người dùng CLI không biết nên bật lại Wi-Fi hay đổi key.
+       *
+       * `userMessage` và `devLog` là HAI chuỗi khác nhau (Review Focus #1):
+       *  - `userMessage`: thông báo sạch, tiếng Việt, có hướng xử lý.
+       *  - `devLog`: req id, model, host, body — chỉ in khi VYEN_DEBUG=1.
+       * In cả hai ra console là rò thông tin vô nghĩa cho người dùng.
+       */
+      const diag = diagnoseUpstreamError(streamError, {
+        requestId: randomUUID().slice(0, 8),
+        model,
+        // `getKeyLabel` che key trước khi nó đi vào bất kỳ chuỗi nào.
+        keyLabel: getKeyLabel(apiKey),
+        providerBase: cfg.baseUrl,
+      });
+
+      console.error(`\n> ${diag.code}  (${diag.scope})`);
+      console.error(`> ${diag.userMessage}`);
+      console.error(
+        `> phai doi key: ${diag.blameKey ? 'co' : 'khong'} | dung thu key khac: ${diag.stopFailover ? 'dung roi' : 'chua'}`,
+      );
+      if (process.env.VYEN_DEBUG === '1') {
+        console.error(`> dev: ${diag.devLog}`);
+      }
       process.exit(1);
     }
 
