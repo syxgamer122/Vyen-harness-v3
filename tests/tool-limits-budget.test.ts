@@ -21,9 +21,29 @@ import {
 import {
   DOOM_LOOP_THRESHOLD,
   TOOL_RESULT_MAX_CHARS,
+  loadSpillSaver,
   serializeToolResult,
   truncateToolResult,
 } from '@/lib/tool-limits';
+
+describe('loadSpillSaver — không được làm hỏng bundle trình duyệt', () => {
+  /* lib/tool-limits.ts được import bởi react/use-chat-orchestration.ts:57, tức
+   * nằm trong bundle trình duyệt. Nếu loader chạm `require('../ipc.cjs')` ở đây
+   * thì bundle sập; nếu ném lỗi thì hàm bị gọi ở trình duyệt sẽ vỡ. Phải trả
+   * null êm ở cả hai nơi. */
+  it('không ném khi môi trường không có Node', () => {
+    expect(() => loadSpillSaver()).not.toThrow();
+  });
+
+  it('trả null khi có `window` — tức đang ở trình duyệt', () => {
+    vi.stubGlobal('window', {});
+    try {
+      expect(loadSpillSaver()).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 beforeEach(() => __clearAllToolCallBudgets());
 afterEach(() => {

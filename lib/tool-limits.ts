@@ -35,6 +35,44 @@ export const TOOL_RESULT_HEAD_RATIO = 0.7;
 export const TOOL_RESULT_TAIL_RATIO = 0.25;
 
 /**
+ * Hàm lưu phần kết quả tool bị cắt ra file app tự ghi, để `fs_read` đọc lại
+ * được. Xem `docs/superpowers/specs/2026-10-18-tool-result-spill-design.md`.
+ *
+ * Chỉ có ở tiến trình Node. Ở trình duyệt trả `null` — hàm gọi phải coi như
+ * không có spill và rơi về `truncateToolResult`.
+ */
+export type SpillSaver = (content: string, suggestedName: string) =>
+  | { savedTo: string; bytes: number; notice: string }
+  | null;
+
+let spillSaverCache: SpillSaver | null | undefined;
+
+/**
+ * Nạp `saveSpillText` từ `lib/ipc.cjs` — nơi đã làm đúng việc này cho
+ * `shell_run`. KHÔNG import ở top-level: file này nằm trong bundle trình
+ * duyệt (qua `react/use-chat-orchestration.ts:57`), import tĩnh sẽ kéo
+ * `ipc.cjs` vào đó và làm hỏng `next build`. `eval('require')` để bundler
+ * không phân tích tĩnh.
+ */
+export function loadSpillSaver(): SpillSaver | null {
+  if (spillSaverCache !== undefined) return spillSaverCache;
+  // Chặn trước khi chạm require: trình duyệt không có Node. try/catch phía dưới
+  // vẫn đủ an toàn, nhưng chặn ở đây thì không phải eval trong bundle trình duyệt.
+  if (typeof window !== 'undefined') {
+    spillSaverCache = null;
+    return null;
+  }
+  try {
+    const req = eval('require') as (id: string) => unknown;
+    const ipc = req('../ipc.cjs') as { saveSpillText?: SpillSaver };
+    spillSaverCache = typeof ipc?.saveSpillText === 'function' ? ipc.saveSpillText : null;
+  } catch {
+    spillSaverCache = null;
+  }
+  return spillSaverCache;
+}
+
+/**
  * Middle-truncate một kết quả tool đã serialize. Dùng chung cho native lẫn
  * emulated để hai đường nhận CÙNG lượng thông tin.
  */
