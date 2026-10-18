@@ -12,7 +12,7 @@
  *     thành ký tự lơ lửng là hỏng dữ liệu hiển thị.
  *
  * Các hình dạng ở đây lấy từ code thật: client tool `JSON.stringify` trước khi
- * trả (react/use-chat-orchestration.ts:1666, core/agent-runtime/tool-runner.ts:395),
+ * trả (react/use-chat-orchestration.ts),
  * FsEntry/FsReadResult (lib/fs-access.ts:289,324), VyenRunResult
  * (lib/desktop-bridge.ts:49).
  */

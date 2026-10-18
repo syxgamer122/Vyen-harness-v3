@@ -1,6 +1,6 @@
 import { useApprovalBridge, type UseApprovalBridgeReturn } from '@/react/use-approval-bridge';
 import { useAgentRuntime, type UseAgentRuntimeReturn } from '@/react/use-agent-runtime';
-import { validateShellAllowlist } from '@/core/agent-runtime/tool-runner';
+import { validateShellAllowlist } from '@/lib/shell-policy';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat, type Message } from 'ai/react';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -129,6 +129,7 @@ import {
 import {
   buildDiskSkillAdapters,
   readHintsFromWorkspace,
+  readAgentFilesFromWorkspace,
   loadSkillContent,
 } from '@/lib/skills/client-adapters';
 import { useDiskSkillsStore } from '@/lib/skills/disk-store';
@@ -2162,7 +2163,7 @@ export function useChatOrchestration(options?: UseChatOrchestrationOptions) {
             const timeoutSecs =
               typeof args.timeout_secs === 'number' ? Math.min(Math.max(args.timeout_secs, 1), 3600) : undefined;
             /* Allowlist TRƯỚC cổng duyệt, đúng thứ tự executeShellRun
-               (core/agent-runtime/tool-runner.ts): lệnh có metachar / binary ngoài
+               (lib/shell-policy.ts): lệnh có metachar / binary ngoài
                allowlist bị chặn ngay ở renderer — không mở hộp thoại cho thứ vốn
                không thể chạy (fail-closed trước cả consent). */
             const shellCheck = validateShellAllowlist(command);
@@ -5749,6 +5750,11 @@ export function useChatOrchestration(options?: UseChatOrchestrationOptions) {
             .entries.filter((e) => !disabled.includes(e.name))
             .map(({ name, description, source, dir }) => ({ name, description, source, dir }));
           if (index.length > 0) options.body = { ...options.body, skillIndex: index };
+          /* Agent khai báo ở .vyen/agents/*.md — server không đọc được workspace
+             nên phải gửi kèm nội dung file, y như skillIndex ở trên. Đọc FRESH
+             mỗi lượt: người dùng sửa/tạo agent giữa hai lượt là phổ biến. */
+          const agentFiles = await readAgentFilesFromWorkspace();
+          if (agentFiles.length > 0) options.body = { ...options.body, agents: agentFiles };
           if (isVyenDesktop() ? (await desktopGetWorkspaceInfo()).connected : getWorkspaceInfo().connected) {
             const hints = await readHintsFromWorkspace();
             setHintsChip(hints);

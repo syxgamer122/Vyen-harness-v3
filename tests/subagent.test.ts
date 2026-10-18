@@ -12,9 +12,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   buildSubagentSystemPrompt,
   executeDelegate,
-  SCOUT_DENIED_CLIENT_TOOLS,
-  SUBAGENT_MAX_PARALLEL_TASKS,
-  SUBAGENT_PARALLEL_CONCURRENCY,
   SUBAGENT_RESULT_PREVIEW_CHARS,
   SUBAGENT_DEFAULT_MAX_TURNS,
   SUBAGENT_ABSOLUTE_MAX_TURNS,
@@ -24,6 +21,7 @@ import {
 } from '@/lib/subagent';
 import { runEmulatedLoop } from '@/lib/emulated-agent';
 import { buildSubagentParentBrief } from '@/lib/context-compaction';
+import { loadAgentRegistryFromEntries } from '@/lib/agents/agent-registry';
 import type { BudgetMessageLike } from '@/lib/context-budget';
 
 // runEmulatedLoop là điểm mock duy nhất: executeDelegate/runSubagent chạy thật,
@@ -53,6 +51,12 @@ function makeDeps(over: Partial<DelegateExecuteDeps> = {}): DelegateExecuteDeps 
     systemBase: 'base system',
     serverTools: {} as never,
     clientToolNames: new Set(['fs_read', 'fs_write', 'fs_edit', 'shell_run']),
+    registry: loadAgentRegistryFromEntries([
+      {
+        name: 'ro.md',
+        content: '---\ndescription: Chỉ đọc.\ntools: [fs_read]\n---\nBạn review code.\n',
+      },
+    ]),
     ...over,
   };
 }
@@ -162,7 +166,7 @@ describe('SubagentResult type', () => {
       toolCalls: 5,
       status: 'done',
       runId: 'run-1',
-      mode: 'worker',
+      agentName: null,
       startedAt: 0,
       durationMs: 100,
     };
@@ -178,7 +182,7 @@ describe('SubagentResult type', () => {
       toolCalls: 0,
       status: 'error',
       runId: 'run-2',
-      mode: 'worker',
+      agentName: null,
       startedAt: 0,
       durationMs: 0,
       error: 'Model API timeout',
@@ -194,7 +198,7 @@ describe('SubagentResult type', () => {
       toolCalls: 40,
       status: 'max-turns',
       runId: 'run-3',
-      mode: 'worker',
+      agentName: null,
       startedAt: 0,
       durationMs: 0,
     };
@@ -209,7 +213,7 @@ describe('SubagentResult type', () => {
       toolCalls: 3,
       status: 'aborted',
       runId: 'run-4',
-      mode: 'worker',
+      agentName: null,
       startedAt: 0,
       durationMs: 0,
     };
@@ -219,35 +223,43 @@ describe('SubagentResult type', () => {
 
 
 /* ------------------------------------------------------------------ */
-/* executeDelegate — đường đơn + batch song song + scout + brief         */
+/* executeDelegate — đường đơn + brief + phân giải agent + tool scope     */
 /* ------------------------------------------------------------------ */
 
 describe('executeDelegate — đường đơn (backward compatible)', () => {
   it('trả SubagentResult JSON như cũ, kèm metadata mới', async () => {
     mockLoopText('kết quả đơn');
     const out = JSON.parse(
-      await executeDelegate({ instructions: 'một task duy nhất đủ dài để chạy' }, makeDeps()),
+      await executeDelegate({ task: 'một task duy nhất đủ dài để chạy' }, makeDeps()),
     ) as SubagentResult;
     expect(out.status).toBe('done');
     expect(out.result).toBe('kết quả đơn');
     expect(out.runId).toBeTruthy();
-    expect(out.mode).toBe('worker');
+    expect(out.agentName).toBe(null);
     expect(typeof out.startedAt).toBe('number');
     expect(out.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('từ chối payload chứa CẢ instructions và tasks', async () => {
+  it('tên agent không có → lỗi kèm danh sách, KHÔNG spawn loop', async () => {
     const out = JSON.parse(
-      await executeDelegate(
-        {
-          instructions: 'instructions cấp trên đủ dài',
-          tasks: [{ instructions: 'task bên trong cũng đủ dài' }],
-        },
-        makeDeps(),
-      ),
-    ) as { status: string; error?: string };
+      await executeDelegate({ agent: 'khong-ton-tai', task: 'một task duy nhất đủ dài' }, makeDeps()),
+    ) as { status: string; error?: string; available?: string[] };
     expect(out.status).toBe('error');
+    expect(out.available).toEqual(['ro']);
     expect(runEmulatedLoop).not.toHaveBeenCalled();
+  });
+
+  it('agent chỉ-đọc không nhận tool ghi trong bộ tool thật', async () => {
+    mockLoopText('ok');
+    await executeDelegate({ agent: 'ro', task: 'review file này giúp tôi' }, makeDeps());
+    const clientTools = vi.mocked(runEmulatedLoop).mock.calls[0][0].clientTools as Set<string>;
+    expect([...clientTools].sort()).toEqual(['fs_read']);
+  });
+
+  it('thân file agent được ghép vào system prompt của con', async () => {
+    mockLoopText('ok');
+    await executeDelegate({ agent: 'ro', task: 'review file này giúp tôi' }, makeDeps());
+    expect(vi.mocked(runEmulatedLoop).mock.calls[0][0].system).toContain('Bạn review code.');
   });
 
   it('từ chối khi thiếu cả hai', async () => {
@@ -260,7 +272,7 @@ describe('executeDelegate — đường đơn (backward compatible)', () => {
     mockLoopText('ok');
     const getParentBrief = vi.fn(() => 'Người dùng đang làm tính năng đăng nhập.');
     await executeDelegate(
-      { instructions: 'task cần hiểu bối cảnh phiên cha', context: 'brief' },
+      { task: 'task cần hiểu bối cảnh phiên cha', context: 'brief' },
       makeDeps({ getParentBrief }),
     );
     expect(getParentBrief).toHaveBeenCalledTimes(1);
@@ -268,157 +280,13 @@ describe('executeDelegate — đường đơn (backward compatible)', () => {
 
     const getParentBrief2 = vi.fn(() => 'không bao giờ được gọi');
     await executeDelegate(
-      { instructions: 'task đường thường fresh context' },
+      { task: 'task đường thường fresh context' },
       makeDeps({ getParentBrief: getParentBrief2 }),
     );
     expect(getParentBrief2).not.toHaveBeenCalled();
   });
 });
 
-describe('executeDelegate — fan-out song song (tasks)', () => {
-  it('chạy tối đa SUBAGENT_PARALLEL_CONCURRENCY lane và giữ thứ tự kết quả', async () => {
-    const total = SUBAGENT_MAX_PARALLEL_TASKS; // 4 task, cap 3 lane
-    let active = 0;
-    let maxActive = 0;
-    const started: string[] = [];
-    const release: Array<() => void> = [];
-    const gates = Array.from({ length: total }, () => new Promise<void>((r) => release.push(r)));
-
-    vi.mocked(runEmulatedLoop).mockImplementation(async (opts) => {
-      const idx = /task-(\d)/.exec(String((opts.messages[0] as { content: string }).content))?.[1] ?? '?';
-      started.push(idx);
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await gates[Number(idx)];
-      active -= 1;
-      opts.onTextDelta(`kq-${idx}`);
-      return { status: 'done', roundsUsed: 1, totalCalls: 0 };
-    });
-
-    const pending = executeDelegate(
-      { tasks: ['0', '1', '2', '3'].map((i) => ({ instructions: `Viết báo cáo task-${i} đầy đủ chi tiết` })) },
-      makeDeps(),
-    );
-
-    await waitFor(() => active === 3);
-    expect(started).toHaveLength(3);
-    release[0]();
-    await waitFor(() => started.length === 4); // task còn lại chiếm lane vừa trống
-    expect(maxActive).toBe(SUBAGENT_PARALLEL_CONCURRENCY);
-    release[1]();
-    release[2]();
-    release[3]();
-
-    const out = JSON.parse(await pending) as SubagentResult[];
-    expect(out.map((r) => r.result)).toEqual(['kq-0', 'kq-1', 'kq-2', 'kq-3']);
-    expect(out.every((r) => r.status === 'done')).toBe(true);
-  });
-
-  it('abort: task chưa kịp chạy không được spawn, mọi lane báo aborted', async () => {
-    const controller = new AbortController();
-    let started = 0;
-    const release: Array<() => void> = [];
-    const gates = Array.from({ length: 3 }, () => new Promise<void>((r) => release.push(r)));
-
-    vi.mocked(runEmulatedLoop).mockImplementation(async (opts) => {
-      started += 1;
-      await gates[started - 1];
-      opts.onTextDelta('x');
-      return { status: 'done', roundsUsed: 1, totalCalls: 0 };
-    });
-
-    const pending = executeDelegate(
-      { tasks: ['a', 'b', 'c', 'd'].map((i) => ({ instructions: `task ${i} đủ dài để hợp lệ` })) },
-      makeDeps({ abortSignal: controller.signal }),
-    );
-
-    await waitFor(() => started === 3);
-    controller.abort();
-    release.forEach((r) => r()); // lanes đang chạy thoát; runSubagent tự chốt aborted
-
-    const out = JSON.parse(await pending) as SubagentResult[];
-    expect(started).toBe(3);
-    expect(out).toHaveLength(4);
-    expect(out.every((r) => r.status === 'aborted')).toBe(true);
-  });
-
-  it('từ chối lô khi một task thiếu brief (không spawn gì cả)', async () => {
-    const out = JSON.parse(
-      await executeDelegate(
-        { tasks: [{ instructions: 'task đầu tiên đủ dài để hợp lệ' }, { instructions: 'ngắn' }] },
-        makeDeps(),
-      ),
-    ) as { status: string; error?: string };
-    expect(out.status).toBe('error');
-    expect(out.error).toContain('Task 2');
-    expect(runEmulatedLoop).not.toHaveBeenCalled();
-  });
-
-  it('annotation batch gắn taskIndex/taskTotal cho từng lane', async () => {
-    mockLoopText('ok');
-    const events: Array<Record<string, unknown>> = [];
-    await executeDelegate(
-      {
-        tasks: [
-          { instructions: 'task một đủ dài để hợp lệ' },
-          { instructions: 'task hai cũng đủ dài nè' },
-        ],
-      },
-      makeDeps({ onProgress: (phase, detail) => events.push({ phase, ...detail }) }),
-    );
-    const starts = events.filter((e) => e.phase === 'start');
-    expect(starts).toHaveLength(2);
-    expect(starts.map((e) => e.taskIndex).sort()).toEqual([0, 1]);
-    expect(starts.every((e) => e.taskTotal === 2)).toBe(true);
-    expect(starts.every((e) => typeof e.runId === 'string' && (e.runId as string).length > 0)).toBe(true);
-  });
-});
-
-describe('executeDelegate — mode scout', () => {
-  it('lọc đúng denylist trên bản sao, set gốc không bị đụng', async () => {
-    mockLoopText('phát hiện');
-    const clientTools = new Set(['fs_read', 'fs_write', 'fs_edit', 'shell_run']);
-    const out = JSON.parse(
-      await executeDelegate(
-        { instructions: 'Khảo sát kiến trúc auth của repo này', mode: 'scout' },
-        makeDeps({ clientToolNames: clientTools }),
-      ),
-    ) as SubagentResult;
-    expect(out.mode).toBe('scout');
-    const opts = vi.mocked(runEmulatedLoop).mock.calls[0][0] as LoopOpts;
-    expect(opts.clientTools?.has('fs_read')).toBe(true);
-    expect(opts.clientTools?.has('fs_write')).toBe(false);
-    expect(opts.clientTools?.has('fs_edit')).toBe(false);
-    expect(opts.clientTools?.has('shell_run')).toBe(false);
-    expect(clientTools.has('fs_write')).toBe(true);
-    expect(opts.system).toContain('CHỈ ĐỌC');
-  });
-
-  it('SCOUT_DENIED_CLIENT_TOOLS đúng ba tool ghi trực tiếp', () => {
-    expect([...SCOUT_DENIED_CLIENT_TOOLS].sort()).toEqual(['fs_edit', 'fs_write', 'shell_run']);
-  });
-
-  it('mode per-task đè mode cấp lô (task không khai báo thì kế thừa lô)', async () => {
-    mockLoopText('x');
-    await executeDelegate(
-      {
-        tasks: [
-          { instructions: 'task scout khảo sát trước', mode: 'scout' },
-          { instructions: 'task worker sửa lỗi sau' },
-        ],
-      },
-      makeDeps(),
-    );
-    const calls = vi.mocked(runEmulatedLoop).mock.calls;
-    expect(calls).toHaveLength(2);
-    expect(calls[0][0].clientTools?.has('fs_write')).toBe(false);
-    expect(calls[1][0].clientTools?.has('fs_write')).toBe(true);
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/* buildSubagentParentBrief — ngữ cảnh cha tất định, không LLM           */
-/* ------------------------------------------------------------------ */
 
 describe('buildSubagentParentBrief', () => {
   it('trích yêu cầu user, file ops và kết luận gần nhất', () => {
@@ -457,7 +325,7 @@ describe('done annotation — result preview', () => {
     mockLoopText('k'.repeat(600));
     const events: Array<Record<string, unknown>> = [];
     await executeDelegate(
-      { instructions: 'task đơn đủ dài để hợp lệ nhé' },
+      { task: 'task đơn đủ dài để hợp lệ nhé' },
       makeDeps({ onProgress: (phase, detail) => events.push({ phase, ...detail }) }),
     );
     const done = events.find((e) => e.phase === 'done');

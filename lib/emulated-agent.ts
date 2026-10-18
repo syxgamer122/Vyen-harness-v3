@@ -263,7 +263,14 @@ export interface EmulatedLoopOptions {
   messages: CoreMessage[];
   /** System prompt đã compose (summary/web/live/pdf/persona) — KHÔNG gồm protocol. */
   system: string;
-  tools: AgentToolSet;
+  /**
+   * Server tool của lượt này. `Partial` vì không phải lúc nào cũng là TOÀN BỘ:
+   * subagent nhận một TẬP CON đã lọc theo `tools:` trong file agent, và đường
+   * native còn gộp thêm tool sub-recipe (`subrecipe__*`) vào. Kiểu cũ buộc phải
+   * ép `as ReturnType<typeof buildAgentTools>` ở mọi nơi — che mất đúng thứ ta
+   * cần thấy: tool nào thật sự được cấp.
+   */
+  tools: Partial<AgentToolSet>;
   temperature?: number;
   maxTokens?: number;
   abortSignal?: AbortSignal;
@@ -300,20 +307,16 @@ export interface EmulatedLoopOptions {
    * subagent inline (server-side) and returns the result string.
    * If not provided, delegate calls are treated as unknown tools.
    *
-   * Task song song + mode + context đi qua nguyên args (executeDelegate tự
-   * validate lại từng field) — loop chỉ forward, không hiểu ngữ nghĩa.
+   * Args đi qua nguyên vẹn (executeDelegate tự validate lại từng field) — loop
+   * chỉ forward, không hiểu ngữ nghĩa. Kiểu khai báo ở đây PHẢI khớp
+   * `DelegateCallArgs`; lệch một trường là delegate chết âm thầm trên đường
+   * này (model đường emulated không có typecheck nào khác).
    */
   onDelegateCall?: (args: {
-    instructions?: string;
-    tasks?: Array<{
-      instructions: string;
-      max_turns?: number;
-      timeout_secs?: number;
-      mode?: 'scout' | 'worker';
-    }>;
-    max_turns?: number;
-    timeout_secs?: number;
-    mode?: 'scout' | 'worker';
+    agent?: string;
+    task?: string;
+    steps?: number;
+    model?: string;
     context?: 'fresh' | 'brief';
   }) => Promise<string>;
 }
@@ -472,21 +475,10 @@ export async function runEmulatedLoop(opts: EmulatedLoopOptions): Promise<Emulat
         let delegateResult: string;
         try {
           delegateResult = await opts.onDelegateCall({
-            instructions: typeof call.args.instructions === 'string' ? call.args.instructions : undefined,
-            tasks: Array.isArray(call.args.tasks)
-              ? (call.args.tasks as Array<{
-                  instructions: string;
-                  max_turns?: number;
-                  timeout_secs?: number;
-                  mode?: 'scout' | 'worker';
-                }>)
-              : undefined,
-            max_turns: typeof call.args.max_turns === 'number' ? call.args.max_turns : undefined,
-            timeout_secs: typeof call.args.timeout_secs === 'number' ? call.args.timeout_secs : undefined,
-            mode:
-              call.args.mode === 'scout' || call.args.mode === 'worker'
-                ? call.args.mode
-                : undefined,
+            agent: typeof call.args.agent === 'string' ? call.args.agent : undefined,
+            task: typeof call.args.task === 'string' ? call.args.task : undefined,
+            steps: typeof call.args.steps === 'number' ? call.args.steps : undefined,
+            model: typeof call.args.model === 'string' ? call.args.model : undefined,
             context: call.args.context === 'brief' ? 'brief' : undefined,
           });
         } catch (err) {

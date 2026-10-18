@@ -490,7 +490,8 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     kind: 'client',
     category: 'delegate',
     shortLabel: 'giao subagent',
-    description: 'Giao task cho subagent context riêng, tối đa 4 task song song, không đệ quy delegate.',
+    description:
+      'Giao việc cho subagent context riêng. Chọn agent trong .vyen/agents/, không đệ quy.',
     aliases: [],
     desktopOnly: false,
   },

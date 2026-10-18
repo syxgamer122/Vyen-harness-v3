@@ -96,6 +96,8 @@ Agent con nhận tool = **giao của bộ tool cha và `tools` khai báo** (khi 
 
 Hệ quả: `delegate` **không** nằm trong `CLIENT_TOOL_DEFS` với mô tả tĩnh — mô tả phải dựng lại từ registry mỗi request. Schema được tách ra `DELEGATE_PARAMETERS` để `CLIENT_TOOL_DEFS.delegate` (bản schema-only, phục vụ doc registry của đường emulated) và `buildDelegateTool(registry)` (bản chạy thật) dùng chung một nguồn. `route.ts` phải chèn `delegate` vào `extraToolDocs` của `runEmulatedLoop` — thiếu thì model không có native tool-calling sẽ không thấy sub-agent nào.
 
+**"Bộ tool cha" gồm CẢ HAI tầng.** Vyen có server tool (chạy trong route: `web_fetch`, `memory_save`, `web_search`) và client tool (relay về trình duyệt: `fs_read`, `shell_run`…). Phép giao ở trên phải chạy trên tập hợp **hợp nhất** rồi tách lại theo tầng — nếu chỉ lọc client tool thì `tools:` trong file agent ràng buộc được client tool mà không ràng buộc được server tool, và agent khai `tools: [fs_read]` vẫn gọi được `memory_save`. CapBAC đã bị xoá (xem dưới) nên không còn lớp nào phủ lỗ hổng đó. `tests/subagent-tool-scope-integration.test.ts` giữ bất biến này.
+
 ### Quyết định về CapBAC
 
 `defaultSubagentScope` (`writePatterns: ['tests/**','scratch/**','tmp/**']`) bị **xoá**.
