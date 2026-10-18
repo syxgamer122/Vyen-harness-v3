@@ -223,7 +223,7 @@ describe('SubagentResult type', () => {
 
 
 /* ------------------------------------------------------------------ */
-/* executeDelegate — đường đơn + batch song song + scout + brief         */
+/* executeDelegate — đường đơn + brief + phân giải agent + tool scope     */
 /* ------------------------------------------------------------------ */
 
 describe('executeDelegate — đường đơn (backward compatible)', () => {

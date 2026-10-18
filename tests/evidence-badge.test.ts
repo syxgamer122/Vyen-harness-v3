@@ -405,12 +405,21 @@ describe('thẻ subagent — nhãn tiếng Việt', () => {
   });
 
   /**
-   * ĐỎ khi: đổi lại nhãn chế độ scout. "khảo sát" là từ repo đã dùng cho
-   * scout (xem `lib/subagent.ts` và `tests/subagent.test.ts`).
+   * ĐỎ khi: thẻ lại hiện nhãn nào đó cho chế độ đã bị xoá.
+   *
+   * `mode: scout|worker` đi cùng fan-out `tasks[]` của delegate và đã bị gỡ khỏi
+   * `lib/subagent.ts`; không còn tầng nào gửi `mode` xuống client. Nhãn "khảo
+   * sát" vì vậy là UI chết — nó hiện ra thì nghĩa là đang mô tả một thứ không tồn
+   * tại. Thứ tên agent mới là chi tiết đáng hiện, vì đó là thứ người dùng chọn.
+   *
+   * `taskIndex`/`taskTotal` thì PHẢI giữ: `lib/recipes/subrecipe-exec.ts` còn
+   * dùng chúng để đánh số từng sub-recipe trong lô chạy song song.
    */
-  it('nhãn chế độ scout là "khảo sát"', () => {
-    expect(CODE).toContain('· khảo sát');
-    expect(CODE, 'còn nhãn chế độ "· scout"').not.toContain('· scout');
+  it('không còn nhãn chế độ, thay bằng tên agent', () => {
+    expect(CODE, 'còn nhãn chế độ đã bị xoá').not.toContain('· khảo sát');
+    expect(CODE).not.toContain('· scout');
+    expect(CODE).toMatch(/\{agentName \?\? "Subagent"\}/);
+    expect(CODE, 'mất số thứ tự lô sub-recipe').toContain('taskIndex');
   });
 });
 

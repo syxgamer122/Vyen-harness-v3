@@ -13,9 +13,14 @@ export interface SubagentAnnotation {
     toolCalls?: number;
     result?: string;
     error?: string;
-    /** Metadata mới từ executeDelegate — batch song song gắn nhãn lane. */
+    /** Tên agent lấy từ file `.vyen/agents/<tên>.md`; null = delegate không đặt tên. */
+    agentName?: string | null;
     runId?: string;
-    mode?: "scout" | "worker";
+    /**
+     * Vị trí trong lô sub-recipe chạy song song (`lib/recipes/subrecipe-exec.ts`).
+     * Delegate không có trường này — `delegate` đã bỏ fan-out `tasks[]`; đây là
+     * số thứ tự của lô sub-recipe, một cơ chế khác và vẫn đang chạy.
+     */
     taskIndex?: number;
     taskTotal?: number;
     evidenceLevel?: "prepared" | "running" | "reported_done" | "verified" | "blocked" | "failed";
@@ -28,7 +33,7 @@ interface SubagentCardProps {
 
 export function SubagentCard({ annotation }: SubagentCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const { phase, task, turn, maxTurns, toolCalls, result, error, runId, mode, taskIndex, taskTotal, evidenceLevel } =
+  const { phase, task, turn, maxTurns, toolCalls, result, error, runId, agentName, taskIndex, taskTotal, evidenceLevel } =
     annotation.subagent;
 
   const isRunning = phase === "start" || phase === "progress";
@@ -90,11 +95,11 @@ export function SubagentCard({ annotation }: SubagentCardProps) {
             isRunning ? "animate-spin" : ""
           }`}
         />
-        <span className="font-medium text-secondary">Subagent</span>
+        {/* Tên agent là thông tin người dùng được thấy rõ nhất về việc "ai
+            đang làm việc này" — nâng nó lên vị trí tiêu đề thay vì chôn trong
+            phần mở rộng. Delegate không đặt tên thì rơi về nhãn chung. */}
+        <span className="font-medium text-secondary">{agentName ?? "Subagent"}</span>
         <EvidenceBadge level={subagentEvidence} />
-        {mode === "scout" && (
-          <span className="text-meta text-text-muted">· khảo sát</span>
-        )}
         {taskIndex != null && taskTotal != null && (
           <span className="text-meta text-text-muted">
             {taskIndex + 1}/{taskTotal}

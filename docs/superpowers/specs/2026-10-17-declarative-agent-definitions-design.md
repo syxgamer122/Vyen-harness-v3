@@ -89,6 +89,8 @@ Agent con nhận tool = **giao của bộ tool cha và `tools` khai báo** (khi 
 
 `clientToolNames` đã là seam sẵn có (`runSubagent` nhận nó, `subagent.ts` đang lọc `SCOUT_DENIED_CLIENT_TOOLS` theo danh sách tên). Spec này thay denylist đó bằng allowlist theo agent.
 
+**"Bộ tool cha" gồm CẢ HAI tầng.** Vyen có server tool (chạy trong route: `web_fetch`, `memory_save`, `web_search`) và client tool (relay về trình duyệt: `fs_read`, `shell_run`…). Phép giao ở trên phải chạy trên tập hợp **hợp nhất** rồi tách lại theo tầng — nếu chỉ lọc client tool thì `tools:` trong file agent ràng buộc được client tool mà không ràng buộc được server tool, và agent khai `tools: [fs_read]` vẫn gọi được `memory_save`. CapBAC đã bị xoá (xem dưới) nên không còn lớp nào phủ lỗ hổng đó. `tests/subagent-tool-scope-integration.test.ts` giữ bất biến này.
+
 ### Quyết định về CapBAC
 
 `defaultSubagentScope` (`writePatterns: ['tests/**','scratch/**','tmp/**']`) bị **xoá**.

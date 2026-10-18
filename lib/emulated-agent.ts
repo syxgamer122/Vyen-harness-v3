@@ -263,7 +263,14 @@ export interface EmulatedLoopOptions {
   messages: CoreMessage[];
   /** System prompt đã compose (summary/web/live/pdf/persona) — KHÔNG gồm protocol. */
   system: string;
-  tools: AgentToolSet;
+  /**
+   * Server tool của lượt này. `Partial` vì không phải lúc nào cũng là TOÀN BỘ:
+   * subagent nhận một TẬP CON đã lọc theo `tools:` trong file agent, và đường
+   * native còn gộp thêm tool sub-recipe (`subrecipe__*`) vào. Kiểu cũ buộc phải
+   * ép `as ReturnType<typeof buildAgentTools>` ở mọi nơi — che mất đúng thứ ta
+   * cần thấy: tool nào thật sự được cấp.
+   */
+  tools: Partial<AgentToolSet>;
   temperature?: number;
   maxTokens?: number;
   abortSignal?: AbortSignal;

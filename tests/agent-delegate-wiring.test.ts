@@ -11,6 +11,8 @@
  * `onDelegateCall` nhận đúng field.
  */
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { createOpenAI } from '@ai-sdk/openai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runEmulatedLoop } from '@/lib/emulated-agent';
@@ -134,5 +136,63 @@ describe('runEmulatedLoop → executeDelegate', () => {
     } as never);
 
     expect(out.status).toBe('done');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Wiring mức route + UI — thứ unit test không bắt được                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `executeDelegate` đã gọi `deps.resolveModel` đúng từ trước, nhưng nếu không
+ * có ai TRUYỀN vào thì toán tử `?.` rơi về `undefined` và mọi giá trị `model:`
+ * trong file agent đều bị hiểu thành "inherit" — một field tài liệu hoá thành
+ * no-op mà không hề báo lỗi. Không có gì trong unit test bắt được khoảng trống
+ * này, nên phải khẳng định thẳng trên mã nguồn route.
+ */
+describe('route nối delegate vào bộ tool và model của lượt', () => {
+  const routeSource = readFileSync(
+    path.join(process.cwd(), 'app', 'api', 'chat', 'route.ts'),
+    'utf8',
+  );
+
+  it('truyền resolveModel ở CẢ HAI điểm gọi executeDelegate', () => {
+    // Hai dòng, mỗi điểm gọi một dòng. Nếu thêm/thiết điểm gọi thứ ba mà quên
+    // nối, con số này lệch và test đỏ.
+    const wired = routeSource.match(
+      /resolveModel: \(id: string\) => openaiNonStreaming\(id\),/g,
+    );
+    expect(wired?.length ?? 0).toBe(2);
+  });
+
+  it('không còn chỗ nào truyền CLIENT_TOOL_NAMES nguyên catalog cho subagent', () => {
+    // delegate và sub-recipe đều là subagent: chúng phải kế thừa bộ tool ĐÃ LỌC
+    // của lượt (recipe deny/allow, plan mode, router drop), không phải catalog.
+    expect(routeSource).not.toContain('clientToolNames: CLIENT_TOOL_NAMES');
+  });
+});
+
+describe('thẻ subagent hiện tên agent và không giữ field chết', () => {
+  const cardSource = readFileSync(
+    path.join(process.cwd(), 'components', 'subagent-card.tsx'),
+    'utf8',
+  );
+
+  it('không render `mode` — không còn tầng nào gửi chế độ scout/worker', () => {
+    // `mode: scout|worker` đi cùng fan-out `tasks[]` của delegate, đã bị gỡ khỏi
+    // `lib/subagent.ts`. Giữ nhãn "khảo sát" nghĩa là mô tả một thứ không tồn tại.
+    expect(cardSource, 'còn sót field chết: mode').not.toContain('mode');
+  });
+
+  it('GIỮ taskIndex/taskTotal — lô sub-recipe chạy song song vẫn dùng', () => {
+    // Đây là cơ chế khác: `lib/recipes/subrecipe-exec.ts` vẫn gánh lane cho mỗi
+    // sub-recipe trong lô. Xoá nó là xoá dữ liệu sống.
+    expect(cardSource).toContain('taskIndex');
+    expect(cardSource).toContain('taskTotal');
+  });
+
+  it('tên agent hiện ở vị trí tiêu đề, không phải chỉ trong phần mở rộng', () => {
+    expect(cardSource).toContain('agentName');
+    expect(cardSource).toMatch(/\{agentName \?\? "Subagent"\}/);
   });
 });

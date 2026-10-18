@@ -81,8 +81,8 @@ export interface SubagentOptions {
   model: LanguageModel;
   /** System prompt base (workspace context, persona, etc.) — WITHOUT delegation guidance. */
   systemBase: string;
-  /** Server tools available (web_search, memory, etc.). */
-  serverTools: AgentToolSet;
+  /** Server tools CẤP cho subagent (web_search, memory, ...) — đã lọc. */
+  serverTools: Partial<AgentToolSet>;
   /** Client tool names available (fs_*, shell_run, git_*). NO 'delegate'. */
   clientToolNames: ReadonlySet<string>;
   /**
@@ -268,8 +268,13 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
 
   // Build isolated system prompt
   const system = buildSubagentSystemPrompt(opts.systemBase, opts.instructions, maxTurns, {
-    // Liệt kê TOOL ĐÃ LỌC — đây là bộ tool thật sẽ chạy, không phải bộ của cha.
-    tools: [...opts.clientToolNames],
+    /*
+     * Liệt kê TOÀN BỘ tool con thật sự có — cả hai tầng. Trước đây chỉ liệt kê
+     * client tool trong khi `serverTools` đi qua không lọc, nên câu "tool khác
+     * không tồn tại với bạn" là lời nói dối: model bị dạy phớt lờ một tool nó
+     * vẫn gọi được, và không hề biết mình có tool nào khác.
+     */
+    tools: [...opts.clientToolNames, ...Object.keys(opts.serverTools)],
     ...(opts.agentDefinition ? { agentBody: opts.agentDefinition.body } : {}),
     ...(opts.parentBrief ? { parentBrief: opts.parentBrief } : {}),
   });
@@ -326,6 +331,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
       // Hit max turns but completed — might be truncated
       opts.onProgress?.('done', {
         runId,
+        agentName,
         turnsUsed: loopResult.roundsUsed,
         toolCalls: loopResult.totalCalls,
         hitMaxTurns: true,
@@ -341,6 +347,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
 
     opts.onProgress?.('done', {
       runId,
+      agentName,
       turnsUsed: loopResult.roundsUsed,
       toolCalls: loopResult.totalCalls,
       result: resultText.slice(0, SUBAGENT_RESULT_PREVIEW_CHARS),
@@ -365,7 +372,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
     }
 
     const errorMsg = err instanceof Error ? err.message : String(err);
-    opts.onProgress?.('done', { runId, error: errorMsg });
+    opts.onProgress?.('done', { runId, agentName, error: errorMsg });
     return finish({
       result: '',
       turnsUsed: 0,
@@ -383,7 +390,8 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
 export interface DelegateExecuteDeps {
   model: LanguageModel;
   systemBase: string;
-  serverTools: AgentToolSet;
+  /** Server tool của CHA. executeDelegate tự giao với `tools` của agent. */
+  serverTools: Partial<AgentToolSet>;
   /** Bộ tool CHA. executeDelegate tự giao với `tools` của agent. */
   clientToolNames: ReadonlySet<string>;
   /** Danh sách agent đọc từ `.vyen/agents/`. Rỗng = chưa có file agent nào. */
@@ -437,7 +445,34 @@ export async function executeDelegate(
   }
   const agentDef = definition?.ok ? definition.definition : null;
 
-  const scope = resolveAgentToolNames(deps.clientToolNames, agentDef);
+  /*
+   * Cổng tool là MỘT phép giao cho cả hai tầng.
+   *
+   * Vyen có server tool (chạy trong route: web_fetch, memory_save, subrecipe__*)
+   * và client tool (relay về trình duyệt: fs_read, shell_run...). Trước đây chỉ
+   * client tool đi qua `resolveAgentToolNames`, còn `deps.serverTools` được chuyển
+   * thẳng xuống `runSubagent` — nên `tools:` trong file agent ràng buộc được
+   * client tool mà KHÔNG ràng buộc được server tool. Agent khai `tools: [fs_read]`
+   * (ý định chỉ đọc) vẫn gọi được `memory_save`.
+   *
+   * Giao trên TẬP HỢP HỢP NHẤT rồi tách lại theo tầng, thay vì giao riêng từng
+   * tầng: một lần giao thì không thể quên tầng nào, kể cả tầng sinh ra sau này.
+   */
+  /*
+   * `Partial<AgentToolSet>` không index được bằng key `string` (key của nó là
+   * tên tool cụ thể). Thêm chỗ lưu index rộng để dựng bằng vòng lặp; kiểu trả
+   * về vẫn là Partial nên chỗ dùng không phải ép.
+   */
+  const scopedServerTools: Partial<AgentToolSet> & Record<string, unknown> = {};
+  const parentNames = new Set<string>([
+    ...deps.clientToolNames,
+    ...Object.keys(deps.serverTools),
+  ]);
+  const scope = resolveAgentToolNames(parentNames, agentDef);
+  for (const [name, tool] of Object.entries(deps.serverTools)) {
+    if (scope.names.has(name)) scopedServerTools[name] = tool;
+  }
+
   if (scope.dropped.length > 0) {
     // Không chặn: gõ sai tên tool là lỗi soạn thảo, không phải lý do agent chết.
     deps.onProgress?.('progress', {
@@ -459,7 +494,7 @@ export async function executeDelegate(
     timeoutSecs: SUBAGENT_DEFAULT_TIMEOUT_SECS,
     model: resolvedModel ?? deps.model,
     systemBase: deps.systemBase,
-    serverTools: deps.serverTools,
+    serverTools: scopedServerTools,
     clientToolNames: scope.names,
     agentDefinition: agentDef,
     ...(parentBrief ? { parentBrief } : {}),

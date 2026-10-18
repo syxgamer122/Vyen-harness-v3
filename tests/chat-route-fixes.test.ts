@@ -98,7 +98,17 @@ describe('A3/A5 — đường emulated vẫn đủ server tools + MCP tools', ()
     // Meta-tools router cũng phải đi kèm: chúng không có trong registry tĩnh
     // của formatToolProtocolManual nên thiếu là bị bỏ qua âm thầm (manual rỗng
     // cho đúng 2 tool này). Khoá: schema MCP + schema meta cùng đi một lệnh.
-    expect(source).toMatch(/extraToolDocs: \{ \.\.\.mcpTools\.defs, \.\.\.routerMetaTools \},/);
+    // Nhiều dòng, và khớp TỪNG mục chứ không khớp cả khối: comment tiếng Việt chen
+    // giữa các entry nên một regex duy nhất sẽ vỡ mỗi lần ai đó thêm giải thích.
+    expect(source).toMatch(
+      /extraToolDocs: \{\s*\n\s*\.\.\.mcpTools\.defs,\s*\n\s*\.\.\.routerMetaTools,/,
+    );
+    // `delegate` phải vào đây: nó không nằm trong registry tĩnh của agent-tools
+    // (dựng động vì mô tả liệt kê agent trên đĩa). Thiếu nó thì model đường
+    // emulated — tức model KHÔNG có native tool-calling — không thấy sub-agent nào.
+    expect(source).toMatch(
+      /\.\.\.\(delegateAvailable \? \{ delegate: buildDelegateTool\(agentRegistry\) \} : \{\}\),/,
+    );
     expect(source).toMatch(/clientTools: clientToolNames,/);
   });
 });

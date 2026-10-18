@@ -2225,7 +2225,10 @@ export async function POST(req: Request) {
                       model: openaiNonStreaming(targetModel),
                       systemBase: composedSystem,
                       serverTools: serverTools as ReturnType<typeof buildAgentTools>,
-                      clientToolNames: CLIENT_TOOL_NAMES,
+                      // Bộ tool ĐÃ LỌC của lượt này, không phải catalog đầy đủ:
+                      // sub-recipe là subagent, nên nó phải chịu cùng recipe
+                      // deny/allow và plan mode với agent cha.
+                      clientToolNames,
                       abortSignal: link.signal,
                       ...(modelConfig.supportsTemperature === false
                         ? {}
@@ -2313,6 +2316,10 @@ export async function POST(req: Request) {
                         serverTools: serverTools as ReturnType<typeof buildAgentTools>,
                         clientToolNames,
                         registry: agentRegistry,
+                        // Để `model:` trong file .vyen/agents/*.md thật sự đổi
+                        // model. Không có dòng này, `resolveModel` luôn undefined
+                        // và mọi giá trị đều bị hiểu thành "inherit" trong im lặng.
+                        resolveModel: (id: string) => openaiNonStreaming(id),
                         abortSignal: link.signal,
                         ...(modelConfig.supportsTemperature === false
                           ? {}
@@ -2377,6 +2384,7 @@ export async function POST(req: Request) {
                               serverTools: serverTools as ReturnType<typeof buildAgentTools>,
                               clientToolNames,
                               registry: agentRegistry,
+                              resolveModel: (id: string) => openaiNonStreaming(id),
                               abortSignal: link.signal,
                               ...(modelConfig.supportsTemperature === false
                                 ? {}
