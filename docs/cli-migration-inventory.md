@@ -12,8 +12,10 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 | `XOA` | chạm API trình duyệt và **không** nằm trong đồ thị lõi → thuộc tính năng web |
 | `THAY-THE` | máy gán sai — lõi vẫn cần chức năng này qua đường khác. Nhãn do người đặt trong `ly-do.ts`, **đọc trước khi lên kế hoạch** |
 
-> Chỉ file chạm API trình duyệt mới có mặt trong bảng. File không chạm thì không cần
-> phân loại — chúng dùng được nguyên vẹn cho lõi Node.
+> Bảng dưới chỉ liệt kê file chạm API trình duyệt **trực tiếp**.
+>
+> **Đừng suy ra phần còn lại chạy được trên Node.** Một file không viết chữ
+> `Dexie` vẫn có thể gọi `db.…` mà `db` mới là Dexie — xem mục kế bên.
 
 ## Điểm vào của lõi
 
@@ -34,6 +36,38 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 | `lib/client-identity.ts` | localStorage | không | XOA | Nhận diện client qua localStorage |
 | `lib/db.ts` | Dexie | không | THAY-THE | Kho hội thoại / message / memory bằng Dexie (IndexedDB) |
 | `lib/fs-access.ts` | showDirectoryPicker | không | THAY-THE | Đọc workspace bằng File System Access API của trình duyệt |
+
+## Kéo trình duyệt vào qua phụ thuộc xuyên
+
+- `lib/audit-log.ts`
+- `lib/auto-pilot.ts`
+- `lib/backup.ts`
+- `lib/chat-recall.ts`
+- `lib/chat-search.ts`
+- `lib/chat-tree-persistence.ts`
+- `lib/memory/agent-memory-client.ts`
+- `lib/memory/store.ts`
+- `lib/providers.ts`
+- `lib/recipes/store.ts`
+- `lib/skills/client-adapters.ts`
+- `lib/tool-permissions.ts`
+- `lib/tree-repair.ts`
+- `lib/tree-validation.ts`
+- `lib/use-cross-tab-chat-sync.ts`
+- `lib/workspace-checkpoints.ts`
+- `lib/zeromem/auto-ingest.ts`
+- `lib/zeromem/memory-block.ts`
+- `lib/zeromem/persistence.ts`
+
+19 file **không tự chạm** API trình duyệt nào, nhưng kéo được
+một module chạm, nên cũng không chạy được trên Node. Chúng không có mặt ở bảng
+trên vì quét chỉ thấy phụ thuộc TRỰC TIẾP — `lib/tool-permissions.ts` là ví dụ:
+không viết chữ `Dexie`, chỉ gọi `db.toolPermissions.put`.
+
+Test `GUỐ — lõi CLI không được kéo trình duyệt vào` trong
+`tests/cli-migration-scan.test.ts` canh rằng **không file nào trong đồ thị lõi**
+rơi vào danh sách này. Thêm `CORE_ENTRIES` mà kéo theo Dexie thì test đỏ.
+
 
 ## File chạm API trình duyệt
 

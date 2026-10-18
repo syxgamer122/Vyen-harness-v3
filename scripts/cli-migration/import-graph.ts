@@ -9,8 +9,32 @@
  * Vì vậy: file không tồn tại thì **ném**, không bỏ qua. Tìm-hụt dễ dẫn tới kết
  * luận sai; `AGENTS.md` §6 ghi rõ đúng cái bẫy này.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
+
+const BOILERPLATE_DIRS = new Set(['node_modules', '.next', 'dist', 'build', 'coverage']);
+
+/**
+ * Liệt kê mọi file `.ts` dưới `root`, quy về đường dẫn repo dùng `/`.
+ *
+ * Một chỗ duyệt FS duy nhất cho cả máy đo: `countTsFiles` của build-inventory
+ * đếm bằng chính hàm này. Hai vòng duyệt riêng là hai nơi lệch nhau âm thầm —
+ * số đếm một bên, danh sách một bên, rồi bảng "không lệch" trong khi thực ra lệch.
+ */
+export function listTsFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      if (BOILERPLATE_DIRS.has(name)) continue;
+      const abs = path.join(dir, name);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else if (name.endsWith('.ts')) out.push(abs.split(path.sep).join('/'));
+    }
+  };
+  walk(root);
+  return out.sort();
+}
 
 /**
  * Điểm vào của lõi — khai MỘT chỗ duy nhất, nơi khác import từ đây.
@@ -62,20 +86,97 @@ export function resolveInternal(spec: string, fromFile: string): string | null {
   return null;
 }
 
+/**
+ * Spec import nào tạo cạnh **runtime** — tức module thật sự được nạp lúc chạy.
+ *
+ * Đọc bằng AST, KHÔNG bằng regex, vì `import type` bị compiler xoá: nó khai báo
+ * kiểu chứ không nạp module. Đếm nó như phụ thuộc thật thì
+ * `lib/date-groups.ts` (`import type { ChatSession } from '@/lib/db'`) bị quy
+ * kết là kéo Dexie vào — sai, và sai theo hướng làm bảng phân loại nhầm file
+ * vốn sạch. Cùng dạng với lỗi C1 mà review độc lập bắt ở tầng quét API.
+ *
+ * `import('x')` động CŨNG không tạo cạnh ở đây, khớp với hành vi cũ; test
+ * "mọi dynamic import nội bộ của file lõi đều phải nằm trong đồ thị" canh chỗ
+ * đó. Gặp trường hợp thật thì thêm vào đây, đừng thêm cơ chế thứ hai.
+ */
+export function runtimeImportSpecs(src: string, file: string): string[] {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const out: string[] = [];
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st)) continue;
+    if (!ts.isStringLiteral(st.moduleSpecifier)) continue;
+    const spec = st.moduleSpecifier.text;
+    const clause = st.importClause;
+    if (!clause) {
+      out.push(spec); // side-effect import — luôn nạp
+      continue;
+    }
+    if (clause.isTypeOnly) continue; // `import type ... from` — bị xoá
+    if (clause.name) {
+      out.push(spec); // default import
+      continue;
+    }
+    const bindings = clause.namedBindings;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      out.push(spec); // `import * as`
+      continue;
+    }
+    // `import { a, type B }` — chỉ `a` mới nạp module.
+    if (bindings.elements.some((e) => !e.isTypeOnly)) out.push(spec);
+  }
+  return out;
+}
+
 function importsOf(file: string): string[] {
   const src = readFileSync(file, 'utf8');
   const out: string[] = [];
-  const re = /(?:from|import)\s*['"]([^'"]+)['"]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(src))) {
-    const resolved = resolveInternal(m[1], file);
+  for (const spec of runtimeImportSpecs(src, file)) {
+    const resolved = resolveInternal(spec, file);
     // Spec sai dẫn đường là lỗi dữ liệu, im lặng bỏ qua là báo cáo sai.
-    if (resolved === null && m[1].startsWith('@/')) {
-      throw new Error(`${file}: import không giải được tới file thật: '${m[1]}'`);
+    if (resolved === null && spec.startsWith('@/')) {
+      throw new Error(`${file}: import không giải được tới file thật: '${spec}'`);
     }
     if (resolved) out.push(resolved);
   }
   return out;
+}
+
+/**
+ * File nào kéo được một file trong `touchers` (file chạm API trình duyệt) qua
+ * cạnh runtime — dù nó không tự chạm API nào.
+ *
+ * Bảng kiểm kê chỉ liệt kê file chạm TRỰC TIẾP và khẳng định phần còn lại "dùng
+ * được nguyên vẹn cho lõi Node". Lời đó sai với những file như
+ * `lib/tool-permissions.ts`: không viết chữ `Dexie`, nhưng gọi `db.…` mà `db`
+ * mới là Dexie.
+ *
+ * Duyệt ngược từ `touchers`: file nào import (trực tiếp hay gián tiếp) một file
+ * đã biết là bị coi là kéo trình duyệt vào. Chính `touchers` không nằm trong kết
+ * quả — bảng kiểm kê đã liệt kê chúng riêng.
+ */
+export function browserBoundIn(files: string[], touchers: Iterable<string>): Set<string> {
+  const parents = new Map<string, string[]>();
+  for (const f of files) {
+    for (const dep of importsOf(f)) {
+      const arr = parents.get(dep);
+      if (arr) arr.push(f);
+      else parents.set(dep, [f]);
+    }
+  }
+  const seen = new Set<string>(touchers);
+  const bound = new Set<string>();
+  const queue = [...seen];
+  while (queue.length) {
+    const cur = queue.pop()!;
+    for (const parent of parents.get(cur) ?? []) {
+      if (seen.has(parent)) continue;
+      seen.add(parent);
+      bound.add(parent);
+      queue.push(parent);
+    }
+  }
+  return bound;
 }
 
 /** Tập file trong đồ thị import bắt đầu từ `entries`, quy về đường dẫn repo dùng `/`. */

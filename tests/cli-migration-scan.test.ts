@@ -19,7 +19,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { BROWSER_APIS, scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
 import { countTsFiles } from '@/scripts/cli-migration/build-inventory';
 import { FORCE_LABEL } from '@/scripts/cli-migration/ly-do';
-import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached } from '@/scripts/cli-migration/import-graph';
+import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached, runtimeImportSpecs, browserBoundIn, listTsFiles } from '@/scripts/cli-migration/import-graph';
 
 describe('scanFile', () => {
   it('dò đúng API trình duyệt và trả về số dòng', () => {
@@ -174,6 +174,100 @@ describe('import-graph', () => {
  *   - bỏ sót file mới trong `lib/` → bảng vẫn trông đầy đủ
  *   - nhãn rỗn hoặc sai → người đọc vẫn tưởng đã được phân loại
  */
+/**
+ * Cạnh RUNTIME — phụ thuộc thật, không phải phụ thuộc kiểu.
+ *
+ * Vì sao phải có: `importsOf` cũ khớp bằng regex nên coi `import type` là cạnh.
+ * Nhưng `import type` bị compiler XOÁ lúc build — file dùng nó không hề nạp
+ * module kia ở runtime. Đo bằng regex thì `lib/date-groups.ts`
+ * (`import type { ChatSession } from '@/lib/db'`) bị tính là kéo Dexie vào,
+ * tức bị gán nhãn sai. Đây là lỗi C1 lặp lại ở tầng khác: đồ thị đúng về
+ * hình thức, sai về thực tế chạy.
+ */
+describe('cạnh runtime — import type không phải phụ thuộc thật', () => {
+  it('`import type` không tạo cạnh runtime', () => {
+    const src = "import type { ChatSession } from '@/lib/db';";
+    expect(runtimeImportSpecs(src, 'lib/demo.ts')).toEqual([]);
+  });
+
+  it('import lẫn GIÁ TRỊ và type thì CÓ cạnh runtime', () => {
+    // `db` là giá trị, `type StoredMessage` là kiểu — chỉ `db` mới tạo cạnh.
+    const src = "import { db, type StoredMessage } from '@/lib/db';";
+    expect(runtimeImportSpecs(src, 'lib/demo.ts')).toEqual(['@/lib/db']);
+  });
+
+  it('`import * as` và `import` side-effect đều là cạnh runtime', () => {
+    expect(runtimeImportSpecs("import * as ipc from '@/lib/ipc.cjs';", 'lib/demo.ts')).toEqual([
+      '@/lib/ipc.cjs',
+    ]);
+    expect(runtimeImportSpecs("import '@/lib/db';", 'lib/demo.ts')).toEqual(['@/lib/db']);
+  });
+
+  it('gói NGOÀI cũng được liệt kê (bộ lọc gói ngoài nằm ở resolveInternal)', () => {
+    const src = "import ts from 'typescript';\nimport type { Foo } from 'zod';";
+    expect(runtimeImportSpecs(src, 'lib/demo.ts')).toEqual(['typescript']);
+  });
+});
+
+/**
+ * File nào kéo được module chạm API trình duyệt mà KHÔNG tự chạm trực tiếp.
+ *
+ * Bảng kiểm kê chỉ liệt kê file chạm trực tiếp, và nói rằng phần còn lại "dùng
+ * được nguyên vẹn cho lõi Node". Lời đó SAI: `lib/tool-permissions.ts` không hề
+ * viết chữ `Dexie`, nhưng nó gọi `db.toolPermissions.put` — `db` mới là Dexie.
+ * Đó đúng là nợ chưa trả trong ledger: quét thấy phụ thuộc trực tiếp, không thấy
+ * phụ thuộc xuyên.
+ *
+ * Ba test dưới đây dùng file CÓ THẬT, không dùng fixture tự viết — nên bắt được
+ * cả khi triển khai sai, đúng như "lib/db.ts chắc chắn có Dexie" ở Task 1.
+ */
+describe('browserBound — file kéo trình duyệt vào qua cạnh runtime', () => {
+  const allLibFiles = () => {
+    const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
+    return browserBoundIn(listTsFiles('lib'), touchers);
+  };
+
+  it('`tool-permissions.ts` — import GIÁ TRỊ `db` → bị coi là kéo trình duyệt', () => {
+    // Nợ của ledger: file này không có mặt trong bảng kiểm kê dù spec §7 coi nó
+    // là thứ người dùng tin CLI nhất. Chỉ `db.toolPermissions.put` chứng minh điều đó.
+    expect(allLibFiles().has('lib/tool-permissions.ts')).toBe(true);
+  });
+
+  it('`tree-validation.ts` — import GIÁ TRỊ `ROOT_KEY` → bị coi là kéo trình duyệt', () => {
+    expect(allLibFiles().has('lib/tree-validation.ts')).toBe(true);
+  });
+
+  it('`date-groups.ts` — CHỈ `import type` → KHÔNG bị tính là kéo trình duyệt', () => {
+    // Chống đếm thừa. File này chỉ dùng kiểu, compiler xoá hẳn, nên nó chạy
+    // được trên Node. Đếm thừa thì bảng gán nhãn sai file sạch.
+    expect(allLibFiles().has('lib/date-groups.ts')).toBe(false);
+  });
+});
+
+/**
+ * GUỐ CHẶN HỒI QUY — canh thứ KHÔNG ĐƯỢC phá mà không thấy đỏ.
+ *
+ * Lõi CLI chạy trên Node, mà Dexie/IndexedDB chỉ có ở trình duyệt. Nếu một
+ * CORE_ENTRY mới (hay một import trong file lõi) kéo theo module chạm API trình
+ * duyệt, lõi sẽ không chạy được trên Node — và KHÔNG có gì báo: `tsc` xanh,
+ * `lint` xanh, `npm run build` xanh, test xanh. Đúng như spill đã chết âm thầm.
+ *
+ * Test này xanh ngay vì lõi hiện sạch — nên nó BẮT BUỘC phải qua mutation mới
+ * chứng minh được là không rỗng.
+ */
+describe('GUỐ — lõi CLI không được kéo trình duyệt vào', () => {
+  it('không file lõi nào kéo được module chạm API trình duyệt', () => {
+    const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
+    const bound = browserBoundIn(listTsFiles('lib'), touchers);
+    const core = reachableFrom();
+    const polluted = [...core].filter((f) => bound.has(f)).sort();
+    expect(
+      polluted,
+      `file lõi kéo trình duyệt vào — lõi sẽ không chạy được trên Node: ${polluted.join(', ')}`,
+    ).toEqual([]);
+  });
+});
+
 describe('bảng kiểm kê', () => {
   const MD = 'docs/cli-migration-inventory.md';
 
