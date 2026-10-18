@@ -1,31 +1,24 @@
 /**
- * SPIKE — CLI tối thiểu để thử tầng provider với model THẬT. Không phải sản phẩm.
+ * CLI của Vyen — chạy thật trên provider thật, dùng bộ tool thật.
  *
- * ============ VÌ SAO FILE NÀY TỒN TẠI ============
+ * ============ CÁC FILE NÀY CHIA VIỆC GÌ ============
  *
- * Mọi test của `lib/provider/` đều chạy với **server giả**. Chúng chứng minh
- * "adapter gửi đúng base URL, đúng header, đúng path" — điều đó là thật, nhưng
- * chưa có gì trong repo từng gọi **một model thật**. Câu hỏi "tầng provider có
- * chạy không ngoài giấy vẽ" vẫn chưa có câu trả lời.
- *
- * Làm đủ cả `lib/session/` + vòng lặp tool + REPL thì mất nhiều ngày mà vẫn
- * chưa chạy được một lần. File này trả lời câu hỏi đó trong vài phút: dựng model
- * từ adapter có sẵn, gọi `streamText`, in ra console.
+ *   `cli/index.ts`      nối vào console: đọc biến môi trường, dựng host, hỏi
+ *                       duyệt, in ra, chẩn đoán lỗi provider. **Không có logic
+ *                       test được** — cứ thêm vào đây là thêm thứ không test nào
+ *                       chạm được.
+ *   `cli/agent-turn.ts` vòng lặp tool (`maxSteps`, stream, bắt lỗi tool). Hàm
+ *                       thuần, test được bằng model giả — xem `tests/cli-agent-
+ *                       turn.test.ts`.
+ *   `cli/approve.ts`    cổng duyệt trên console, có test.
+ *   `lib/tools/ipc-node.ts` lớp cầu tới `lib/ipc.cjs`: đọc/ghi file, shell, git,
+ *                       có path-guard, chống TOCTOU và audit.
  *
  * ============ CỐ Ý KHÔNG CÓ (trạng thái 2026-10-18) ============
  *
- * - Lịch sử hội thoại      → cần `lib/session/` (thay `db.ts`)
- * - Vòng lặp gọi tool      → CHƯA có. `lib/tools/ipc-node.ts` đã dựng sẵn bộ
- *   tool thật (gọi `lib/ipc.cjs`: đọc/ghi file, shell, git, có path-guard và
- *   chống TOCTOU), nhưng chưa nối vào `streamText` ở đây. Nên model hiện chỉ
- *   trả lời bằng chữ, không tự gọi được tool.
- * - `fs_edit`               → `ipc.cjs` không có channel riêng; parser khối
- *   SEARCH/REPLACE đã có ở `lib/edit-blocks.ts` (thuần Node) nhưng chưa ghép
- *   vào `fs-write`. CHƯA làm — đừng tưởng là xong.
- * - Duyệt tool nguy hiểm    → cổng đã có trong `lib/tools/ipc-node.ts`
- *   (`NEEDS_APPROVAL`), nhưng CLI này chưa truyền hàm `approve`, nên **chưa có
- *   gì hỏi người dùng**. Chỉ nối bộ tool vào thì mới cần.
- * - `upstream-diagnosis`    → ĐÃ nối, dùng ở nhánh lỗi bên dưới.
+ * - Lịch sử hội thoại → cần `lib/session/` (thay `db.ts`). Mỗi lượt chạy là một
+ *   lượt độc lập, không nhớ lượt trước.
+ * - REPL             → nhận MỘT câu hỏi rồi thoát, chưa phải chế độ tương tác.
  *
  * ============ CÁCH CHẠY ============
  *
@@ -33,6 +26,10 @@
  *   $env:VYEN_API_KEY = "sk-..."
  *   $env:VYEN_MODEL   = "gpt-4o-mini"
  *   npm run cli -- "xin chào"
+ *
+ *   # Với tool (đọc/ghi file, chạy lệnh)
+ *   $env:VYEN_WORKSPACE = "C:\duong\dan\du-an"
+ *   npm run cli -- "doc README.md va tom tat lai"
  *
  *   # Anthropic-native
  *   $env:VYEN_API_KEY = "sk-ant-..."
@@ -67,6 +64,15 @@
  *   VYEN_MAX_TOKENS trần token đầu ra, mặc định 2048. **Đừng bỏ trống** — xem
  *                  ghi chú cạnh chỗ dùng: gateway tính credit sẽ từ chối vì
  *                  trần mặc định của provider quá lớn.
+ *   VYEN_WORKSPACE thư mục dự án mà tool được phép chạm vào. Bỏ trống thì dùng
+ *                  thư mục hiện tại. `createNodeHost` TỪ CHỐI thư mục rộng (gốc
+ *                  ổ đĩa, home) và thư mục không tồn tại — nếu bị từ chối thì CLI
+ *                  vẫn chat được, chỉ không có tool, và có in lý do.
+ *   VYEN_STATE_DIR nơi ghi `vyen-audit.log` (vết của mọi lệnh ghi/xoá). Mặc
+ *                  định `~/.vyen/cli`. Đổi ra ngoài repo thì xoá file này là
+ *                  xoá được vết.
+ *   VYEN_YOLO      đặt `1` để **tự động duyệt mọi lệnh ghi/xoá**. Mặc định là
+ *                  hỏi từng lần trên console. Chỉ bật trong thư mục tạm.
  *   VYEN_DEBUG     đặt `1` để in thêm `devLog` (req id, host, body upstream).
  *                  Mặc định KHÔNG in — người dùng chỉ cần thông báo sạch.
  *
@@ -76,15 +82,13 @@
  * `paths` trong `tsconfig.json`, nên `lib/provider/upstream-diagnosis.ts` không
  * import được. Đã giải bằng `tsx` (devDependency) — `npm run cli` đi qua nó.
  * Vì vậy **phải** dùng `npm run cli`, không `node cli/index.ts`.
- *
- * VẤN ĐỀ CÒN LẠI — cửa sổ dòng của `fs_read`: `ipc.cjs` có trần 2 MB và không
- * cắt theo `start_line`. Lớp cầu `lib/tools/ipc-node.ts` đã tự cắt (24.000 ký
- * tự), nhưng khi nối bộ tool vào đây thì phải nhớ điều đó — nếu gọi thẳng
- * `vyen:fs-read` thì 2 MB sẽ đổ thẳng vào context của model.
  */
 
 import { randomUUID } from 'node:crypto';
-import { streamText } from 'ai';
+import { createInterface } from 'node:readline/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { type ToolSet } from 'ai';
 import type { AdapterKind } from '../lib/provider/adapter.ts';
 import { resolveOpenAIModel } from '../lib/provider/openai-adapter.ts';
 import { resolveAnthropicModel } from '../lib/provider/anthropic-adapter.ts';
@@ -93,6 +97,9 @@ import { resolveAnthropicModel } from '../lib/provider/anthropic-adapter.ts';
 // được. Nếu sau này đổi alias, sửa cả hai chỗ cùng lúc.
 import { diagnoseUpstreamError } from '@/lib/provider/upstream-diagnosis';
 import { getKeyLabel } from '@/lib/api-keys';
+import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
+import { createConsoleApprover, createAutoApprover } from './approve';
+import { runAgentTurn } from './agent-turn';
 
 /**
  * Bọc trong hàm async thay vì dùng top-level `await`.
@@ -155,58 +162,94 @@ async function main(): Promise<void> {
     ...(process.env.VYEN_BASE_URL ? { baseUrl: process.env.VYEN_BASE_URL } : {}),
   };
 
+  /* ---- Tool: chỉ bật khi có workspace ----
+   *
+   * `createNodeHost` từ chối workspace rộng (gốc ổ đĩa, home) và từ chối thư mục
+   * không tồn tại — đó là lớp bảo vệ thật, không phải kiểm tra hình thức.
+   *
+   * Không có `VYEN_WORKSPACE` thì CLI chỉ chat, không đụng đĩa. Đây là mặc định
+   * an toàn: một CLI ghi file mà không cần người dùng chỉ định thư mục là một
+   * CLI không có ranh giới. */
+  const yolo = process.env.VYEN_YOLO === '1';
+  let tools: ToolSet | undefined;
+  let disposeHost: (() => void) | undefined;
+  // Readline giữ stdin mở, nên nếu không đóng thì tiến trình không thoát dù đã
+  // in xong. Đóng quá sớm thì lượt hỏi duyệt sau sẽ treo — nên đóng ở `finally`.
+  let closeStdin: (() => void) | undefined;
+  const workspace = process.env.VYEN_WORKSPACE ?? process.cwd();
+  try {
+    const userDataDir =
+      process.env.VYEN_STATE_DIR ??
+      path.join(os.homedir(), '.vyen', 'cli');
+    const host = createNodeHost({ workspaceRoot: workspace, userDataDir });
+    disposeHost = host.dispose;
+
+    // Cổng duyệt: hỏi trên console, trừ khi người dùng tự bật YOLO — và khi
+    // bật thì PHẢI in ra, vì đó là lúc bỏ hết lớp bảo vệ giữa người và máy.
+    let ask = async (q: string): Promise<string> => '';
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    closeStdin = () => rl.close();
+    ask = (q: string) => rl.question(q);
+    const approve = yolo
+      ? (() => {
+          console.error('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
+          return createAutoApprover(true);
+        })()
+      : createConsoleApprover(ask);
+    const built = buildIpcTools(host, { approve });
+    // `buildIpcTools` trả `Record<string, unknown>` vì hình dạng tool của AI SDK
+    // rộng hơn thứ lớp cầu biết. Ép kiểu ở đây là ranh giới duy nhất; nếu để
+    // rò vào trong thì mọi call site lại phải tự ép, và lệch kiểu là im lặng.
+    tools = built as ToolSet;
+    console.error(`> cong cu: ${Object.keys(built).length} (workspace: ${workspace})`);
+    if (yolo) console.error('> YOLO BAT — moi thay doi deu khong hoi xac nhan');
+  } catch (e) {
+    console.error(`> KHONG bat cong cu: ${e instanceof Error ? e.message : String(e)}`);
+    console.error('> van chat binh thuong, chi khong dung duoc cong cu.');
+  }
+
   console.error(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
   console.error(`> toi da ${maxTokens} token`);
   console.error('> (ket qua se do la day)\n');
 
+  /* Đo 2026-10-18 với key sai: stream lỗi **không** ném ra `for await` — nó kết
+   * thúc im lặng sau 0 chunk, và `finishReason` không bao giờ settle. Nếu nuốt,
+   * CLI in ra CÂU RỖNG rồi exit 0, tức báo thành công cho một lần gọi thất bại —
+   * tệ hơn cả crash. `runAgentTurn` vì thế ném lại lỗi provider ra đây. */
+  let wroteAny = false;
   try {
     const lm = kind === 'anthropic' ? resolveAnthropicModel(cfg) : resolveOpenAIModel(cfg);
 
-    /* BẮT LỖI QUA `onError`, KHÔNG DỰA VÀO try/catch QUANH VÒNG LẶP.
+    /* Vòng lặp nằm trong `runAgentTurn` (test được, không đụng console/env).
      *
-     * Đo thật ngày 2026-10-18 với key sai: `result.textStream` **không ném** — nó
-     * kết thúc im lặng sau 0 chunk. `result.finishReason` không bao giờ settle.
-     * Nghĩa là `try { for await ... }` sẽ chạy trót và in ra MỘT CÂU RỖNG rồi
-     * exit 0, tức báo thành công cho một lần gọi thất bại — tệ hơn cả crash.
-     *
-     * `onError` là nơi duy nhất lỗi stream lộ ra. Lỗi ở đây là `APICallError` —
-     * đúng loại mà `lib/provider/upstream-diagnosis.ts` chẩn đoán được; chỉ là
-     * chưa import được, xem "VẤN ĐỀ ĐÃ GẶP" ở đầu file.
-     */
-    let streamError: unknown = null;
-    const result = streamText({
-      model: lm,
-      prompt,
-      maxTokens,
-      onError: ({ error }) => {
-        streamError ??= error;
-      },
-    });
-
-    // Stream từng chặng ra stdout. Không dùng `generateText` vì một số gateway
-    // trả SSE khi request thiếu trường `stream`, khiến AI SDK ném
-    // "Invalid JSON response" — xem `lib/non-streaming-fetch.ts`.
-    let wrote = false;
-    for await (const chunk of result.textStream) {
-      process.stdout.write(chunk);
-      wrote = true;
-    }
-    // Chỉ xuống dòng khi thật sự có nội dung. Stream rỗng (lỗi 401, 429…) thì in
-    // dòng trống sẽ trông như đã có câu trả lời rỗng — dễ đọc nhầm thành thành công.
-    if (wrote) process.stdout.write('\n');
-
-    if (streamError) {
+     * `maxSteps` và cách bắt lỗi tool đều ở đó, không ở đây — xem
+     * `cli/agent-turn.ts`. Ở file này chỉ còn nối: in chữ ra stdout, báo hoạt
+     * động tool ra stderr, và chẩn đoán lỗi provider (spec §7). */
+    let turn;
+    try {
+      turn = await runAgentTurn({
+        model: lm,
+        tools,
+        prompt,
+        maxTokens,
+        onText: (delta) => {
+          process.stdout.write(delta);
+          wroteAny = true;
+        },
+        onToolCall: (name) => console.error(`\n[goi tool] ${name}`),
+        onToolError: (name, msg) => console.error(`[tool that bai] ${name}: ${msg}`),
+      });
+    } catch (streamError) {
       /* Chuyển lỗi thô thành chẩn đoán có nghĩa (spec §7).
        *
-       * Không in `streamError.message` thẳng nữa: message của provider là tiếng
-       * Anh dài dòng, và quan trọng hơn là **không phân biệt được lỗi mạng với
-       * lỗi key** — người dùng CLI không biết nên bật lại Wi-Fi hay đổi key.
+       * Không in `streamError.message` thẳng: message của provider là tiếng Anh
+       * dài dòng, và quan trọng hơn là **không phân biệt được lỗi mạng với lỗi
+       * key** — người dùng CLI không biết nên bật lại Wi-Fi hay đổi key.
        *
        * `userMessage` và `devLog` là HAI chuỗi khác nhau (Review Focus #1):
        *  - `userMessage`: thông báo sạch, tiếng Việt, có hướng xử lý.
        *  - `devLog`: req id, model, host, body — chỉ in khi VYEN_DEBUG=1.
-       * In cả hai ra console là rò thông tin vô nghĩa cho người dùng.
-       */
+       * In cả hai ra console là rò thông tin vô nghĩa cho người dùng. */
       const diag = diagnoseUpstreamError(streamError, {
         requestId: randomUUID().slice(0, 8),
         model,
@@ -223,19 +266,28 @@ async function main(): Promise<void> {
       if (process.env.VYEN_DEBUG === '1') {
         console.error(`> dev: ${diag.devLog}`);
       }
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
-    const usage = await result.usage;
+    // Chỉ xuống dòng khi thật sự có nội dung. Stream rỗng (lỗi 401, 429…) thì in
+    // dòng trống sẽ trông như đã có câu trả lời rỗng — dễ đọc nhầm thành thành công.
+    if (wroteAny) process.stdout.write('\n');
+
     console.error(
-      `\n> xong. token: vao ${usage.promptTokens ?? '?'} / ra ${usage.completionTokens ?? '?'}`,
+      `\n> xong. token: vao ${turn.usage.promptTokens ?? '?'} / ra ${turn.usage.completionTokens ?? '?'}`,
     );
-    process.exit(0);
+    process.exitCode = 0;
   } catch (err) {
     // Chỉ bắt được lỗi CỐ Ý ném ra (ví dụ config sai lúc dựng model). Lỗi từ
-    // provider đi qua `onError` ở trên, không đi qua đây.
+    // provider đã được bắt và chẩn đoán ở `catch` bên trên.
     console.error(`\n> LOI: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    // `process.exit()` sẽ bỏ qua `finally` và cắt cụt stdout khi đang stream —
+    // nên dùng `process.exitCode` và để tiến trình tự thoát sau khi dọn xong.
+    closeStdin?.();
+    disposeHost?.();
   }
 }
 

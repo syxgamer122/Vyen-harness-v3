@@ -60,6 +60,13 @@ export const CORE_ENTRIES = [
   // Lớp cầu nối ipc.cjs ra khỏi Electron. Thay cho `lib/tools/fs-node.ts` mà
   // spec §5 dự kiến — đo cho thấy ipc.cjs đã có đủ backend và máy an toàn.
   'lib/tools/ipc-node.ts',
+  // Tầng CLI. Hai file này **không** import API trình duyệt, nhưng phải khai ở
+  // đây vì lý do đúng như Global Constraint: entry thiếu thì đồ thị thu hẹp và
+  // file bị gán nhầm `XOA`. `cli/index.ts` cố ý **không** khai — nó đọc
+  // `process.env` và `process.exit`, tức không thuần; hai file dưới đây là hai
+  // chỗ có logic đáng test, và chúng là nơi những thứ đó được canh.
+  'cli/agent-turn.ts',
+  'cli/approve.ts',
 ];
 
 

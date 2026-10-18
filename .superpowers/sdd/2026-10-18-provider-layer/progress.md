@@ -524,13 +524,85 @@ cổng chỉ còn là hình thức.
 C1 bỏ blocklist → 2 đỏ · C2 bỏ kiểm tra tồn tại → 1 đỏ · C3 bỏ cửa sổ dòng → 2 đỏ
 · I3 bỏ git khỏi cổng duyệt → 1 đỏ · I2 vô hiệu cổng mặc định → 1 đỏ.
 
-## NỢ CÒN LẠI
+# Lượt 5 (2026-10-18) — CLI thành agent: vòng lặp tool + trả hết 3 nợ
 
-- **I5 — `audit` mặc định là hàm rỗng**, nên CLI mất vết ghi ngay từ mặc định.
-  **Tôi không sửa**: đổi mặc định thành "ghi ra đĩa" là quyết định về dữ liệu người
-  dùng, không phải kỹ thuật, cần chủ repo chọn.
-- **I1 còn nửa vụ** — `fs_write` ghi đè file tồn tại vẫn không bắt buộc
-  `expectedBaseHash`, tức chống TOCTOU của `ipc.cjs` không tự bật. Sửa đúng là phải
-  nhớ hash lúc đọc và truyền lại; cần một kho nhớ theo phiên, tức chưa làm được
-  khi chưa có `lib/session/`.
-- **`fs_edit`** vẫn chưa làm (xem lượt 3).
+## Tôi tự ghi nợ sai một lần, và phải sửa bằng đo chứ không bằng lời
+
+Lượt 4 tôi ghi: *"chống TOCTOU không thể tự bật khi chưa có `lib/session/`"*. **Sai.**
+Làm được ngay bằng hash trong RAM theo host. Nguyên nhân: tôi lười tìm cách nên biến
+thành "cần sau" — đúng cách biến nợ thành lý do.
+
+Giới hạn thật của cách làm này (đã ghi trong mã, không giấu): hết phiên là mất hash,
+nên chỉ bắt được việc file đổi **giữa hai lệnh cùng phiên**.
+
+## Ba nợ đã trả
+
+| Nợ | Cách trả | Mutation |
+|---|---|---|
+| `fs_edit` chưa làm | nối `parseEditBlocks` + `replaceMostSimilarChunk` có sẵn ở `lib/edit-blocks.ts` | bỏ khỏi cổng duyệt → đỏ · bỏ lỗi khi khối không khớp → 2 đỏ |
+| TOCTOU không tự bật | `fs_read` nhớ sha256 toàn file; ghi đè file đã đọc thì tự gửi `hasDiff` + `expectedBaseHash` | bỏ `hasDiff` → đỏ |
+| `audit` là hàm rỗng | mặc định ghi **append** vào `<userDataDir>/vyen-audit.log` | về hàm rỗng → đỏ |
+
+### Hai thứ đọc mã web mới biết — ghi vào comment để không ai "tối ưu" hỏng
+
+1. **`fs_edit` ghi đè TOÀN BỘ file**, nên phải đọc **full file** chứ không cắt 24.000
+   ký tự như `fs_read`. Đọc bản cắt sẽ **mất đuôi file**. Bản web ghi chú đúng việc này
+   ở `use-chat-orchestration.ts:1859+`.
+2. **`parseEditBlocks` BẮT BUỘC dòng tên file** trên `<<<<<<< SEARCH`, nhưng mô tả tool
+   `fs_edit` trong `agent-tools.ts` **không hề nhắc**. Tôi xử ở lớp cầu (thử parse thẳng;
+   chỉ khi parser báo thiếu tên file mới thử lại với `path` đứng đầu). **Không** đụng
+   parser, vì bản web đang dùng đúng như nó là.
+
+## Vòng lặp tool — chỗ dễ hỏng nhất, và tôi đã đo thay vì tin
+
+`maxSteps` là chỗ biến CLI từ "trả lời" thành "làm việc". Không có nó thì `streamText`
+trả về sau **một** lượt và tool call bị bỏ qua **âm thầm**: không lỗi, không cảnh báo.
+
+Test bằng **model giả** (`LanguageModelV1` trả kịch bản stream định sẵn), không cần key
+và không cần mạng — nên test phụ thuộc code chứ không phụ thuộc hạ tầng.
+
+### Ba lỗi tôi chỉ phát hiện vì test, không phải vì đọc code
+
+1. **`text-delta` dùng tên `textDelta`, không phải `text`.** Dùng `text` thì text-delta
+   rơi vào im lặng và kết quả là **CÂU RỐNG dù model đã trả lời** — tức báo thành công
+   sai. Mutation: đổi tên → 2 đỏ.
+2. **`ai@4` KHÔNG có part `tool-error`.** Để `execute` ném thì lỗi nổi lên và cả lượt
+   chết. Sửa: bọc mọi tool trong `wrapTools` để lỗi thành **kết quả** `{ok:false,error}`
+   — model đọc được lỗi và tự thử cách khác. Mutation: bỏ bắt → 1 đỏ.
+3. **`onError` bắt lỗi KHÔNG đồng nghĩa stream reject.** Đo mã `ai@4`
+   (`index.mjs` L5381-5390): `onError` chạy khi stream chạm qua part `{type:'error'}`,
+   và part đó **vẫn được enqueue** ngay dòng trên → stream **kết thúc bình thường**.
+   Nghĩa là provider báo lỗi giữa chừng thì vòng lặp chạy trót, `text` rỗng, CLI in
+   câu rỗng rồi exit 0. **Đây là chỗ dòng `if (streamError) throw streamError;` bảo
+   vệ.** Mutation đầu tiên của tôi **KHÔNG bị bắt** — vì stub của tôi dùng `ctrl.error()`
+   (làm stream reject) chứ không phát part `error`. Phải viết thêm 2 test đúng cái
+   chỗ đó, rồi mutation mới đỏ 2 test.
+
+### 5 mutation của vòng lặp — 5 lần bị bắt
+
+`maxSteps = 1` → 2 đỏ · `textDelta` → `text` → 2 đỏ · bỏ bắt lỗi tool → 1 đỏ ·
+bỏ `throw streamError` → 2 đỏ · bỏ `onToolCall` → 1 đỏ.
+
+### Cổng duyệt console — một mutation phải làm lại
+
+Cổng duyệt nằm giữa "model muốn ghi file" và "file bị ghi", nên test rỗng ở đây tệ
+hơn chỗ khác. Bỏ `fs_edit` khỏi cổng, không hiện nội dung, hỏi vô hạn, mọi câu trả
+lời thành "có" → đều bị bắt. **Một mutation không bị bắt lần đầu**: bỏ
+`redactSecretText` trong `brief()` vẫn xanh — vì còn **hai** lớp redact. Bỏ **cả
+hai** thì đỏ. Test không rỗng, nhưng có lớp dư.
+
+## Đo bằng CLI thật (key sai, không cần mạng)
+
+| Tình huống | Kết quả |
+|---|---|
+| workspace hợp lệ | `> cong cu: 14` dựng lên, rồi 401 → `UPSTREAM_AUTH_401 (key-auth)`, exit 1 |
+| workspace không tồn tại | `KHONG bat cong cu`, in lý do, **vẫn chat được** |
+| workspace = home | bị chặn, in lý do rõ (root quá rộng làm vô hiệu path-guard) |
+| workspace = thư mục con của home | **cho qua** — đúng, đó là thư mục dự án cụ thể |
+
+## Còn lại
+
+- **16 file kéo trình duyệt vào chưa phân loại giữ/xoá** — nợ duy nhất cần chủ repo
+  quyết, vì câu hỏi "lõi CLI còn cần chức năng này không" nằm ở ý định sản phẩm.
+- **Lịch sử hội thoại / REPL** — cần `lib/session/` thay `db.ts`. Mỗi lượt CLI hiện
+  độc lập, không nhớ lượt trước.
