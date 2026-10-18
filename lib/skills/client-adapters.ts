@@ -98,6 +98,63 @@ export async function readHintsFromWorkspace(): Promise<{ file: string; content:
   return pickHintsContent(candidates);
 }
 
+/**
+ * Đọc các file agent ở `.vyen/agents/*.md` để gửi lên server.
+ *
+ * Server KHÔNG có đường dẫn workspace (cùng lý do `skillIndex` phải do client
+ * dựng), nên nội dung file agent đi theo đúng con đường đó. Gửi cả tên file vì
+ * tên agent CHÍNH LÀ tên file — nó không nằm trong nội dung markdown.
+ *
+ * `create: false` cố ý: thư mục chưa có phải là "chưa dùng tính năng", không phải
+ * lỗi, và không được tự sinh ra thư mục rỗng trên máy người dùng.
+ */
+export async function readAgentFilesFromWorkspace(): Promise<
+  { name: string; content: string }[]
+> {
+  const entries: { name: string; content: string }[] = [];
+  if (isVyenDesktop()) {
+    try {
+      const files = (await desktopFsList('.vyen/agents')).filter(
+        (e) => e.type === 'file' && e.name.endsWith('.md'),
+      );
+      for (const e of files) {
+        try {
+          const r = (await desktopFsRead(`.vyen/agents/${e.name}`)) as unknown as {
+            content?: string;
+          };
+          const content = String(r.content ?? '');
+          if (content.trim()) entries.push({ name: e.name, content });
+        } catch {
+          /* file không đọc được — bỏ, agent còn lại vẫn dùng được */
+        }
+      }
+    } catch {
+      return [];
+    }
+    return entries;
+  }
+
+  const ws = await requireWorkspace();
+  if (!ws.ok) return [];
+  try {
+    const vyen = await ws.deps.root.getDirectoryHandle('.vyen', { create: false });
+    const dir = (await vyen.getDirectoryHandle('agents', { create: false })) as FsDirLike;
+    for await (const entry of dir.values()) {
+      if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
+      try {
+        const fh = await dir.getFileHandle(entry.name);
+        const content = await (await fh.getFile()).text();
+        if (content.trim()) entries.push({ name: entry.name, content });
+      } catch {
+        /* bỏ qua file hỏng */
+      }
+    }
+  } catch {
+    return [];
+  }
+  return entries;
+}
+
 /** Đọc nội dung skill + danh sách file phụ — thân tool skill_load. */
 export async function loadSkillContent(
   entry: DiskSkillEntry,

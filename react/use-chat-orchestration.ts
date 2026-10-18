@@ -129,6 +129,7 @@ import {
 import {
   buildDiskSkillAdapters,
   readHintsFromWorkspace,
+  readAgentFilesFromWorkspace,
   loadSkillContent,
 } from '@/lib/skills/client-adapters';
 import { useDiskSkillsStore } from '@/lib/skills/disk-store';
@@ -5749,6 +5750,11 @@ export function useChatOrchestration(options?: UseChatOrchestrationOptions) {
             .entries.filter((e) => !disabled.includes(e.name))
             .map(({ name, description, source, dir }) => ({ name, description, source, dir }));
           if (index.length > 0) options.body = { ...options.body, skillIndex: index };
+          /* Agent khai báo ở .vyen/agents/*.md — server không đọc được workspace
+             nên phải gửi kèm nội dung file, y như skillIndex ở trên. Đọc FRESH
+             mỗi lượt: người dùng sửa/tạo agent giữa hai lượt là phổ biến. */
+          const agentFiles = await readAgentFilesFromWorkspace();
+          if (agentFiles.length > 0) options.body = { ...options.body, agents: agentFiles };
           if (isVyenDesktop() ? (await desktopGetWorkspaceInfo()).connected : getWorkspaceInfo().connected) {
             const hints = await readHintsFromWorkspace();
             setHintsChip(hints);

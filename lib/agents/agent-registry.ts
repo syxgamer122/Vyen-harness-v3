@@ -57,6 +57,31 @@ export function loadAgentRegistry(agentsDir: string): AgentRegistry {
   return { agents, warnings };
 }
 
+/**
+ * Dựng registry từ nội dung file do CLIENT gửi lên.
+ *
+ * Server không có đường dẫn workspace: `.vyen/skills` đã được client quét và gửi
+ * `skillIndex` xuống, `.vyen/agents` đi theo đúng đường đó. Client gửi cặp
+ * `{name, content}` vì `parseAgentDefinition` lấy tên agent từ TÊN FILE, mà tên
+ * file không nằm trong nội dung markdown.
+ *
+ * File hỏng vẫn bị bỏ qua + ghi warning, y hệt nhánh đọc đĩa: một agent viết sai
+ * không được làm hỏng các agent còn lại.
+ */
+export function loadAgentRegistryFromEntries(
+  entries: readonly { name: string; content: string }[]
+): AgentRegistry {
+  const agents: AgentDefinition[] = [];
+  const warnings: string[] = [];
+  for (const entry of entries) {
+    const parsed = parseAgentDefinition(entry.name, entry.content);
+    if (parsed.ok) agents.push(parsed.definition);
+    else warnings.push(`Bỏ qua agent "${entry.name}": ${parsed.error}`);
+  }
+  agents.sort((a, b) => a.name.localeCompare(b.name));
+  return { agents, warnings };
+}
+
 export function resolveAgentDefinition(registry: AgentRegistry, name: string): AgentResolution {
   const hit = registry.agents.find((a) => a.name === name);
   if (hit) return { ok: true, definition: hit };

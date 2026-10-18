@@ -24,7 +24,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { runPool } from '@/lib/orchestrator/scheduler';
 import type { LanguageModel } from 'ai';
 import {
   runEmulatedLoop,
@@ -32,11 +31,9 @@ import {
   type EmulatedLoopResult,
 } from '@/lib/emulated-agent';
 import type { AgentToolSet } from '@/lib/agent-tools';
-import {
-  createCapabilityScope,
-  validateSubagentPermission,
-  type AgentCapabilityScope,
-} from '@/core/agent-runtime/capability-context';
+import type { AgentDefinition } from '@/lib/agents/agent-definition';
+import { type AgentRegistry, resolveAgentDefinition } from '@/lib/agents/agent-registry';
+import { resolveAgentToolNames } from '@/lib/agents/agent-tool-scope';
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                           */
@@ -45,86 +42,19 @@ import {
 export const SUBAGENT_DEFAULT_MAX_TURNS = 10;
 export const SUBAGENT_ABSOLUTE_MAX_TURNS = 25;
 export const SUBAGENT_DEFAULT_TIMEOUT_SECS = 300; // 5 minutes
-/** Trần số task trong một lần delegate song song. */
-export const SUBAGENT_MAX_PARALLEL_TASKS = 4;
-/** Số subagent chạy cùng lúc thật sự trong một lần fan-out. */
-export const SUBAGENT_PARALLEL_CONCURRENCY = 3;
 
-/**
- * Tool client bị cấm ở chế độ scout. Danh sách này cố ý KHÔNG gồm
- * git_add/git_commit: scout là chế độ "chỉ đọc file" theo denylist, không
- * phải sandbox chống ghi tuyệt đối — muốn chặn git phải qua permission layer.
- */
-export const SCOUT_DENIED_CLIENT_TOOLS: ReadonlySet<string> = new Set([
-  'fs_write',
-  'fs_edit',
-  'shell_run',
-]);
-
-export type SubagentMode = 'scout' | 'worker';
 export type SubagentContextMode = 'fresh' | 'brief';
-
-/**
- * Chặn ghi file của subagent vào ngoài phạm vi được giao.
- *
- * SCOUT_DENIED_CLIENT_TOOLS là denylist theo TÊN TOOL: scout bị chặn fs_write,
- * nhưng git_add/git_commit vẫn gọi được (xem comment của hằng đó). Nghĩa là
- * subagent kế thừa toàn bộ quyền ghi workspace của hội thoại cha. Lớp này chặn
- * theo ĐƯỜNG DẪN: một subagent được giao `tests/foo.test.ts` thì không đụng
- * được `src/` hay `.git/`, kể cả khi nó đi vòng qua git.
- *
- * Không bắt mọi tool call trong runSubagent — chỉ bọc `resolveClientTool`,
- * vì đó là cổng duy nhất mà fs/shell/git của subagent đi ra ngoài. Bọc ở
- * executeDelegate nên áp cho CẢ đường single-task lẫn batch fan-out, không
- * phải sửa từng call site ở route.
- */
-function withSubagentWriteScope(
-  resolve: SubagentOptions['resolveClientTool'],
-  scope: AgentCapabilityScope,
-): SubagentOptions['resolveClientTool'] {
-  if (!resolve) return undefined;
-  return async (call) => {
-    const verdict = validateSubagentPermission(scope, call.toolName, call.args);
-    if (!verdict.allowed) {
-      // Trả về chuỗi, không throw: runSubagent coi mỗi tool result là text và
-      // đưa ngược lại cho model, nên model thấy lý do và điều chỉnh tiếp.
-      return `BỊ CHẶN: ${verdict.reason ?? 'không có quyền'}`;
-    }
-    return resolve(call);
-  };
-}
-
-/** Scope mặc định cho một subagent chưa được giao phạm vi ghi cụ thể. */
-function defaultSubagentScope(args: DelegateCallArgs, mode: SubagentMode): AgentCapabilityScope {
-  return createCapabilityScope({
-    subagentId: `subagent:${mode}`,
-    parentChatId: 'current',
-    // Chỉ được ghi vào thư mục tạm và tests — đủ cho task tìm hiểu và test,
-    // không đủ để sửa mã nguồn ngoài phạm vi được giao.
-    writePatterns: ['tests/**', 'scratch/**', 'tmp/**'],
-    allowEgress: mode === 'worker',
-    allowedTools: SCOUT_DENIED_CLIENT_TOOLS.has('fs_write') && mode === 'scout'
-      ? []
-      : ['fs_read', 'fs_list', 'fs_write', 'fs_edit', 'shell_run'],
-  });
-}
-
-/** Một task trong lô song song. */
-export interface DelegateTaskInput {
-  instructions: string;
-  max_turns?: number;
-  timeout_secs?: number;
-  mode?: SubagentMode;
-}
 
 /** Args của tool delegate — cả đường emulated lẫn native đều về đây. */
 export interface DelegateCallArgs {
-  instructions?: string;
-  /** Có mặt thì KHÔNG dùng instructions (hai hình thức loại trừ nhau). */
-  tasks?: DelegateTaskInput[];
-  max_turns?: number;
-  timeout_secs?: number;
-  mode?: SubagentMode;
+  /** Tên agent trong .vyen/agents/. Bỏ trống = bộ tool đầy đủ. */
+  agent?: string;
+  /** Việc cần làm, KHÔNG phải bản tóm tắt về agent. 10..5000 ký tự. */
+  task?: string;
+  /** Ghi đè `steps` khai báo trong file agent. */
+  steps?: number;
+  /** Ghi đè model khai báo trong file agent. */
+  model?: string;
   context?: SubagentContextMode;
 }
 
@@ -147,6 +77,13 @@ export interface SubagentOptions {
   serverTools: AgentToolSet;
   /** Client tool names available (fs_*, shell_run, git_*). NO 'delegate'. */
   clientToolNames: ReadonlySet<string>;
+  /**
+   * Định nghĩa agent đã phân giải từ `.vyen/agents/`. null = không chỉ định
+   * agent, con dùng bộ tool đầy đủ. `body` của định nghĩa được ghép vào system
+   * prompt thay cho mô tả chung chung, nên agent thật sự khác nhau chứ không chỉ
+   * khác danh tính.
+   */
+  agentDefinition?: AgentDefinition | null;
   /** Callback for client tool calls (same as parent's onClientToolCall). */
   onClientToolCall?: (call: {
     toolCallId: string;
@@ -168,8 +105,6 @@ export interface SubagentOptions {
   temperature?: number;
   /** Max tokens override. */
   maxTokens?: number;
-  /** scout = lọc tool ghi + prompt chỉ-đọc; worker = đầy đủ (mặc định). */
-  mode?: SubagentMode;
   /** Khối tóm tắt phiên cha (context 'brief'). Rỗng/undefined = không gắn. */
   parentBrief?: string;
   /** Progress callback for streaming annotations to UI. */
@@ -185,9 +120,10 @@ export interface SubagentResult {
   toolCalls: number;
   /** Whether the subagent completed normally or was cut off. */
   status: 'done' | 'max-turns' | 'aborted' | 'error';
-  /** Định danh lần chạy — khớp annotation UI, giúp phân biệt các lane song song. */
+  /** Định danh lần chạy — khớp annotation UI. */
   runId: string;
-  mode: SubagentMode;
+  /** Tên agent đã dùng, null = không chỉ định. */
+  agentName: string | null;
   /** Epoch ms lúc bắt đầu. */
   startedAt: number;
   /** Thời lượng thực tế (ms) tính tới lúc trả kết quả. */
@@ -203,14 +139,16 @@ export interface SubagentResult {
 /**
  * Build subagent system prompt từ template chuẩn.
  * Key rules: specialized, independent, bounded, NO recursive delegation.
- * `opts.mode === 'scout'` thêm khối chỉ-đọc; `opts.parentBrief` gắn ngữ cảnh
- * cha như DỮ KIỆN tham khảo, không phải chỉ thị mới.
+ * `opts.agentBody` là phần thân markdown của file agent — rơi vào đây nên agent
+ * thật sự khác nhau chứ không chỉ khác tên. `opts.tools` liệt kê đúng bộ tool
+ * con có, để model không cố gọi thứ nó không nhìn thấy. `opts.parentBrief` gắn
+ * ngữ cảnh cha như DỮ KIỆN tham khảo, không phải chỉ thị mới.
  */
 export function buildSubagentSystemPrompt(
   baseSystem: string,
   instructions: string,
   maxTurns: number,
-  opts: { mode?: SubagentMode; parentBrief?: string } = {},
+  opts: { tools?: readonly string[]; parentBrief?: string; agentBody?: string } = {},
 ): string {
   const blocks = [
     baseSystem,
@@ -230,13 +168,21 @@ export function buildSubagentSystemPrompt(
     '- **Markdown**: Format your response in markdown for readability.',
   ];
 
-  if (opts.mode === 'scout') {
+  if (opts.tools && opts.tools.length > 0) {
     blocks.push(
       '',
-      '## Chế độ SCOUT — CHỈ ĐỌC',
-      '- Bạn KHÔNG có công cụ ghi (fs_write, fs_edit, shell_run đã bị loại khỏi bộ tool).',
-      '- Nhiệm vụ: đọc, tìm kiếm, phân tích. Trả về phát hiện kèm bằng chứng (file:line).',
-      '- KHÔNG đề xuất tự áp thay đổi — chỉ báo cáo.',
+      '## Tools của bạn',
+      `Bạn chỉ có các tool sau: ${opts.tools.join(', ')}.`,
+      'Tool khác KHÔNG tồn tại với bạn — đừng cố gọi.',
+    );
+  }
+
+  if (opts.agentBody && opts.agentBody.trim()) {
+    blocks.push(
+      '',
+      '# Vai trò của bạn',
+      '',
+      opts.agentBody.trim(),
     );
   }
 
@@ -282,7 +228,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
   );
   const timeoutMs = (opts.timeoutSecs ?? SUBAGENT_DEFAULT_TIMEOUT_SECS) * 1000;
   const runId = randomUUID();
-  const mode: SubagentMode = opts.mode ?? 'worker';
+  const agentName = opts.agentDefinition?.name ?? null;
   const startedAt = Date.now();
   const finish = (
     partial: Pick<SubagentResult, 'result' | 'turnsUsed' | 'toolCalls' | 'status'> &
@@ -290,7 +236,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
   ): SubagentResult => ({
     ...partial,
     runId,
-    mode,
+    agentName,
     startedAt,
     durationMs: Date.now() - startedAt,
   });
@@ -298,7 +244,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
   // Notify start
   opts.onProgress?.('start', {
     runId,
-    mode,
+    agentName,
     maxTurns,
     instructions: opts.instructions.slice(0, 200),
   });
@@ -314,15 +260,11 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
 
   // Build isolated system prompt
   const system = buildSubagentSystemPrompt(opts.systemBase, opts.instructions, maxTurns, {
-    ...(mode === 'scout' ? { mode } : {}),
+    // Liệt kê TOOL ĐÃ LỌC — đây là bộ tool thật sẽ chạy, không phải bộ của cha.
+    tools: [...opts.clientToolNames],
+    ...(opts.agentDefinition ? { agentBody: opts.agentDefinition.body } : {}),
     ...(opts.parentBrief ? { parentBrief: opts.parentBrief } : {}),
   });
-
-  // Scout: lọc tool ghi trên BẢN SAO — không đụng set chung của request.
-  const clientToolNames =
-    mode === 'scout'
-      ? new Set([...opts.clientToolNames].filter((n) => !SCOUT_DENIED_CLIENT_TOOLS.has(n)))
-      : opts.clientToolNames;
 
   // Collect text deltas to extract final answer
   const textParts: string[] = [];
@@ -337,7 +279,7 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
       ],
       system,
       tools: opts.serverTools,
-      clientTools: clientToolNames, // Already excludes 'delegate'
+      clientTools: opts.clientToolNames, // Đã lọc sẵn ở executeDelegate, không có 'delegate'
       onClientToolCall: opts.onClientToolCall,
       resolveClientTool: opts.resolveClientTool,
       temperature: opts.temperature,
@@ -434,7 +376,12 @@ export interface DelegateExecuteDeps {
   model: LanguageModel;
   systemBase: string;
   serverTools: AgentToolSet;
+  /** Bộ tool CHA. executeDelegate tự giao với `tools` của agent. */
   clientToolNames: ReadonlySet<string>;
+  /** Danh sách agent đọc từ `.vyen/agents/`. Rỗng = chưa có file agent nào. */
+  registry: AgentRegistry;
+  /** Model id theo tên — dùng khi file agent khai báo `model:` khác model cha. */
+  resolveModel?: (modelId: string) => LanguageModel | undefined;
   abortSignal?: AbortSignal;
   temperature?: number;
   maxTokens?: number;
@@ -447,147 +394,72 @@ export interface DelegateExecuteDeps {
   getParentBrief?: () => string | undefined;
 }
 
-/** Nhãn lane trong annotation khi chạy batch — UI dùng để tách thẻ theo task. */
-export interface SubagentTaskMeta {
-  taskIndex?: number;
-  taskTotal?: number;
-}
-
 /** Trần ký tự của result preview trong annotation — card UI đọc field này. */
 export const SUBAGENT_RESULT_PREVIEW_CHARS = 400;
 
 /**
  * Thân thực thi của tool delegate — gọi từ onDelegateCall (đường emulated)
- * lẫn execute của server-tool (đường native). Trả JSON string: một
- * SubagentResult (đường đơn) hoặc SubagentResult[] (batch tasks).
+ * lẫn execute của server-tool (đường native). Trả JSON string của một
+ * SubagentResult.
  *
- * Luôn LỌC 'delegate' khỏi clientToolNames dù caller truyền gì — chống đệ
- * quy ở đúng tầng này (route hay truyền nhầm set đầy đủ).
+ * Luôn LỌC 'delegate' khỏi bộ tool con dù caller truyền gì — chống đệ quy ở
+ * đúng tầng này. Lớp lọc theo tên agent của `resolveAgentToolNames` cũng loại
+ * nó, nhưng executeDelegate không phụ thuộc vào việc caller đã gọi lớp đó.
  */
 export async function executeDelegate(
   args: DelegateCallArgs,
   deps: DelegateExecuteDeps,
 ): Promise<string> {
-  const hasInstructions =
-    typeof args.instructions === 'string' && args.instructions.trim().length > 0;
-  // native path truyền nguyên args của model vào — phần tử tasks là JSON thô,
-  // chưa qua validate, nên đọc qua unknown rồi kiểm tra từng field.
-  const rawTasks: unknown[] = Array.isArray(args.tasks) ? (args.tasks as unknown[]) : [];
-
-  if (hasInstructions && rawTasks.length > 0) {
+  const task = typeof args.task === 'string' ? args.task : '';
+  if (task.trim().length < 10) {
     return JSON.stringify({
       status: 'error',
-      error:
-        'Chỉ dùng MỘT trong hai: instructions (một task) hoặc tasks (nhiều task song song).',
-    });
-  }
-  if (!hasInstructions && rawTasks.length === 0) {
-    return JSON.stringify({
-      status: 'error',
-      error: 'Thiếu instructions (một task) hoặc tasks (1-4 task song song).',
+      error: 'Thiếu `task` — viết việc cụ thể cho subagent (tối thiểu 10 ký tự).',
     });
   }
 
-  const mode: SubagentMode = args.mode === 'scout' ? 'scout' : 'worker';
+  // Phân giải agent TRƯỚC khi spawn: tên sai thì báo lỗi, không đốt một lượt chạy.
+  const definition = args.agent ? resolveAgentDefinition(deps.registry, args.agent) : null;
+  if (args.agent && !definition?.ok) {
+    return JSON.stringify({
+      status: 'error',
+      error: definition?.ok === false ? definition.error : 'Không phân giải được agent.',
+      available: definition?.ok === false ? definition.available : [],
+    });
+  }
+  const agentDef = definition?.ok ? definition.definition : null;
+
+  const scope = resolveAgentToolNames(deps.clientToolNames, agentDef);
+  if (scope.dropped.length > 0) {
+    // Không chặn: gõ sai tên tool là lỗi soạn thảo, không phải lý do agent chết.
+    deps.onProgress?.('progress', {
+      type: 'tool',
+      warning: `Bỏ qua tool không tồn tại trong khai báo của agent "${args.agent ?? '(mặc định)'}": ${scope.dropped.join(', ')}`,
+    });
+  }
+
   const parentBrief = args.context === 'brief' ? deps.getParentBrief?.() : undefined;
+  const model = args.model ?? agentDef?.model;
+  const resolvedModel = model && model !== 'inherit' ? deps.resolveModel?.(model) : undefined;
 
-  if (rawTasks.length === 0) {
-    const instructions = String(args.instructions ?? '');
-    if (instructions.trim().length < 10) {
-      return JSON.stringify({
-        status: 'error',
-        error: 'instructions quá ngắn — viết brief đầy đủ (tối thiểu 10 ký tự) cho subagent.',
-      });
-    }
-    const subResult = await runSubagent({
-      instructions,
-      maxTurns: typeof args.max_turns === 'number' ? args.max_turns : undefined,
-      timeoutSecs: typeof args.timeout_secs === 'number' ? args.timeout_secs : undefined,
-      model: deps.model,
-      systemBase: deps.systemBase,
-      serverTools: deps.serverTools,
-      clientToolNames: new Set([...deps.clientToolNames].filter((n) => n !== 'delegate')),
-      mode,
-      ...(parentBrief ? { parentBrief } : {}),
-      resolveClientTool: withSubagentWriteScope(deps.resolveClientTool, defaultSubagentScope(args, mode)),
-      abortSignal: deps.abortSignal,
-      ...(deps.temperature !== undefined ? { temperature: deps.temperature } : {}),
-      ...(deps.maxTokens ? { maxTokens: deps.maxTokens } : {}),
-      onProgress: deps.onProgress,
-    });
-    return JSON.stringify(subResult);
-  }
-
-  /* Batch: validate thô trước khi spawn — một task hỏng brief không được
-     phép nuốt cả lượt chạy của các task còn lại. */
-  const tasks: DelegateTaskInput[] = [];
-  for (let i = 0; i < rawTasks.length && i < SUBAGENT_MAX_PARALLEL_TASKS; i++) {
-    const raw = (rawTasks[i] ?? {}) as Record<string, unknown>;
-    const instructions = typeof raw.instructions === 'string' ? raw.instructions : '';
-    if (instructions.trim().length < 10) {
-      return JSON.stringify({
-        status: 'error',
-        error: `Task ${i + 1}: instructions quá ngắn — viết brief đầy đủ (tối thiểu 10 ký tự).`,
-      });
-    }
-    tasks.push({
-      instructions,
-      ...(typeof raw.max_turns === 'number' ? { max_turns: raw.max_turns } : {}),
-      ...(typeof raw.timeout_secs === 'number' ? { timeout_secs: raw.timeout_secs } : {}),
-      ...(raw.mode === 'scout' || raw.mode === 'worker' ? { mode: raw.mode } : {}),
-    });
-  }
-
-  // Gắn nhãn lane vào mọi annotation để UI không trộn trạng thái các task.
-  const withTaskMeta = (index: number): SubagentOptions['onProgress'] | undefined =>
-    deps.onProgress
-      ? (phase, detail) =>
-          deps.onProgress?.(phase, { ...detail, taskIndex: index, taskTotal: tasks.length })
-      : undefined;
-
-  const outcomes = await runPool<DelegateTaskInput, SubagentResult>({
-    items: tasks,
-    limit: SUBAGENT_PARALLEL_CONCURRENCY,
-    signal: deps.abortSignal,
-    worker: (task, index) =>
-      runSubagent({
-        instructions: task.instructions,
-        maxTurns: task.max_turns ?? (typeof args.max_turns === 'number' ? args.max_turns : undefined),
-        timeoutSecs:
-          task.timeout_secs ?? (typeof args.timeout_secs === 'number' ? args.timeout_secs : undefined),
-        model: deps.model,
-        systemBase: deps.systemBase,
-        serverTools: deps.serverTools,
-        clientToolNames: new Set([...deps.clientToolNames].filter((n) => n !== 'delegate')),
-        mode: task.mode ?? mode,
-        ...(parentBrief ? { parentBrief } : {}),
-        resolveClientTool: withSubagentWriteScope(
-          deps.resolveClientTool,
-          defaultSubagentScope(args, task.mode ?? mode),
-        ),
-        abortSignal: deps.abortSignal,
-        ...(deps.temperature !== undefined ? { temperature: deps.temperature } : {}),
-        ...(deps.maxTokens ? { maxTokens: deps.maxTokens } : {}),
-        onProgress: withTaskMeta(index),
-      }),
+  const subResult = await runSubagent({
+    instructions: task,
+    maxTurns:
+      typeof args.steps === 'number'
+        ? args.steps
+        : agentDef?.steps ?? SUBAGENT_DEFAULT_MAX_TURNS,
+    timeoutSecs: SUBAGENT_DEFAULT_TIMEOUT_SECS,
+    model: resolvedModel ?? deps.model,
+    systemBase: deps.systemBase,
+    serverTools: deps.serverTools,
+    clientToolNames: scope.names,
+    agentDefinition: agentDef,
+    ...(parentBrief ? { parentBrief } : {}),
+    resolveClientTool: deps.resolveClientTool,
+    abortSignal: deps.abortSignal,
+    ...(deps.temperature !== undefined ? { temperature: deps.temperature } : {}),
+    ...(deps.maxTokens ? { maxTokens: deps.maxTokens } : {}),
+    onProgress: deps.onProgress,
   });
-
-  /* runSubagent tự bắt mọi lỗi nên ok:false chỉ còn một nguyên nhân: task
-     chưa kịp chạy bị huỷ (runPool trả 'Đã huỷ'). */
-  const results: SubagentResult[] = outcomes.map((o) =>
-    o.ok
-      ? o.value
-      : {
-          result: '',
-          turnsUsed: 0,
-          toolCalls: 0,
-          status: 'aborted',
-          runId: '',
-          mode,
-          startedAt: 0,
-          durationMs: 0,
-          error: o.error,
-        },
-  );
-  return JSON.stringify(results);
+  return JSON.stringify(subResult);
 }

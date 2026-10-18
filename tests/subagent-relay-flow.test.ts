@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOpenAI } from '@ai-sdk/openai';
 import { runEmulatedLoop } from '@/lib/emulated-agent';
 import { executeDelegate } from '@/lib/subagent';
+import { loadAgentRegistryFromEntries } from '@/lib/agents/agent-registry';
 import type { AgentToolSet } from '@/lib/agent-tools';
 
 function jsonResponse(payload: unknown): Response {
@@ -154,12 +155,12 @@ describe('executeDelegate — delegate native/emulated dùng chung', () => {
 
     const relayCalls: string[] = [];
     const out = await executeDelegate(
-      { instructions: 'Khảo sát file src/x.ts và tóm tắt các hàm.' },
+      { task: 'Khảo sát file src/x.ts và tóm tắt các hàm.' },
       {
         model: makeModel(),
         systemBase: 'base-system',
         serverTools: {} as AgentToolSet,
-        clientToolNames: new Set(['fs_read']),
+        clientToolNames: new Set(['fs_read']),        registry: loadAgentRegistryFromEntries([]),
         resolveClientTool: async (call) => {
           relayCalls.push(call.toolName);
           return JSON.stringify({ content: 'export function a(){} b(){} c(){}' });
@@ -187,13 +188,13 @@ describe('executeDelegate — delegate native/emulated dùng chung', () => {
     vi.stubGlobal('fetch', fetch);
 
     await executeDelegate(
-      { instructions: 'Đọc file a.txt rồi báo lại nội dung chính.' },
+      { task: 'Đọc file a.txt rồi báo lại nội dung chính.' },
       {
         model: makeModel(),
         systemBase: 'base',
         serverTools: {} as AgentToolSet,
         // Truyền CẢ delegate — executeDelegate phải tự lọc.
-        clientToolNames: new Set(['fs_read', 'fs_list', 'delegate']),
+        clientToolNames: new Set(['fs_read', 'fs_list', 'delegate']),        registry: loadAgentRegistryFromEntries([]),
         resolveClientTool: async () => JSON.stringify({ content: 'ok' }),
       },
     );
@@ -210,12 +211,13 @@ describe('executeDelegate — delegate native/emulated dùng chung', () => {
 
     const out = JSON.parse(
       await executeDelegate(
-        { instructions: 'ngắn quá' },
+        { task: 'ngắn quá' },
         {
           model: makeModel(),
           systemBase: 'base',
           serverTools: {} as AgentToolSet,
           clientToolNames: new Set(),
+          registry: loadAgentRegistryFromEntries([]),
         },
       ),
     );

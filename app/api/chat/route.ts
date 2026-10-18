@@ -26,6 +26,7 @@ import { isContextOverflowError } from '@/lib/context-budget';
 import { buildSubagentParentBrief } from '@/lib/context-compaction';
 import { restateUpstreamStatus } from '@/lib/upstream-status-rules';
 import { runEmulatedLoop } from '@/lib/emulated-agent';
+import { loadAgentRegistryFromEntries } from '@/lib/agents/agent-registry';
 import { executeDelegate } from '@/lib/subagent';
 import { registerSubagentRelay, cancelSubagentRelays } from '@/lib/subagent-relay';
 import { mapMcpTools } from '@/lib/mcp/tool-mapper';
@@ -48,6 +49,7 @@ import {
   formatToolNameList,
   CLIENT_TOOL_DEFS,
   CLIENT_TOOL_NAMES,
+  buildDelegateTool,
   NATIVE_EXCLUDED_CLIENT_TOOLS,
 } from '@/lib/agent-tools';
 import { extractLessons, formatLessonsBlock } from '@/lib/lessons';
@@ -832,6 +834,19 @@ const BodySchema = z.object({
     .max(30)
     .optional(),
   hints: z.string().max(8_000).optional(),
+  /* Agent khai báo ở `.vyen/agents/*.md` — client quét rồi gửi NỘI DUNG file lên,
+     y như `skillIndex` bên trên. Server không có đường dẫn workspace nên không tự
+     đọc được. Gửi cả `name` vì tên agent chính là tên file, không nằm trong
+     markdown. */
+  agents: z
+    .array(
+      z.object({
+        name: z.string().regex(/^[a-zA-Z0-9][\w.-]*$/).max(60),
+        content: z.string().min(1).max(4_000),
+      }),
+    )
+    .max(30)
+    .optional(),
   /* Bộ nhớ có cấu trúc (P1-4): client dựng sẵn block index (category + count
      + global ngắn, trần 4.000) — server chỉ chèn, không tin gì thêm. */
   memoryIndex: z.string().max(5_000).optional(),
@@ -1073,6 +1088,7 @@ export async function POST(req: Request) {
       agentTools,
       memories,
       skillIndex,
+      agents: agentFiles,
       memoryEvidence,
       hints,
       memoryIndex,
@@ -1094,6 +1110,15 @@ export async function POST(req: Request) {
     /* Recipe: gắn khối instructions vào system (volatile tail — đứng cạnh
        skills/lessons), áp tool policy lên tập tool client của lượt này. */
     const recipeCtx = parsed.data.recipe;
+
+    /* Agent khai báo ở `.vyen/agents/*.md` do client gửi lên (server không có
+       đường dẫn workspace). Dựng registry MỘT lần mỗi request rồi dùng lại ở cả
+       hai đường chạy, để danh sách agent trong mô tả `delegate` và bộ agent mà
+       `executeDelegate` phân giải luôn khớp nhau. */
+    const agentRegistry = loadAgentRegistryFromEntries(agentFiles ?? []);
+    for (const w of agentRegistry.warnings) {
+      console.warn(`[req:${requestId}] ${w}`);
+    }
 
     /* Chẩn đoán agent coding: xác nhận client có gửi trạng thái workspace.
        Grep vyen-shell.log / dev log theo "workspace connected". */
@@ -2272,6 +2297,7 @@ export async function POST(req: Request) {
                         systemBase: composedSystem,
                         serverTools: serverTools as ReturnType<typeof buildAgentTools>,
                         clientToolNames: CLIENT_TOOL_NAMES,
+                        registry: agentRegistry,
                         abortSignal: link.signal,
                         ...(modelConfig.supportsTemperature === false
                           ? {}
@@ -2326,8 +2352,7 @@ export async function POST(req: Request) {
                 const nativeDelegateTool: Record<string, ToolSet[string]> = delegateAvailable
                   ? {
                       delegate: tool({
-                        description: CLIENT_TOOL_DEFS.delegate.description,
-                        parameters: CLIENT_TOOL_DEFS.delegate.parameters,
+                        ...buildDelegateTool(agentRegistry),
                         execute: async (args: unknown) =>
                           executeDelegate(
                             args as Parameters<typeof executeDelegate>[0],
@@ -2336,6 +2361,7 @@ export async function POST(req: Request) {
                               systemBase: composedSystem,
                               serverTools: serverTools as ReturnType<typeof buildAgentTools>,
                               clientToolNames: CLIENT_TOOL_NAMES,
+                              registry: agentRegistry,
                               abortSignal: link.signal,
                               ...(modelConfig.supportsTemperature === false
                                 ? {}

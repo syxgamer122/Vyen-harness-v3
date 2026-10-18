@@ -18,8 +18,10 @@
  * không tools — xem xử lý lỗi trong route.
  */
 
-import { tool } from 'ai';
+import { tool, type Tool } from 'ai';
 import { z } from 'zod';
+import type { AgentRegistry } from '@/lib/agents/agent-registry';
+import { describeAgents } from '@/lib/agents/agent-registry';
 import { capHits, fetchReadablePage, searchWeb } from '@/lib/web-backend';
 import { WEB_LIMITS } from '@/lib/web-context';
 import { judgeInjection } from '@/lib/injection-guard';
@@ -1220,64 +1222,12 @@ export const CLIENT_TOOL_DEFS = {
       text: z.string().min(5).max(400).describe('Nội dung bài học, vd "Luôn chạy tsc --noEmit trước khi commit TypeScript"'),
     }),
   }),
-  /* ------------------------------------------------------------------ */
-  /* Subagent Delegation — Goose-style task delegation to isolated worker     */
-  /* ------------------------------------------------------------------ */
 
-  delegate: tool({
-    description:
-      'GIAO TASK cho SUBAGENT độc lập (Goose-style). Subagent chạy với context RIÊNG (không thấy lịch sử chat), ' +
-      'có tools giống bạn nhưng KHÔNG thể gọ delegate (không đế quy). Dùng khi: task độc lập cần ' +
-      'nhiều bước tool (refactor file, research codebase, chạy test suite...). Max turns mặc định 10, tối đa 25. ' +
-      'Chạy NHIỀU TASK SONG SONG: truyền `tasks` (1-4 task, tối đa 3 chạy cùng lúc) thay vì instructions — ' +
-      'kết quả trả về theo mảng đúng thứ tự. mode "scout" = chỉ đọc (không fs_write/fs_edit/shell_run) ' +
-      'dùng cho research/recon; mode "worker" = đầy đủ (mặc định). context "brief" = kèm tóm tắt bối cảnh ' +
-      'hội thoại cha cho subagent (dùng khi task cần hiểu bối cảnh trước đó). Subagent trả kết quả tóm tắt khi xong.',
-    parameters: z.object({
-      instructions: z
-        .string()
-        .min(10)
-        .max(5000)
-        .optional()
-        .describe('Mô tả task chi tiết cho subagent (KHÔNG truyền cùng lúc với tasks)'),
-      tasks: z
-        .array(
-          z.object({
-            instructions: z.string().min(10).max(5000).describe('Mô tả task chi tiết'),
-            max_turns: z.number().int().min(1).max(25).optional(),
-            timeout_secs: z.number().int().min(30).max(600).optional(),
-            mode: z.enum(['scout', 'worker']).optional(),
-          }),
-        )
-        .min(1)
-        .max(4)
-        .optional()
-        .describe('1-4 task chạy SONG SONG (tối đa 3 cùng lúc). Khi dùng, KHÔNG truyền instructions'),
-      max_turns: z
-        .number()
-        .int()
-        .min(1)
-        .max(25)
-        .optional()
-        .describe('Số turns tối đa (mặc định 10, max 25). Áp cho mọi task nếu task không tự đè'),
-      timeout_secs: z
-        .number()
-        .int()
-        .min(30)
-        .max(600)
-        .optional()
-        .describe('Timeout giây (mặc định 300, max 600). Áp cho mọi task nếu task không tự đè'),
-      mode: z
-        .enum(['scout', 'worker'])
-        .optional()
-        .describe('scout = chỉ đọc (recon/research), worker = đầy đủ. Mặc định worker'),
-      context: z
-        .enum(['fresh', 'brief'])
-        .optional()
-        .describe("brief = kèm tóm tắt bối cảnh phiên cha; mặc định 'fresh'"),
-    }),
-  }),
-
+  /* ------------------------------------------------------------------ */
+  /* Subagent Delegation — xem buildDelegateTool() ở cuối file.           */
+  /* Không nằm trong CLIENT_TOOL_DEFS: mô tả phải liệt kê agent đọc từ  */
+  /* đĩa ở MỖI request, còn hằng module-level bị đóng băng lúc import.  */
+  /* ------------------------------------------------------------------ */
   /* ------------------------------------------------------------------ */
   /* Background shell — lệnh chạy NGỀM, hỏi kết quả sau                  */
   /* (port ý tưởng pi-background-tasks; process sống qua restart app)     */
@@ -1499,4 +1449,64 @@ export function validateMemoryProposal(
     return { ok: false, reason: 'Ghi nhớ này đã tồn tại.' };
   }
   return { ok: true, text };
+}
+
+/* ------------------------------------------------------------------ */
+/* Subagent delegation                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tool `delegate` — giao việc cho agent con chạy context RIÊNG.
+ *
+ * HÀM chứ không phải hằng trong `CLIENT_TOOL_DEFS`: danh sách agent đọc từ đĩa ở
+ * mỗi request, nên mô tả phải dựng lại. Hằng module-level bị đóng băng lúc
+ * import và sẽ liệt kê agent người dùng vừa xoá, hoặc thiếu agent vừa thêm.
+ *
+ * `agent` là tên file trong `.vyen/agents/`. Model CHỌN tên theo `description`
+ * rồi viết `task` — không soạn brief mỗi lần. Bỏ trống `agent` = bộ tool đầy đủ,
+ * giữ được hành vi cũ cho người chưa tạo file agent nào.
+ */
+export function buildDelegateTool(registry: AgentRegistry): Tool {
+  const catalog = describeAgents(registry);
+  const agentHint = catalog
+    ? `Agent có sẵn:\n${catalog}\n`
+    : 'Chưa có file agent nào trong .vyen/agents/ — bỏ trống `agent` để chạy với bộ tool đầy đủ.\n';
+
+  return tool({
+    description:
+      'GIAO VIỆC cho subagent chạy context RIÊNG (không thấy lịch sử chat này).\n\n' +
+      agentHint +
+      '\nChọn `agent` theo việc cần làm, rồi viết `task` cụ thể cho nó. ' +
+      'Agent chỉ có đúng các tool trong khai báo của nó — ví dụ agent chỉ-đọc không có ' +
+      'fs_write, nên đừng bảo nó sửa code.\n' +
+      'context: "brief" kèm tóm tắt bối cảnh phiên cha, dùng khi task cần hiểu chuyện đã xảy ra trước đó.',
+    parameters: z.object({
+      agent: z
+        .string()
+        .max(60)
+        .optional()
+        .describe('Tên file agent trong .vyen/agents/. Bỏ trống = bộ tool đầy đủ.'),
+      task: z
+        .string()
+        .min(10)
+        .max(5000)
+        .describe('Việc cụ thể cần làm. Không viết lại mô tả của agent.'),
+      steps: z
+        .number()
+        .int()
+        .min(1)
+        .max(25)
+        .optional()
+        .describe('Ghi đè số vòng tối đa khai báo trong file agent.'),
+      model: z
+        .string()
+        .max(80)
+        .optional()
+        .describe('Ghi đè model khai báo trong file agent.'),
+      context: z
+        .enum(['fresh', 'brief'])
+        .optional()
+        .describe("'brief' = kèm tóm tắt bối cảnh phiên cha; mặc định 'fresh'."),
+    }),
+  });
 }
