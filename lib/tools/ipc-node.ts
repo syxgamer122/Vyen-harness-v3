@@ -31,9 +31,11 @@
  */
 
 import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import ipc from '../ipc.cjs';
+import { parseEditBlocks, replaceMostSimilarChunk } from '../edit-blocks';
 import { CLIENT_TOOL_DEFS } from '../agent-tools';
 
 /**
@@ -61,7 +63,14 @@ export interface NodeHostOptions {
   workspaceRoot: string;
   /** Nơi lưu state (bg-jobs, workspace đã chọn). Không dùng thư mục dự án. */
   userDataDir: string;
-  /** Nhận từng dòng audit. Không có thì im lặng — không phải ghi file. */
+  /**
+   * Nhận từng dòng audit. **Mặc định ghi ra đĩa** trong `userDataDir` — không
+   * ghi thì CLI có quyền ghi file và chạy lệnh mà không để lại dấu vết gì, tức
+   * không truy được là ai đã làm gì. Desktop có sẵn đường audit; CLI không có UI
+   * nên phải tự ghi.
+   *
+   * Truyền hàm riêng thì ghi đè hành vi này (ví dụ test muốn giữ trong RAM).
+   */
   audit?: (line: string) => void;
   /**
    * Cho phép gọi thẳng một channel NGUY HIỂM, bỏ qua cổng duyệt của tầng tool.
@@ -111,6 +120,17 @@ export interface NodeHost {
   dispose(): void;
 }
 
+/**
+ * Nơi lưu nhật ký audit của một host.
+ *
+ * Tách ra thành hàm để **test và code cùng chỉ một đường dẫn** — nếu test tự
+ * chế đường dẫn khác thì test xanh mà sản phẩm ghi chỗ khác, tức test bảo vệ
+ * nhầm chỗ.
+ */
+export function hostAuditLogPath(userDataDir: string): string {
+  return path.join(userDataDir, 'vyen-audit.log');
+}
+
 export function createNodeHost(opts: NodeHostOptions): NodeHost {
   /* ---- C1 + C2: kiểm workspaceRoot TRƯỚC khi đưa vào `workspaceOverride` ----
    *
@@ -142,7 +162,27 @@ export function createNodeHost(opts: NodeHostOptions): NodeHost {
   }
 
   const handlers = new Map<string, Handler>();
-  const audit = opts.audit ?? (() => {});
+  // Ghi append, không ghi đè: audit là dấu vết, mất dòng cũ thì mất ý nghĩa.
+  const auditFile = hostAuditLogPath(opts.userDataDir);
+  const audit =
+    opts.audit ??
+    ((line: string) => {
+      try {
+        fs.mkdirSync(path.dirname(auditFile), { recursive: true });
+        fs.appendFileSync(auditFile, `${new Date().toISOString()} ${line}\n`, 'utf8');
+      } catch {
+        // Không được để việc ghi audit làm hỏng thao tác người dùng đang yêu cầu.
+        // Mất một dòng log tệ hơn là ghi file thất bại.
+      }
+    });
+  // Chạm file một lần lúc khởi tạo để `có file audit` là đúng ngay từ đầu, không
+  // phải đợi hành động đầu tiên mới có.
+  try {
+    fs.mkdirSync(path.dirname(auditFile), { recursive: true });
+    fs.writeFileSync(auditFile, '', { flag: 'a' });
+  } catch {
+    /* xem ghi chú bên trên */
+  }
 
   // Electron gọi listener với `(event, payload)`; `handler()` của ipc.cjs bỏ qua
   // tham số đầu. Truyền `null` cho event là đủ và trung thực — không có event.
@@ -242,6 +282,9 @@ export const IPC_TOOL_CHANNELS: Record<string, string> = {
   fs_read: 'vyen:fs-read',
   fs_search: 'vyen:fs-search',
   fs_write: 'vyen:fs-write',
+  // `fs_edit` KHÔNG có channel riêng trong `ipc.cjs` — nó nhận khối
+  // SEARCH/REPLACE, phải áp vào nội dung rồi mới ghi. Xem `applyEditBlocks`.
+  fs_edit: 'vyen:fs-write',
   // KHÔNG có `fs_stat` ở đây dù ipc.cjs có channel `vyen:fs-stat`: catalog quy
   // định cái gì model được gọi, và `fs_stat` không nằm trong đó. Đưa vào đây là
   // tự phát minh một tool ngoài catalog — tức một lối thoát khỏi chính sách
@@ -354,6 +397,36 @@ function applyReadWindow(
   return { content, truncated };
 }
 
+function sha256(s: string): string {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
+
+/**
+ * Nội dung file đã đọc trong phiên này + hash của nó.
+ *
+ * ============ VÌ SAO CẦN ============
+ *
+ * `ipc.cjs` CÓ máy chống TOCTOU: so sha256 nội dung lúc đọc với lúc ghi, lệch
+ * thì từ chối. Nhưng máy chỉ chạy khi caller **tự gửi** `expectedBaseHash` —
+ * không gửi thì máy không bao giờ chạy, tức lớp bảo vệ có sẵn bị bỏ không.
+ *
+ * Bản web nhớ hash qua approval-binding; CLI chưa có `lib/session/` nên giữ
+ * trong RAM cho tới lúc đó. Hết phiên là mất — chấp nhận được, vì sai sót chỉ
+ * xảy ra khi file đổi **giữa hai lệnh trong cùng một phiên**, còn ghi đè mất dữ
+ * liệu thì đã bị chặn.
+ */
+const READ_HASHES = new WeakMap<NodeHost, Map<string, string>>();
+
+/** Lấy kho hash của host. Chỉ module này dùng. */
+function readHashes(host: NodeHost): Map<string, string> {
+  let m = READ_HASHES.get(host);
+  if (!m) {
+    m = new Map();
+    READ_HASHES.set(host, m);
+  }
+  return m;
+}
+
 /**
  * Nhóm quyền phải hỏi trước, theo spec §7: "tool nguy hiểm … hỏi xác nhận
  * trước. Đây là thứ người dùng tin CLI nhất — bỏ thì mất niềm tin".
@@ -366,6 +439,7 @@ function applyReadWindow(
  */
 export const NEEDS_APPROVAL: ReadonlySet<string> = new Set([
   'fs_write',
+  'fs_edit',
   'shell_run',
   'bg_run',
   'bg_stop',
@@ -462,17 +536,84 @@ export function buildIpcTools(
           }
         }
         const channel = IPC_TOOL_CHANNELS[toolName];
+        const hashes = readHashes(host);
         try {
+          /* ---- fs_edit: ghép khối SEARCH/REPLACE rồi ghi như fs_write ----
+           *
+           * `ipc.cjs` không có channel `fs-edit`; parser khối đã có sẵn và thuần Node
+           * ở `lib/edit-blocks.ts` — dùng lại chứ không tự viết parser thứ hai. */
+          let content = a.content as string | undefined;
+          if (toolName === 'fs_edit') {
+            /* `parseEditBlocks` BẮT BUỘC dòng tên file ngay trên `<<<<<<< SEARCH`
+             * (bản web vẫn vậy — nó truyền `blocksText` thẳng). Nhưng `fs_edit` đã
+             * có tham số `path` riêng, nên bắt model gõ tên file thêm lần nữa là
+             * chỗ sai sót không cần thiết — mô tả tool cũng không nhắc tới nó.
+             * Thử parse thẳng trước; chỉ khi parser báo thiếu tên file mới thử
+             * lại với `path` đứng đầu. Không đụng `parseEditBlocks` vì bản web
+             * đang dùng đúng như nó là. */
+            const rawBlocks = a.blocks as string;
+            let parsed = parseEditBlocks(rawBlocks);
+            if (parsed.error && /tên file/i.test(parsed.error)) {
+              parsed = parseEditBlocks(`${a.path}\n${rawBlocks}`);
+            }
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.blocks.length === 0) {
+              throw new Error('Khong parse duoc khoi edit nao.');
+            }
+            /* Đọc TOÀN BỘ file, KHÔNG đi qua `applyReadWindow`. `fs_edit` ghi đè
+             * cả file, nên đọc bản cắt 24.000 ký tự sẽ cắt mất đuôi file — mất
+             * dữ liệu. Bản web ghi chú đúng việc này ở `use-chat-orchestration.ts`. */
+            const full = (await rawFor(host)('vyen:fs-read', { relPath: a.path })) as {
+              content?: string;
+            };
+            let whole = full?.content ?? '';
+            for (const b of parsed.blocks) {
+              const applied = replaceMostSimilarChunk(whole, b.search, b.replace);
+              if (!applied.ok) {
+                // Ném chứ không ghi nửa vời: khối không khớp mà vẫn ghi là mất dữ
+                // liệu kinh điển. `hint` là gợi ý để model tự sửa lại lượt sau.
+                throw new Error(
+                  `Khong ap duoc khoi SEARCH trong "${b.filename ?? a.path}": ` +
+                    `${applied.hint ?? 'khong tim thay doan can thay'}`,
+                );
+              }
+              whole = applied.text ?? whole;
+            }
+            content = whole;
+            a.content = whole;
+          }
+
+          /* ---- TOCTOU: ghi đè file ĐÃ ĐỌC thì phải kèm hash lúc đọc ----
+           *
+           * File CHƯA từng đọc thì không có hash để đối chiếu, nên không gửi
+           * `hasDiff` — `ipc.cjs` cho qua, và đó là đúng: không có gì để so. */
+          if (toolName === 'fs_write' && hashes.has(a.path as string)) {
+            a.hasDiff = true;
+            a.expectedBaseHash = hashes.get(a.path as string);
+          }
+
           const payload = toIpcPayload(toolName, a);
           const r = await rawFor(host)(channel, payload);
+
           // `fs_read`: cửa sổ dòng và trần ký tự phải làm ở đây — schema
           // `FsReadPayload` của `ipc.cjs` chỉ có `relPath`, còn `start_line` và
           // `line_count` thuộc tầng client ở bản web. Không cắt thì model đọc
           // lại đúng chunk cũ rồi lặp, tốn token vô ích.
           if (toolName === 'fs_read') {
-            const raw = (r as { content?: string } | undefined)?.content ?? '';
-            const { content, truncated } = applyReadWindow(raw, a.start_line as number, a.line_count as number);
+            const full = (r as { content?: string } | undefined)?.content ?? '';
+            // Hash phải tính trên TOÀN BỘ file, không phải phần cửa sổ — nếu tính
+            // trên cửa sổ thì đọc tiếp rồi ghi sẽ luôn lệch và chặn oan.
+            if (a.path) hashes.set(a.path as string, sha256(full));
+            const { content, truncated } = applyReadWindow(
+              full,
+              a.start_line as number,
+              a.line_count as number,
+            );
             return { ...(r as object), content, truncated };
+          }
+          // Ghi xong thì hash cũ hết ý nghĩa — file đã là nội dung mới.
+          if ((toolName === 'fs_write' || toolName === 'fs_edit') && a.path) {
+            hashes.set(a.path as string, sha256(content ?? ''));
           }
           return r;
         } catch (e) {
