@@ -98,11 +98,36 @@ export function serializeToolResult(
   } catch {
     raw = '"[kết quả không serialize được]"';
   }
-  /* Redact TRƯỚC khi cắt: nếu cắt trước, một khoá nằm vắt qua ranh giới cắt sẽ
-     chỉ còn nửa chuỗi và không khớp rule nào nữa → lọt bí mật vào ngữ cảnh.
+  /* Redact TRƯỚC mọi thứ — kể cả trước khi ghi spill xuống đĩa. Nếu cắt trước
+     rồi redact, một khoá nằm vắt qua ranh giới cắt sẽ chỉ còn nửa chuỗi và
+     không khớp rule nào nữa → lọt bí mật vào ngữ cảnh. Nếu spill bản thô thì
+     khoá ở phần GIỮA (phần hay chứa bí mật nhất) nằm hẳn trên đĩa.
      Đây là chốt chặn cuối của đường emulated (mọi kết quả tool đều đi qua đây)
      — xem lib/secret-registry.ts (SecretRegistry). */
-  return truncateToolResult(redactSecretText(raw), maxChars);
+  const redacted = redactSecretText(raw);
+  if (redacted.length <= maxChars) return redacted;
+
+  /* Spill: lưu phần bị cắt ra file app tự ghi để fs_read đọc lại được.
+     Best-effort — lỗi lưu thì rơi về truncateToolResult y hệt cũ, KHÔNG ném:
+     lỗi lưu không được biến một tool call thành công thành isError. */
+  const saveSpillText = loadSpillSaver();
+  if (saveSpillText) {
+    const spilled = saveSpillText(redacted, 'tool-result.txt');
+    if (spilled) {
+      // Chừa sẵn chỗ cho marker và notice rồi mới chia phần còn lại cho đầu/đuôi,
+      // để TỔNG không bao giờ vượt maxChars — đó là hợp đồng của TOOL_RESULT_MAX_CHARS.
+      const markerLen = 64;
+      const room = Math.max(0, maxChars - markerLen - spilled.notice.length - 2);
+      const split = TOOL_RESULT_HEAD_RATIO / (TOOL_RESULT_HEAD_RATIO + TOOL_RESULT_TAIL_RATIO);
+      const headLen = Math.floor(room * split);
+      const tailLen = room - headLen;
+      const head = redacted.slice(0, headLen);
+      const tail = tailLen > 0 ? redacted.slice(-tailLen) : '';
+      const marker = `\n...[đã cắt bớt ${Math.max(0, redacted.length - headLen - tailLen)} ký tự ở giữa]...\n`;
+      return `${head}${marker}${tail}\n\n${spilled.notice}`;
+    }
+  }
+  return truncateToolResult(redacted, maxChars);
 }
 
 /* ------------------------------------------------------------------ */
