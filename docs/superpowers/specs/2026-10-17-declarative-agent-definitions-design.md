@@ -72,12 +72,13 @@ Agent trong `.vyen/agents/` đều là agent con. Các tuỳ chọn còn lại t
 ### Phân giải tên
 
 ```
-1. Khớp chính xác tên file      "code-reviewer"
-2. Wildcard                    "reviewer-*", "*-scout"   — nhiều ký tự nhất thắng
-3. Không có                    → tool trả lỗi, liệt kê tên hợp lệ
+1. Khớp chính xác tên file    "code-reviewer"
+2. Không có                   → tool trả lỗi, liệt kê tên hợp lệ trong chính chuỗi error
 ```
 
-Không có agent mặc định ẩn. `delegate` với `agent` bị bỏ trống dùng bộ tool đầy đủ (hành vi như hôm nay). Tên không tồn tại → **báo lỗi liệt kê tên hợp lệ**, không im lặng fallback.
+**Không có wildcard.** Ký tự `*` không hợp lệ trong tên file trên Windows, nên pattern matching là code không bao giờ chạy được trên đúng platform — đúng thứ đợt dọn này loại bỏ. Claude Code và OpenCode cũng chỉ dùng tên tường minh. Người dùng muốn một agent nhiều tên thì tạo nhiều file.
+
+Không có agent mặc định ẩn. `delegate` với `agent` bị bỏ trống dùng bộ tool đầy đủ (hành vi như hôm nay).
 
 Lý do không dùng "khai báo sau thắng" như OpenCode: thứ tự file là thứ tự vô tình, người dùng thêm file mới sẽ vô tình đổi hành vi agent cũ.
 
@@ -88,6 +89,12 @@ Agent con nhận tool = **giao của bộ tool cha và `tools` khai báo** (khi 
 Điểm mấu chốt: `delegate` của agent con **không có `execute` và không xuất hiện trong schema**. Model không thể gọi thứ nó không nhìn thấy. Đây là sự thay thế trực tiếp cho việc dựa vào câu `"NO Delegation"` trong prompt.
 
 `clientToolNames` đã là seam sẵn có (`runSubagent` nhận nó, `subagent.ts` đang lọc `SCOUT_DENIED_CLIENT_TOOLS` theo danh sách tên). Spec này thay denylist đó bằng allowlist theo agent.
+
+### Ràng buộc máy chủ: server KHÔNG có đường dẫn workspace
+
+`.vyen/skills` đã được client quét rồi gửi `skillIndex` xuống (`route.ts`). Agent đi đúng con đường đó: client đọc `.vyen/agents/*.md` **mỗi lượt** và gửi cặp `{ name, content }`. Gửi cả tên vì tên agent chính là tên file, không nằm trong markdown.
+
+Hệ quả: `delegate` **không** nằm trong `CLIENT_TOOL_DEFS` với mô tả tĩnh — mô tả phải dựng lại từ registry mỗi request. Schema được tách ra `DELEGATE_PARAMETERS` để `CLIENT_TOOL_DEFS.delegate` (bản schema-only, phục vụ doc registry của đường emulated) và `buildDelegateTool(registry)` (bản chạy thật) dùng chung một nguồn. `route.ts` phải chèn `delegate` vào `extraToolDocs` của `runEmulatedLoop` — thiếu thì model không có native tool-calling sẽ không thấy sub-agent nào.
 
 ### Quyết định về CapBAC
 
@@ -154,6 +161,8 @@ Danh sách được sinh từ registry tại runtime, nên luôn khớp với fi
 | `core/agent-runtime/state-machine.ts` | chỉ `tests/core-state-machine.test.ts` | xoá cả hai |
 | `core/agent-runtime/fencing.ts` | chỉ `tests/storage-fencing.test.ts` | xoá cả hai |
 | `core/agent-runtime/tool-runner.ts` | chỉ còn `validateShellAllowlist` (60 dòng; phần engine ~900 dòng đã bị xoá từ trước) | chuyển hàm đó sang `lib/shell-policy.ts`, xoá file |
+
+**`state-machine.ts` và `fencing.ts` phải GIỮ.** Phân tích ban đầu cho rằng chúng chết vì chỉ test của chúng import. Sai — `runtime-actor.ts` import `./state-machine`, `tab-lock.ts` import `./fencing`, và cả hai được mount qua `react/use-agent-runtime.ts`. Đã xoá nhầm rồi khôi phục bằng `git checkout HEAD --`.
 | `tests/core-state-machine.test.ts` | giữ `validateShellAllowlist` case | cắt còn case đó |
 | `SCOUT_DENIED_CLIENT_TOOLS` | `subagent.ts` | xoá, thay bằng allowlist theo agent |
 | `defaultSubagentScope` | `subagent.ts` | xoá (mục 5) |
