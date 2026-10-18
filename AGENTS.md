@@ -95,11 +95,28 @@ vì "có thể sau này cần" — và đừng refactor code không liên quan t
 làm. Xoá rồi để lại comment giải thích **vì sao** xoá, để người sau không thêm
 lại.
 
-**Rác nguy hiểm nhất không phải code mồ côi — là code TRÙNG LẮP.** Hai cơ chế
-làm cùng một việc thì giết cái sai. Còn hơn, xoá cái **dùng số liệu bịa**:
-`lib/capability-projection.ts` từng lọc MCP tool bằng byte ước lượng bịa đặt,
-chiếm 6.420/16.000 byte ngân sách của Tool Router. Xoá xong mới thấy Tool
-Router ngay cạnh đã làm đúng việc đó bằng BM25 trên schema thật.
+### Trước khi viết cái mới: dùng lại cái đang có
+
+Chủ repo: *"không tận dụng lại càng tận dụng lại sản phẩm càng như cái bãi rác
+chắt vá thôi"*. Viết thêm cơ chế thứ hai cho một việc đã có cơ chế là **chắt vá**,
+dù cơ chế cũ chưa hoàn hảo.
+
+Trước khi tạo file/hằng/hàm mới, hãy trả lời bằng grep: việc này đã có ai làm
+chưa? Nếu có — **mở rộng nó**, đừng viết song song. Repo có tiền lệ: `shell_run`
+đã tự lưu output dài ra file tạm + trả đường dẫn đọc tiếp (`lib/ipc.cjs`), nên
+làm "kết quả tool lớn vẫn đọc lại được" thì mở rộng cái đó, không dựng hệ thống
+mới.
+
+Hai hệ quả cụ thể đã gặp ở Vyen:
+
+- **Hai bộ hằng trùng tên khác nơi** — `lib/mcp/tool-router.ts` và
+  `lib/zeromem/retriever.ts` cùng khai BM25. Cùng giá trị nên chưa lệch, nhưng
+  hôm nào lệch là không ai biết vì sao. Đừng lặp lại: hằng dùng chung thì để
+  một chỗ.
+- **Hai cơ chế lọc tool cùng lúc chạy** — module `capability-projection` từng
+  lọc MCP tool song song với Tool Router, bằng byte ước lượng bịa đặt; đã xoá
+  2026-10-18. Rác nguy hiểm nhất không phải code mồ côi — mà là code **vẫn
+  chạy**, dùng **số liệu bịa**, và không ai thấy.
 
 ### Trước khi xoá: tìm không ra KHÔNG phải bằng chứng
 
@@ -110,8 +127,8 @@ Select-String -Path "app\**\*.ts" -Pattern "foo"   # KHÔNG recurse như tưởn
 ```
 
 `**` trong PowerShell không luôn đệ quy — lệnh trên bỏ sót `app/api/chat/route.ts`,
-nên kết luận `lib/capability-projection.ts` chết, trong khi `route.ts:73` đang
-import nó. Đây là hướng sai chết người: tìm-hụt dễ dẫn tới xoá nhầm.
+nên kết luận một module lọc tool là chết, trong khi `route.ts:73` đang import nó.
+Đây là hướng sai chết người: tìm-hụt dễ dẫn tới xoá nhầm.
 
 Ba điều phải làm trước khi kết luận "chết":
 
