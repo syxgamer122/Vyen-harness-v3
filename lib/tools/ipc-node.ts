@@ -97,3 +97,70 @@ export function createNodeHost(opts: NodeHostOptions): NodeHost {
     },
   };
 }
+
+/**
+ * Tên tool của model → channel của `ipc.cjs`.
+ *
+ * Khoá chỉ gồm tool **đã có** channel thật trong `ipc.cjs`. Tool chưa có
+ * không được đưa vào đây rồi im lặng — thiếu thì phải nói ra, vì model tưởng
+ * có tool rồi gọi xong nhận lỗi khó hiểm thì còn tệ hơn là không có tool.
+ *
+ * Danh sách này là điểm cần soi lại mỗi khi `ipc.cjs` đổi; test
+ * `mọi tool ánh xạ đều có channel thật` sẽ đỏ nếu có entry hỏng.
+ */
+export const IPC_TOOL_CHANNELS: Record<string, string> = {
+  // Nhóm fs_read / fs_write — spec §5 gọi đây là "đọc/ghi file qua node:fs".
+  fs_list: 'vyen:fs-list',
+  fs_read: 'vyen:fs-read',
+  fs_search: 'vyen:fs-search',
+  fs_write: 'vyen:fs-write',
+  // KHÔNG có `fs_stat` ở đây dù ipc.cjs có channel `vyen:fs-stat`: catalog quy
+  // định cái gì model được gọi, và `fs_stat` không nằm trong đó. Đưa vào đây là
+  // tự phát minh một tool ngoài catalog — tức một lối thoát khỏi chính sách
+  // quyền. Kênh đó vẫn dùng được qua `host.call('vyen:fs-stat', ...)` khi
+  // code nội bộ cần.
+  // Nhóm shell.
+  shell_run: 'vyen:shell-run',
+  bg_run: 'vyen:bg-run',
+  bg_status: 'vyen:bg-status',
+  bg_stop: 'vyen:bg-stop',
+  // Nhóm git.
+  git_status: 'vyen:git-status',
+  git_diff: 'vyen:git-diff',
+  git_log: 'vyen:git-log',
+  git_add: 'vyen:git-add',
+  git_commit: 'vyen:git-commit',
+};
+
+/** Bản tra cho một host cụ thể — dùng để test, không cần khi gọi tool. */
+export function buildIpcToolMap(host: NodeHost): Record<string, string> {
+  // `host` không dùng để tính bảng này, nhưng giữ tham số để call site không
+  // phải nhớ là bảng này là hằng — và để tương lai có thể lọc theo channel mà
+  // host thực sự đăng ký.
+  void host;
+  return { ...IPC_TOOL_CHANNELS };
+}
+
+/**
+ * Dịch tham số theo tên tool của model sang tên `ipc.cjs` dùng.
+ *
+ * Khác biệt duy nhất quan sát được: `path` → `relPath`. Mọi tên khác giữ
+ * nguyên. Dịch sai thì lỗi hiện ra ở tầng schema của `ipc.cjs` với câu
+ * `expected string, received undefined` — không ai đoán ra nguyên nhân là
+ * sai tên tham số.
+ */
+export function toIpcPayload(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    out[k === 'path' ? 'relPath' : k] = v;
+  }
+  // `fs_search` của ipc.cjs dùng `isRegex` (camelCase), model gửi `is_regex`.
+  if (toolName === 'fs_search' && 'is_regex' in out) {
+    out.isRegex = out.is_regex;
+    delete out.is_regex;
+  }
+  return out;
+}
