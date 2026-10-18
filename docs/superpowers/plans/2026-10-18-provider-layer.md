@@ -146,7 +146,10 @@ Expected: FAIL — `resolveOpenAIModel is not a function`
 
 Dùng `createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey })` rồi trả `openai(cfg.model)`.
 
-**Bóc từ `route.ts`:** dòng 1709 và 1718 có sẵn hai instance `createOpenAI`, một cho stream một cho non-stream. Trong plan này chỉ dựng một instance và trả model; vòng `streamText` thuộc plan sau. **Không** sao chép comment dài của `route.ts` sang — tham chiếu tới `route.ts:1709` là đủ.
+**Bóc từ `route.ts`:** tìm `createOpenAI({` (có hai chỗ, một cho stream một cho
+non-stream). Trong plan này chỉ dựng một instance và trả model; vòng `streamText` thuộc
+plan sau. **Không** sao chép comment dài của `route.ts` sang — tham chiếu tới
+`route.ts` là đủ.
 
 - [ ] **Step 4: Chạy để xác nhận xanh**
 
@@ -182,8 +185,21 @@ git commit -m "feat(provider): adapter openai-compatible"
 
 - [ ] **Step 1: Cài dependency**
 
-Run: `npm install @ai-sdk/anthropic@^2`
-Expected: exit 0, xuất hiện trong `dependencies`. **Ghim bản major 2** để khớp `@ai-sdk/openai@1`… nếu npm báo xung đột peer, dừng lại và báo lại, đừng ép `--force`.
+Run: `npm install @ai-sdk/anthropic@1.2.12`
+Expected: exit 0, xuất hiện trong `dependencies`.
+
+**Vì sao ghim `1.2.12` chứ không phải `^2` hay bản mới nhất.** Đã kiểm npm:
+
+| Gói | Phụ thuộc |
+|---|---|
+| `@ai-sdk/openai@1.3.24` (đang dùng) | `@ai-sdk/provider@1.1.3` |
+| `@ai-sdk/anthropic@1.2.12` | `@ai-sdk/provider@1.1.3` — khớp |
+
+Bản mới nhất trên npm là `4.0.82`, thuộc thế hệ AI SDK khác, **không** khớp
+`ai@4.3.19` đang cài. `npm install @ai-sdk/anthropic` không ghim version sẽ lấy
+bản mới nhất và làm hỏng `npm run build`.
+
+Nếu npm vẫn báo xung đột peer, **dừng lại và báo lại** — đừng ép `--force`.
 
 - [ ] **Step 2: Viết test đỏ**
 
@@ -327,7 +343,20 @@ Expected: FAIL — `Cannot find package '@/lib/provider/upstream-diagnosis'`
 
 - [ ] **Step 3: Viết `lib/provider/upstream-diagnosis.ts`**
 
-Chuyển nguyên văn code và hằng từ `route.ts` khoảng dòng 292–660: `UpstreamDiagnosis`, `NETWORK_FAILURE_RE`, `GATEWAY_WRAPPED_ERROR_RE`, `normalizeGatewayStreamError`, `sanitizeErrorMessage`, `getStatusCode`, `diagnoseUpstreamError`, cùng mọi hằng trần nó dùng. **Không** định nghĩa lại `UpstreamScope` — re-export từ `@/lib/api-keys` như Interfaces ghi.
+Chuyển nguyên văn các hằng và hàm sau ra `lib/provider/upstream-diagnosis.ts`, tìm
+trong `app/api/chat/route.ts` **theo tên**, không theo số dòng — số dòng trong file
+này đã sai một lần trong lúc viết plan:
+
+`redact`, `rawMessageOf`, `sanitizeErrorMessage`, `getStatusCode`,
+`normalizeGatewayStreamError`, `NETWORK_FAILURE_RE`, `GATEWAY_WRAPPED_ERROR_RE`,
+`UpstreamDiagnosis`, `diagnoseUpstreamError`, và **mọi hằng trần chúng dùng**
+(tìm bằng cách xem các hằng được tham chiếu trong thân hàm).
+
+**Không** định nghĩa lại `UpstreamScope` — re-export từ `@/lib/api-keys` như Interfaces ghi.
+
+Sửa **duy nhất**: đường dẫn import nội bộ trỏ sang `@/lib/...`. Không sửa logic, không
+rút gọn regex, không bỏ comment giải thích. Regex đã được chỉnh cho gateway thật; sửa
+lại là hồi quy.
 
 Sửa **duy nhất**: đường dẫn import nội bộ phải trỏ sang `@/lib/...`; không sửa logic, không rút gọn regex, không bỏ comment giải thích. Regex đã được chỉnh cho gateway thật, sửa lại là hồi quy.
 
