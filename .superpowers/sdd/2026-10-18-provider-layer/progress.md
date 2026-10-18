@@ -402,3 +402,72 @@ Tôi báo nợ này suốt phiên. Kiểm lại thì:
 Đây là nợ **duy nhất** còn lại mà tôi không tự quyết được — mỗi file đều cần câu
 hỏi "lõi CLI còn cần chức năng này không", mà câu trả lời nằm ở ý định sản
 phẩm chứ không nằm trong mã.
+
+# Lượt 3 (2026-10-18) — task A. SPEC §5 SAI, và đo trước khi viết đã cứu nó.
+
+## Phát hiện lớn nhất: KHÔNG viết `lib/tools/fs-node.ts`
+
+Spec §5 ghi `lib/tools/fs-node.ts` **MỚI — đọc/ghi file qua node:fs**. Đo trước
+khi viết cho thấy điều đó **sai**: `lib/ipc.cjs` đã có sẵn toàn bộ backend, và
+đã qua sử dụng thật trên desktop.
+
+Có sẵn: đọc/ghi/liệt kê/tìm kiếm/xoá/thống kê file (có trần byte) · `path-guard.cjs`
+chặn đường dẫn ra ngoài workspace + đường dẫn hệ thống · **chống TOCTOU** bằng
+sha256 nội dung · `shell-policy.cjs` · `bg-jobs.cjs` · `approval-binding.cjs` ·
+git (5 channel) · skills (2) · memory (2) · secure-store (4) · audit log.
+
+**31 channel, phủ hết các nhóm tool.** Viết `fs-node.ts` là tạo **bản thứ hai**
+không có path-guard và không có chống TOCTOU — tức **kém an toàn hơn**. Đúng cái
+AGENTS.md §6 gọi là chắt vá.
+
+- **Cách làm thay thế:** `register(ipcMain, opts)` của `ipc.cjs` chỉ cần một object
+  có `handle(channel, fn)`. Truyền `ipcMain` giả gom handler vào Map rồi gọi
+  thẳng. JSDoc ngay trên `register()` đã ghi kỹ thuật này dành cho test.
+- **Kết quả:** `lib/tools/ipc-node.ts` — lớp cầu, **không viết backend nào mới**.
+- **Chi phí nếu tôi bỏ qua việc đo và viết theo spec:** một bản fs mới không có
+  path-guard, không có chống TOCTOU, và không ai hỏi vì "spec bảo vậy".
+
+## Ba chỗ tôi sai khi kiểm chứng phạm vi
+
+1. **"15 tool" — thật là 19.** Tôi đếm từ `TOOL_CATEGORY_MAP` nhưng bỏ sót nhóm
+   Sarsed (`code_skeleton`, `code_symbols`, `code_verify`, `code_patch`).
+2. **"Có test chặn thiếu mục" — tôi khẳng định từ *comment*, không mở test ra.**
+   Mở ra thì đúng: `tests/tool-catalog.test.ts:131`.
+3. **Script đo đầu tiên lấy `Object.keys()` trên `TOOL_CATALOG` — đó là MẢNG**, ra
+   36 chỉ số thay vì 36 tên. Đo lại: phủ 36/36, 0 thiếu, 0 thừa.
+
+Và lúc chạy thử, `register()` trả `{}` suốt ba lần — nguyên nhân là tôi gọi
+handler với **một** tham số trong khi Electron truyền **hai** `(event, payload)`.
+Không phép đo nào bắt được; chỉ đọc mã `handler()` mới thấy.
+
+## Cổng duyệt tool
+
+spec §7: tool nguy hiểm phải hỏi trước — "thứ người dùng tin CLI nhất". Ở web việc
+này do UI đảm nhiệm; CLI không có UI nên cổng phải ở tầng tool.
+
+- `NEEDS_APPROVAL` = `fs_write`, `shell_run`, `bg_run`, `bg_stop`.
+- **Cố ý KHÔNG suy ra danh sách này từ nhóm quyền.** Lấy từ `TOOL_CATEGORY_MAP` sẽ
+  kéo `git_add`/`git_commit` vào — tức hỏi cả thao tác git vốn đã được cho phép, và
+  làm biến "duyệt" thành thói quen bấm `có` mà không đọc.
+- Cổng là **tham số truyền vào**, không import Dexie → module không phụ thuộc
+  `db.ts`, tức xây được trước cả khi thay `db.ts`.
+- Từ chối thì **ném**, không trả giá trị rỗng — trả rỗng thì model coi tool chạy
+  xong và đi tiếp, tức lệnh bị từ chối mà vẫn tiếp tục.
+
+## Test bắt được lỗi của chính tác giả
+
+`fs_stat` có channel thật (`vyen:fs-stat`) nên tôi đưa vào bảng ánh xạ. Test đỏ:
+`tool ngoài catalog: fs_stat`. `fs_stat` không có trong `TOOL_CATALOG`, tức tôi đã
+**phát minh một tool ngoài catalog** — đúng lối thoát khỏi chính sách quyền mà
+test sinh ra để chặn. Kênh đó vẫn dùng được nội bộ qua `host.call()`.
+
+## NỢ CHƯA TRẢ — `fs_edit` chưa có
+
+`NEEDS_APPROVAL` **không** gồm `fs_edit`, và đó là thiếu sót có chủ đích chứ không
+phải quên: `ipc.cjs` **không có** channel `vyen:fs-edit`. `fs_edit` nhận khối
+`<<<<<<< SEARCH … ======= … >>>>>>> REPLACE` rồi phải áp vào nội dung file trước
+khi gọi `fs-write`. Việc đó chưa làm. **Không ai được tưởng là `fs_edit` đã xong.**
+
+- **Chi phí nếu bỏ sót:** model thấy mô tả `fs_edit` trong prompt nhưng gọi lên thì
+  không có channel → lỗi khó hiểu. Hoặc tệ hơn: ai đó thêm nó vào map sau này mà
+  không nghĩ tới chuyện duyệt.

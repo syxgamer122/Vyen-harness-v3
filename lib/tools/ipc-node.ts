@@ -31,6 +31,7 @@
  */
 
 import ipc from '../ipc.cjs';
+import { CLIENT_TOOL_DEFS } from '../agent-tools';
 
 export interface NodeHostOptions {
   /** Thư mục gốc dự án. Mọi đường dẫn tool đều tương đối với nó. */
@@ -161,6 +162,89 @@ export function toIpcPayload(
   if (toolName === 'fs_search' && 'is_regex' in out) {
     out.isRegex = out.is_regex;
     delete out.is_regex;
+  }
+  return out;
+}
+
+/**
+ * Nhóm quyền phải hỏi trước, theo spec §7: "tool nguy hiểm … hỏi xác nhận
+ * trước. Đây là thứ người dùng tin CLI nhất — bỏ thì mất niềm tin".
+ *
+ * Danh sách này **cố ý không suy ra từ nhóm `fs_write`/`shell`** một cách tự
+ * động: `fs_write` viết file, còn `shell_run` chạy lệnh — mức nguy hiểm khác
+ * nhau, và người duyệt phải thấy danh sách cụ thể chứ không phải tên nhóm.
+ * Lấy từ `TOOL_CATEGORY_MAP` sẽ kéo cả `git_add`/`git_commit` vào, tức hỏi
+ * cả thao tác git vốn đã được người dùng cho phép.
+ */
+export const NEEDS_APPROVAL: ReadonlySet<string> = new Set([
+  'fs_write',
+  'shell_run',
+  'bg_run',
+  'bg_stop',
+]);
+
+export interface BuildToolsOptions {
+  /**
+   * Hỏi người dùng có cho chạy tool này không. Trả false = từ chối, và tool
+   * **không** được thực thi.
+   *
+   * Hàm bất đồng bộ vì bản web phải chờ người dùng bấm.
+   */
+  approve: (toolName: string) => Promise<boolean>;
+}
+
+/**
+ * Dựng bộ tool cho AI SDK: schema mượn từ `CLIENT_TOOL_DEFS`, thực thi đi qua
+ * `ipc.cjs`.
+ *
+ * ============ VÌ SAO MƯỢN SCHEMA, KHÔNG VIẾT LẠI ============
+ *
+ * `CLIENT_TOOL_DEFS` đã có `description` và `parameters` — viết và kiểm thử.
+ * Model cũng đã quen đúng những câu mô tả đó. Viết schema thứ hai ở đây là tạo
+ * nơi lệch âm thầm: sửa một bên thì bên kia cũ, và không ai biết bên nào đúng.
+ * Nên chỉ mượn schema rồi thêm `execute` mà `ipc.cjs` thực sự làm được.
+ *
+ * ============ CỔNG DUYỆT ============
+ *
+ * Ở web, việc hỏi xác nhận do UI đảm nhiệm. CLI không có UI, nên cổng phải ở
+ * đây — và nó là **tham số truyền vào**, không import Dexie. Nhờ vậy module này
+ * không phụ thuộc `db.ts`, xây được trước cả khi thay `db.ts`.
+ */
+export function buildIpcTools(
+  host: NodeHost,
+  opts: BuildToolsOptions,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const toolName of Object.keys(IPC_TOOL_CHANNELS)) {
+    const def = (CLIENT_TOOL_DEFS as Record<string, unknown>)[toolName] as
+      | { description?: string; parameters?: unknown }
+      | undefined;
+    if (!def) continue; // không có schema ở web → không dựng tool giả
+    out[toolName] = {
+      description: def.description,
+      parameters: def.parameters,
+      execute: async (args: Record<string, unknown>) => {
+        if (NEEDS_APPROVAL.has(toolName)) {
+          const ok = await opts.approve(toolName);
+          if (!ok) {
+            // Ném, KHÔNG trả về giá trị rỗng: nếu trả rỗng, model coi như
+            // tool chạy xong và đi tiếp — tức lệnh bị từ chối mà vẫn tiếp tục.
+            throw new Error(
+              `Nguoi dung KHONG duyet phep chay tool "${toolName}". dung lenh nay khong duoc thuc hien.`,
+            );
+          }
+        }
+        const channel = IPC_TOOL_CHANNELS[toolName];
+        try {
+          return await host.call(channel, toIpcPayload(toolName, args ?? {}));
+        } catch (e) {
+          // Bọc lại để lỗi nêu đúng TÊN TOOL, không chỉ câu chữ của ipc.cjs —
+          // khi model nhận lỗi, nó cần biết tool nào hỏng để thử cách khác.
+          const msg = e instanceof Error ? e.message : String(e);
+          throw new Error(`Tool "${toolName}" that bai: ${msg}`);
+        }
+      },
+    };
   }
   return out;
 }
