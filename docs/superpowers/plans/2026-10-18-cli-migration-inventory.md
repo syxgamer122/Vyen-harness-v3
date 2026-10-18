@@ -33,7 +33,7 @@ Những cách bảng này có thể **nói dối người đọc nó** — tức
 ### Task 1: Script quét API trình duyệt
 
 **Files:**
-- Create: `scripts/cli-migration/scan-browser-apis.mjs`
+- Create: `scripts/cli-migration/scan-browser-apis.ts`
 - Test: `tests/cli-migration-scan.test.ts`
 - Create: `tests/fixtures/cli-migration/browser-api/` (fixture: file sạch + file dính)
 
@@ -65,7 +65,7 @@ Cố ý **không** đưa `window`/`document` vào danh sách: chúng xuất hi�
 
 ```ts
 import { describe, expect, it } from 'vitest';
-import { scanBrowserApis, BROWSER_APIS } from '../scripts/cli-migration/scan-browser-apis.mjs';
+import { scanBrowserApis, BROWSER_APIS } from '../scripts/cli-migration/scan-browser-apis.ts';
 ```
 
 Ba test:
@@ -110,9 +110,9 @@ it('cơ chế quét tự được kiểm: phải tìm thấy Dexie trong lib/db.
 - [ ] **Step 2: Chạy để xác nhận đỏ**
 
 Run: `npx vitest run tests/cli-migration-scan.test.ts`
-Expected: FAIL — `Cannot find module '../scripts/cli-migration/scan-browser-apis.mjs'`
+Expected: FAIL — `Cannot find module '../scripts/cli-migration/scan-browser-apis.ts'`
 
-- [ ] **Step 3: Viết `scripts/cli-migration/scan-browser-apis.mjs`**
+- [ ] **Step 3: Viết `scripts/cli-migration/scan-browser-apis.ts`**
 
 ```js
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -164,7 +164,7 @@ Trả lại regex gốc, chạy lại, phải xanh.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/cli-migration/scan-browser-apis.mjs tests/cli-migration-scan.test.ts
+git add scripts/cli-migration/scan-browser-apis.ts tests/cli-migration-scan.test.ts
 git commit -m "test(cli): quet API trinh duyet, co test tu kiem co that quet khong"
 ```
 
@@ -173,7 +173,7 @@ git commit -m "test(cli): quet API trinh duyet, co test tu kiem co that quet kho
 ### Task 2: Đồ thị import — file nào còn dùng bởi lõi
 
 **Files:**
-- Create: `scripts/cli-migration/import-graph.mjs`
+- Create: `scripts/cli-migration/import-graph.ts`
 - Modify: `tests/cli-migration-scan.test.ts`
 
 **Interfaces:**
@@ -194,7 +194,7 @@ function unreached(files: string[], entries: string[]): string[];
 - [ ] **Step 1: Viết test đỏ**
 
 ```ts
-import { reachableFrom, unreached } from '../scripts/cli-migration/import-graph.mjs';
+import { reachableFrom, unreached } from '../scripts/cli-migration/import-graph.ts';
 
 it('đi từ entry tới được qua chuỗi import nhiều tầng', () => {
   const s = reachableFrom(['lib/agent-tools-server.ts']);
@@ -216,9 +216,9 @@ Test thứ hai là **test kiểm cơ chế kiểm** — cùng dạng với test 
 - [ ] **Step 2: Chạy để xác nhận đỏ**
 
 Run: `npx vitest run tests/cli-migration-scan.test.ts`
-Expected: FAIL — `Cannot find module '../scripts/cli-migration/import-graph.mjs'`
+Expected: FAIL — `Cannot find module '../scripts/cli-migration/import-graph.ts'`
 
-- [ ] **Step 3: Viết `scripts/cli-migration/import-graph.mjs`**
+- [ ] **Step 3: Viết `scripts/cli-migration/import-graph.ts`**
 
 Parse `from '@/x'` → `lib/x.ts`. Bỏ qua import không nội bộ (`ai`, `zod`, `node:*`, `react`).
 
@@ -254,7 +254,7 @@ Trả lại, chạy lại, phải xanh.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/cli-migration/import-graph.mjs tests/cli-migration-scan.test.ts
+git add scripts/cli-migration/import-graph.ts tests/cli-migration-scan.test.ts
 git commit -m "test(cli): ve do thi import de biet file nao con dung boi loi"
 ```
 
@@ -263,7 +263,7 @@ git commit -m "test(cli): ve do thi import de biet file nao con dung boi loi"
 ### Task 3: Sinh bảng kiểm kê
 
 **Files:**
-- Create: `scripts/cli-migration/build-inventory.mjs`
+- Create: `scripts/cli-migration/build-inventory.ts`
 - Create: `docs/cli-migration-inventory.md` (sinh ra, commit)
 - Modify: `tests/cli-migration-scan.test.ts`
 
@@ -285,7 +285,7 @@ Cột `LÝ DO` ghi tên tính năng mà file phục vụ, để người đọc 
 
 ```ts
 import { readFileSync } from 'node:fs';
-import { countTsFiles, renderInventory } from '../scripts/cli-migration/build-inventory.mjs';
+import { countTsFiles, renderInventory } from '../scripts/cli-migration/build-inventory.ts';
 
 it('bảng phải phủ hết file .ts trong lib — không có file nào vô hình', () => {
   // Cơ chế kiểm thứ hai: thêm một file lib mới mà không chạy lại quét thì
@@ -308,7 +308,7 @@ it('mọi file trong bảng đều có nhãn hợp lệ', () => {
 Run: `npx vitest run tests/cli-migration-scan.test.ts`
 Expected: FAIL — `docs/cli-migration-inventory.md` chưa tồn tại
 
-- [ ] **Step 3: Viết `scripts/cli-migration/build-inventory.mjs`**
+- [ ] **Step 3: Viết `scripts/cli-migration/build-inventory.ts`**
 
 Ghép `scanBrowserApis` + `reachableFrom`, gán nhãn theo tiêu chí trên, xuất markdown có cột: `file | dòng API | nằm trong đồ thị lõi | nhãn | lý do`.
 
@@ -317,7 +317,7 @@ Script **chỉ ghi bằng chứng**, nhãn `GHIU`/`VIET-LAI`/`XOA` gán tự đ�
 - [ ] **Step 4: Chạy script rồi test**
 
 ```bash
-node scripts/cli-migration/build-inventory.mjs
+node scripts/cli-migration/build-inventory.ts
 npx vitest run tests/cli-migration-scan.test.ts
 ```
 Expected: PASS — 8 test
