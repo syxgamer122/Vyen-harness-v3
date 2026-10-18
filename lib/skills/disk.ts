@@ -8,6 +8,7 @@
  */
 
 import { parse as parseYaml } from 'yaml';
+import { splitFrontmatter } from '@/lib/frontmatter';
 
 export const DISK_SKILL_LIMITS = {
   nameChars: 60,
@@ -49,16 +50,12 @@ export type SkillParseResult =
  * Thiếu name/description → lỗi (skill không thể index).
  */
 export function parseSkillFile(text: string): SkillParseResult {
-  const normalized = (text ?? '').replace(/\r\n/g, '\n');
-  if (!normalized.startsWith('---')) {
+  const split = splitFrontmatter(text);
+  if (!split) {
     return { ok: false, error: 'Thiếu front-matter YAML (file phải bắt đầu bằng dòng ---).' };
   }
-  const end = normalized.indexOf('\n---', 3);
-  if (end === -1) {
-    return { ok: false, error: 'Front-matter không khép lại (thiếu dòng --- thứ hai).' };
-  }
-  const frontRaw = normalized.slice(3, end).replace(/^\n/, '');
-  const body = normalized.slice(end + 4).replace(/^\n+/, '');
+  const frontRaw = split.frontRaw;
+  const body = split.body;
 
   let front: unknown;
   try {
