@@ -54,16 +54,19 @@ lib/agent-tools.ts              ← DÙNG CHUNG (trình duyệt + server) — gi
 
 lib/agent-tools-server.ts       ← CHỈ SERVER (mới)
   buildAgentTools, buildDelegateTool, capToolResult (có spill)
-  import { saveSpillText } from '@/lib/ipc.cjs'
+  import * as ipc from '@/lib/ipc.cjs'
 
-lib/mcp/tool-mapper.ts          ← DÙNG CHUNG — giữ nguyên tên
-lib/mcp/tool-mapper-server.ts   ← CHỈ SERVER (mới)
-  formatMcpResultForModel (có spill)
+lib/tool-result-server.ts        ← CHỈ SERVER (mới)
+  serializeToolResult (có spill) — đường emulated
+  import * as ipc from '@/lib/ipc.cjs'
+
+lib/tool-limits.ts              ← DÙNG CHUNG — phép tính thuần, KHÔNG import Node
+lib/mcp/tool-mapper.ts          ← DÙNG CHUNG — giữ nguyên tên, KHÔNG spill
 ```
 
 Quy tắc: **module chỉ-server import module dùng chung được. Ngược lại thì không.**
 
-Hệ quả cần chấp nhận: `agent-tools.ts` và `tool-mapper.ts` nhỏ đi, nhưng đồ thị import trở nên nói thật điều gì chạy ở đâu — trước đây nó nói dối.
+Hệ quả cần chấp nhận: `agent-tools.ts`, `tool-limits.ts` và `tool-mapper.ts` nhỏ đi, nhưng đồ thị import trở nên nói thật điều gì chạy ở đâu — trước đây nó nói dối.
 
 ## 4. Spill nằm ở đâu
 
@@ -71,12 +74,25 @@ Hệ quả cần chấp nhận: `agent-tools.ts` và `tool-mapper.ts` nhỏ đi,
 
 | Đường | Kết quả tool đi qua | Có spill? |
 |---|---|---|
-| Server tool, native | `capToolResult` (agent-tools-server) | ✅ **mới** |
-| Server tool, emulated | `capToolResult` → `serializeToolResult` | ✅ |
-| MCP | `formatMcpResultForModel` (tool-mapper-server) | ✅ **mới** |
+| Server tool, native | `capToolResult` (`lib/agent-tools-server.ts`) | ✅ **mới** |
+| Server tool, emulated | `serializeToolResult` (`lib/tool-result-server.ts`) | ✅ **mới** |
 | `shell_run` | `truncateShellOutput` trong ipc.cjs | ✅ đã có sẵn |
+| **MCP** | `formatMcpResultForModel`, gọi ở `react/use-chat-orchestration.ts:1479` | ❌ **không thể** — xem bên dưới |
 | `fs_read` | không bao giờ vượt `MAX_READ_CHARS` = 24.000 | không cần |
 | Client tool khác | chạy trong trình duyệt, không có Node | không thể — chấp nhận |
+
+**Vì sao MCP không thể có spill** (kết luận từ điều tra 2026-10-18, định
+nghĩa lại sau khi kế hoạch ban đầu viết sai):
+
+`formatMcpResultForModel` và `callMcpTool` chỉ được gọi ở
+`react/use-chat-orchestration.ts` — MCP tool thực thi **trong trình duyệt**
+qua `lib/desktop-bridge.ts`, không có đường server nào định dạng kết quả.
+Trình duyệt không có hệ thống file. Tách `formatMcpResultForModel` sang
+module server rồi cho nó spill sẽ kéo `child_process` + `net` vào bundle
+trình duyệt, và `tests/spill-wiring.test.ts` sẽ đỏ chặn lại.
+
+Muốn có spill cho MCP thì phải chuyển việc thực thi MCP tool sang server —
+đó là thay đổi kiến trúc, không phải thay đổi cơ chế spill.
 
 ## 5. Xoá gì
 

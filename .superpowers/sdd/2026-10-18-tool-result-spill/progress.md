@@ -168,3 +168,43 @@ Làm:
 - `lib/tool-limits.ts`: xoá `SpillSaver`, `loadSpillSaver`, `spillSaverCache`, `serializeToolResult`, và import `redactSecretText` (chỉ `serializeToolResult` dùng nó). Chỉ còn phép tính thuần. Thêm comment ghi rõ **hạn chế**: file này phải chạy được trong bundle trình duyệt, nên KHÔNG được import Node — nêu đích danh bản 1 đã vi phạm và không ai thấy.
 - 4 test spill **chuyển** sang `tests/tool-result-server.test.ts` (không xoá — chúng khoá hành vi còn giữ). Thêm 2 test: hợp đồng trần ở nhiều ngưỡng, và ngưỡng mặc định lấy từ `TOOL_RESULT_MAX_CHARS`.
 - 3 test `loadSpillSaver` bị xoá: hàm không còn tồn tại. Rủi ro chúng canh giờ do `spill-wiring.test.ts` canh mạnh hơn — duyệt đồ thị import từ entry trình duyệt thật, thay vì đoán qua `typeof window`.
+
+**Task 4 commit `245f199`.** Gate: `tsc` 0 lỗi; 7 file / 164 test xanh.
+**Mutation 2/2 ĐỎ:** bỏ dòng ghi đĩa → 2 failed; ghi bản **thô** thay vì bản đã redact → 1 failed (bắt đúng bí mật lọt xuống đĩa).
+
+### Ruling: grep thô không phân biệt code sống với chú thích
+Plan yêu cầu `grep "loadSpillSaver|SpillSaver|eval('require')"` → "không có kết quả nào". Grep trả **8 dòng**. Cả 8 đều là comment giải thích lịch sử (cố ý giữ lại, theo quy tắc "xoá rồi để lại comment giải thích vì sao xoá"). Lọc bỏ dòng bắt đầu bằng `*`/`//`/`/*` → **rỗng**.
+- Không kết luận "còn sót" cũng không kết luận "sạch" từ grep thô. Cùng dạng với `describe.skipIf`, cache module scope, `try/catch` nuốt lỗi: **cơ chế có vẻ kiểm nhưng không phân biệt được trạng thái quan tâm**.
+
+### Ruling: phải đọc code của fixture trước khi tin test của plan — lần thứ hai
+Lần này lỗi ở **plan**, không ở tôi: plan Task 3 viết `formatMcpResultForModel('x'.repeat(40_000))` trong khi hàm nhận `(result: McpCallResult, toolName: string)`, và filler không dấu cách bị rule `sk-` nuốt. Sai hai lần, cả hai đều im lặng.
+
+## Task 1 proof #1 ĐỎ VÌ LÝ DO SAI — tự phát hiện khi đọc lại code
+
+`tests/spill-wiring.test.ts` khẳng định artifact chứa `'vyen-spill-'` (có dấu gạch nối). Đọc `lib/ipc.cjs:95`: `SPILL_FILE_PREFIX: 'vyen-spill'` — **KHÔNG có dấu gạch**. Dấu `-` do template `` `${SPILL_FILE_PREFIX}-${id}-...` `` thêm lúc ghép tên file, nên chuỗi liền `vyen-spill-` **không tồn tại trong bất kỳ bản build nào**, kể cả bản hoàn hảo.
+
+Hệ quả: test **luôn đỏ**. Đỏ đúng cho bản build cũ, nhưng cũng đỏ với bản build hoàn hảo. Vậy lệnh "RED confirmed — C1 được chứng minh bằng sản phẩm thật" mà tôi báo ở Task 1 là **không có giá trị chứng minh**.
+
+Đây là **gương** của lớp lỗi tôi đã ghi suốt phiên: không chỉ "cơ chế kiểm hỏng âm thầm báo sạch", mà còn "cơ chế hỏng báo đỏ". Test không bao giờ xanh không chứng minh gì — giống hệt test không bao giờ đỏ.
+
+- **Ruling: khẳng định trên artifact phải đọc ngược lại nguồn và đối chiếu TỪNG KÝ TỰ trước khi tin.** Marker phải là chuỗi có thật trong file nguồn, không phải chuỗi ta nghĩ là có.
+- Đã sửa marker thành `'vyen-spill'` (đúng `ipc.cjs:95`) và **thêm** test thứ ba: artifact không được chứa `eval('require')` ở cả hai dạng nháy đơn. Vì `eval('require')` là **cột sống của C1**: bundler không phân tích tĩnh nên `ipc.cjs` không được đóng gói cho lời gọi đó.
+- Task 1 proof #2 (`không còn './ipc.cjs'`) thì **có giá trị**: đó là phép so sánh tuyệt đối, và nó đã đỏ có thật trên bản build cũ.
+
+### Artifact sau khi sửa (đo trực tiếp, 130 file .js trong .next/server)
+| Marker | Kết quả |
+|---|---|
+| `vyen-spill` | ✅ CÓ → `ipc.cjs` **đã** được Turbopack đóng gói vào sản phẩm server |
+| `./ipc.cjs` | ✅ KHÔNG còn → C1 chết |
+| `eval('require')` | ✅ KHÔNG còn → hack bản 1 đã gỡ |
+| `saveSpillText`, `registerSavedShellOutput` | ✅ có |
+
+### Ruling: test chỉ chứng minh ipc.cjs "có trong sản phẩm", KHÔNG chứng minh "tới được"
+`lib/bridge/server-bridge.ts:75` đã import tĩnh `ipc.cjs` **từ trước** các thay đổi này. Nên `vyen-spill` có trong `.next/server` là điều đã đúng sẵn, và test marker **không phân biệt được** trạng thái trước/sau sửa. Cái thực sự bắt được C1 là test `./ipc.cjs` và `eval('require')` — vì chúng là phép so sánh tuyệt đối trên artifact.
+- Test viết bằng regex/số đếm mà **không phân biệt được** hai trạng thái thì là test trang trí. Phải hỏi: "nếu đảo ngược thay đổi của tôi, test này có đỏ không?" — nếu không thì nó vô dụng dù xanh.
+
+## Task 5: tài liệu + gate đầy đủ
+
+- README:47 — bỏ "bất kỳ kết quả nào vượt 24.000 ký tự", nói đúng phạm vi là tool chạy trên server, và nói rõ MCP **không** có spill.
+- README:162 — thêm: MCP không có spill (chạy trong trình duyệt, không có hệ thống file); `fs_read` vốn đã có trần sẵn; phần ghi đĩa là nội dung **đã redact**, bảo đảm là "không phải bí mật mà rule nhận ra" chứ không phải bảo vệ quyền ghi.
+- Spec §3 và §4 — bỏ `lib/mcp/tool-mapper-server.ts` (không tạo), thêm `lib/tool-result-server.ts`. Spec trước đó **mâu thuẫn với chính nó**: bảng §4 nói MCP có spill ✅, dòng ngay dưới nói client tool "không thể — chấp nhận"; MCP *là* client tool. Chính mâu thuẫn đó là nguồn của Task 3 sai.

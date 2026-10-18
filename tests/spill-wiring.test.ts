@@ -37,15 +37,37 @@ describe.skipIf(!existsSync(SERVER_DIR))('spill — artifact đã build', () => 
   it('bản build có mang saveSpillText, không chỉ mang lời gọi', () => {
     const files = jsFiles(SERVER_DIR);
     expect(files.length).toBeGreaterThan(0);
-    // `vyen-spill-` nằm trong saveSpillText (lib/ipc.cjs) — dùng làm dấu hiệu
-    // ipc.cjs THẬT SỰ được Turbopack đóng gói vào sản phẩm server.
-    expect(serverBundle()).toContain('vyen-spill-');
+    /* Marker phải là CHÍNH XÁC chuỗi nằm trong lib/ipc.cjs:95 —
+     * `SPILL_FILE_PREFIX: 'vyen-spill'`, KHÔNG có dấu gạch nối. Dấu `-` được
+     * template thêm lúc ghép tên file nên không tồn tại liền ký tự trong bất kỳ
+     * bản build nào, kể cả bản đúng.
+     *
+     * Bản đầu của test này dùng 'vyen-spill-' → không bao giờ có thể xanh, tức
+     * ĐỎ vì lý do sai: nó đỏ cả khi build hoàn hảo. Test không bao giờ xanh thì
+     * không chứng minh gì — đó là gương của test không bao giờ đỏ.
+     *
+     * `vyen-spill` chỉ xuất hiện trong lib/ipc.cjs (grep toàn repo), nên có mặt
+     * trong .next/server <=> ipc.cjs đã được Turbopack đóng gói. */
+    expect(serverBundle()).toContain('vyen-spill');
   });
 
   it('không còn require theo đường dẫn tới ipc.cjs', () => {
     // Đường dẫn này không tồn tại sau khi bundle; require theo nó luôn ném,
     // rồi bị try/catch nuốt. Sự xuất hiện của nó = C1 còn sống.
+    // Test này KHÔNG trùng lặp với test trên: nó là phép so sánh tuyệt đối, và
+    // đã chứng minh đỏ có thật ở bản build trước khi sửa.
     expect(serverBundle()).not.toContain('./ipc.cjs');
+  });
+
+  it('không còn eval require trong sản phẩm server', () => {
+    /* eval('require') là cách lách bundler của bản 1. Nó không chỉ là mùi
+     * code — nó là CỘT SỐNG của C1: bundler không phân tích tĩnh nên ipc.cjs
+     * không được đóng gói cho lời gọi đó, và try/catch nuốt MODULE_NOT_FOUND.
+     * Canh riêng vì nếu ai đó viết lại bằng `new Function('return require')()`
+     * thì chuỗi "eval('require')" không khớp mà lỗi vẫn quay lại. */
+    const b = serverBundle();
+    expect(b).not.toContain("eval('require')");
+    expect(b).not.toContain('eval("require")');
   });
 });
 
