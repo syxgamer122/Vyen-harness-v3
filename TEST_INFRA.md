@@ -3,7 +3,7 @@
 ## Test Philosophy
 - Opaque-box, requirement-driven. No dependency on implementation design.
 - Methodology: Category-Partition + Boundary Value Analysis (BVA) + Pairwise Combinatorial Testing + Real-World Workload Testing.
-- Target: 100% pass across all existing test files (168 file — 2,526 tests PASS sau đợt S3/S3b; mốc lúc viết đặc tả là 128 file/1850+ test) plus all new test suites covering R1, R2, R3, R4, and R5.
+- Target: 100% pass across all existing test files plus all new test suites. Số file cụ thể **không ghi cứng ở đây** — đếm bằng `ls tests/*.test.ts | wc -l`, vì đổi mỗi đợt và đã ghi cứng sai một lần rồi.
 
 ## Feature Inventory Mapping
 | # | Feature | Source | Tier 1 (Coverage) | Tier 2 (BVA) | Tier 3 (Cross) | Tier 4 (Scenario) |
@@ -36,6 +36,15 @@
 | 26 | CLI & Headless Runner Upgrades | Core Vyen Integration | 5 | 5 | ✓ | ✓ |
 | 27 | Full Compatibility & Zero Regression | Core Vyen Integration | 5 | 5 | ✓ | ✓ |
 
+> **Các dòng 1–6, 19–27 là TOMBSTONE, không còn test nào.**
+> Chúng mô tả `lib/teamwork/` (DAG, semaphore, jitter, checkpoint, pause/resume,
+> idempotency), ledger bitemporal, và CLI headless — **đã xoá ngày 2026-10-15**
+> (`PROJECT.md`). Bảng giữ lại để thấy phạm vi đã từng có, nhưng cột "5 test"
+> ở đây **không có thật**. Xem danh sách suite còn sống ở mục Test Architecture.
+>
+> Đừng cập nhật số cho các dòng này và đừng viết test mới nhắm chúng — mã nguồn
+> không còn.
+
 ## Test Architecture
 - Test runner: Vitest (`npx vitest run`) with pure Node.js environment
 - Test suites:
@@ -54,7 +63,7 @@
 | 2 | Sensitive System Command with HITL Approval | F7, F8, F9, F10, F11, F12 | High |
 | 3 | Sandboxed Tool Execution with Strict Contracts & Scrubbing | F13, F14, F15, F16, F17, F18, F25 | High |
 | 4 | Multi-Milestone Bitemporal Ledger & Context Time Travel | F19, F20, F21, F22, F23 | High |
-| 5 | Full Headless CLI Execution Dual-Mode with Zero Regression | F24, F25, F26, F27 + all 128 baseline suites | Ultra-High |
+| 5 | ~~Full Headless CLI Execution Dual-Mode~~ — **đã gỡ 2026-10-15**, CLI headless không còn | — | — |
 
 ## Coverage Thresholds
 - Tier 1: ≥5 per feature

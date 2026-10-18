@@ -61,7 +61,7 @@ const NON_TOOL_KINDS: Ann[] = [
   { requestId: 'r1', subagentCall: { toolCallId: 's1', toolName: 'fs_read', args: { path: 'a.ts' } } },
   { requestId: 'r1', subagent: { phase: 'done', runId: 'r9', result: 'xong' } },
   { requestId: 'r1', memoryProposal: { text: 'user thích viết test trước' } },
-  { requestId: 'r1', capabilityProjection: { includedCount: 30, excludedCount: 4, droppedCount: 2 } },
+  
   { requestId: 'r1', attempt: 2, totalAttempts: 5, key: 'openai/gpt-x', model: 'gpt-x' },
   { requestId: 'r1', hb: 1730000000000 },
   { requestId: 'r1', error: 'UPSTREAM_POOL_EXHAUSTED' },

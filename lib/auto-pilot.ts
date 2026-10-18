@@ -147,7 +147,6 @@ const READ_ONLY_TOOLS = new Set([
 const WRITE_TOOLS = new Set([
   'fs_write',
   'fs_edit',
-  'fs_delete',
   'code_patch',
   'git_commit',
   'memory_save',
@@ -207,8 +206,7 @@ export function isAlwaysBlocked(command: string): boolean {
  * even in Autonomous / never policy mode or per-tool override 'auto'.
  */
 export function targetsProtectedPath(toolName: string, args: Record<string, unknown>): boolean {
-  const isTargetingTool =
-    WRITE_TOOLS.has(toolName) || toolName === 'git_add' || toolName === 'fs_delete';
+  const isTargetingTool = WRITE_TOOLS.has(toolName) || toolName === 'git_add';
   if (!isTargetingTool) return false;
 
   const singlePath = args.path ?? args.relPath ?? args.file ?? args.filepath ?? args.file_path;

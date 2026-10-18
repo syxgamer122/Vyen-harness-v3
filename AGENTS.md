@@ -95,6 +95,36 @@ vì "có thể sau này cần" — và đừng refactor code không liên quan t
 làm. Xoá rồi để lại comment giải thích **vì sao** xoá, để người sau không thêm
 lại.
 
+**Rác nguy hiểm nhất không phải code mồ côi — là code TRÙNG LẮP.** Hai cơ chế
+làm cùng một việc thì giết cái sai. Còn hơn, xoá cái **dùng số liệu bịa**:
+`lib/capability-projection.ts` từng lọc MCP tool bằng byte ước lượng bịa đặt,
+chiếm 6.420/16.000 byte ngân sách của Tool Router. Xoá xong mới thấy Tool
+Router ngay cạnh đã làm đúng việc đó bằng BM25 trên schema thật.
+
+### Trước khi xoá: tìm không ra KHÔNG phải bằng chứng
+
+Đã suýt xoá nhầm code đang chạy. Nguyên nhân:
+
+```powershell
+Select-String -Path "app\**\*.ts" -Pattern "foo"   # KHÔNG recurse như tưởng
+```
+
+`**` trong PowerShell không luôn đệ quy — lệnh trên bỏ sót `app/api/chat/route.ts`,
+nên kết luận `lib/capability-projection.ts` chết, trong khi `route.ts:73` đang
+import nó. Đây là hướng sai chết người: tìm-hụt dễ dẫn tới xoá nhầm.
+
+Ba điều phải làm trước khi kết luận "chết":
+
+1. **Thử lệnh tìm lên một thứ chắc chắn còn sống** và xác nhận nó tìm thấy.
+   Lệnh không tìm thấy thứ *đáng ra* phải thấy thì lệnh đó vô dụng.
+2. **Không tin kết quả rỗng khi lệnh vừa in lỗi.** Regex sai làm `Select-String`
+   ném lỗi *cho từng file* rồi trả kết quả rỗng với exit 0.
+3. **Dùng công cụ recurse thật**: `rg`, tool `grep`, hoặc
+   `Get-ChildItem -Recurse`. Không tin `**` trong PowerShell.
+
+Cùng dạng với mục 3 của §2: thao tác im lặng không báo lỗi, kết quả sai, tưởng
+đã kiểm chứng.
+
 ## 7. Bản đồ nhanh
 
 | Việc | Ở đâu |

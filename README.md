@@ -98,13 +98,10 @@ Hệ thống Cài đặt được tổ chức lại theo 6 nhóm chức năng tr
 ### Scheduler: Chạy Recipe Theo Lịch Cron
 
 - **Biểu thức Cron tiêu chuẩn**: Hỗ trợ 5 trường cron (`phút giờ ngày tháng thứ`), bước nhảy `*/n`, khoảng, danh sách và alias (`@hourly`, `@daily`, `@weekly`). Tự động giải nghĩa bằng câu tiếng Việt và hiển thị mốc chạy tiếp theo.
-- **Thực thi ngầm qua Node bridge & CLI**: Bộ timer tick mỗi 30 giây chạy headless, tự động tạo chat session mới chứa kết quả thực thi và liên kết danh sách `sessions[]` vào lịch trình.
-- **Bảng Dexie `schedules` (v16)**: Lưu trữ `id, recipeId, cron, enabled, lastRunAt, lastStatus, sessions[]` — nơi duy nhất lịch trình được lưu, dùng chung giữa Web UI và bộ chạy desktop/CLI.
+- **Thực thi ngầm qua Node bridge (bản desktop)**: Bộ timer tick mỗi 30 giây chạy headless, tự động tạo chat session mới chứa kết quả thực thi và liên kết danh sách `sessions[]` vào lịch trình. Scheduler chỉ sống khi tiến trình Node bridge còn chạy.
+- **Bảng Dexie `schedules` (v16)**: Lưu trữ `id, recipeId, cron, enabled, lastRunAt, lastStatus, sessions[]` — nơi duy nhất lịch trình được lưu, dùng chung giữa Web UI và bộ chạy desktop.
 - **Giao diện Scheduler trực quan**: Tab riêng trong Cài đặt và panel quản trị — hỗ trợ Tạo / Sửa / Tạm dừng (Pause) / Kích hoạt (Resume) / Chạy ngay (Run now), xem lịch sử các session do lịch trình sinh ra và click để mở trực tiếp xem kết quả.
-- **Lệnh CLI `vyen schedule`**:
-  - `vyen schedule list`: Liệt kê các lịch trình và trạng thái lần chạy gần nhất.
-  - `vyen schedule run <id>`: Chạy ngay lập tức một lịch trình.
-  - `vyen schedule daemon`: Chạy tiến trình scheduler daemon (tick mỗi 30s) trong terminal.
+> **Đã gỡ CLI.** `vyen schedule list / run / daemon` từng được liệt kê ở đây nhưng **không tồn tại** — CLI headless đã bị xoá ngày 2026-10-15 (`PROJECT.md`). Lịch trình nay chỉ quản lý qua Cài đặt, và chỉ chạy khi bản desktop đang mở.
 
 ### Zero-Mem: Bộ nhớ Không Tiêu hao Token (Port sarsvankelsion/zero-mem)
 
@@ -176,7 +173,7 @@ Hệ thống Cài đặt được tổ chức lại theo 6 nhóm chức năng tr
 | AI | AI SDK (`ai` + `@ai-sdk/openai`), stream qua API routes Node.js |
 | Virtualization | @tanstack/react-virtual |
 | Desktop | Launcher Edge/Chrome `--app` vào Next.js local (`npm run app`, cửa sổ riêng, ~35MB RAM) |
-| MCP | `@modelcontextprotocol/sdk` (client chạy trong bridge Node.js của desktop/CLI, phê duyệt 4 cấp) |
+| MCP | `@modelcontextprotocol/sdk` (client chạy trong bridge Node.js của desktop, phê duyệt 4 cấp) |
 
 ## Chạy dự án
 
@@ -225,7 +222,7 @@ thì Yahoo và Instant Answer vẫn phục vụ. Đọc trang JS-heavy dùng Jin
 
 | Biến | Mô tả |
 |---|---|
-| `VYEN_WORKSPACE_ROOT` | Workspace root của phiên desktop/CLI |
+| `VYEN_WORKSPACE_ROOT` | Workspace root của phiên desktop |
 | `VYEN_USER_DATA_DIR` | Thư mục dữ liệu riêng của bản desktop (chứa bridge token) |
 | `VYEN_BRIDGE_TOKEN` | Token cho `/api/bridge` khi tự chạy server ở chế độ dev |
 | `VYEN_LAUNCHER_NO_BROWSER` | `1` = chỉ khởi động server, không mở cửa sổ app |
@@ -238,7 +235,7 @@ thì Yahoo và Instant Answer vẫn phục vụ. Đọc trang JS-heavy dùng Jin
 app/api/chat    — TRUNG TÂM điều phối: same-origin + access-code + rate-limit →
                   key pool failover → model chain fallback → data stream
                   (heartbeat 10s, idle 90s, budget 270s). Ghép server tools
-                  (web/weather/memory), khai báo client tools (fs_*/shell/git/
+                  (web/memory), khai báo client tools (fs_*/shell/git/
                   plan/lesson/delegate) cho model gọi, chạy delegate + subagent
                   relay phía server, và loop emulated tool-calling khi model
                   không hỗ trợ function calling
@@ -291,7 +288,7 @@ components/chat-interface.tsx   — orchestrator (hydration, persist queue,
                                   auto-pilot, goal loop, staging
 components/chat/message-list    — virtualized list + chiến lược scroll/pin
 components/chat/message-item    — hàng tin nhắn (edit, branch, attachments)
-components/chat/chat-header     — tiêu đề, xuất/nhập, xoá
+components/sidebar              — tiêu đề, xuất/nhập, xoá
 components/{diff-confirm,shell-confirm,plan-panel,staging-panel,
              subagent-card,workspace-checkpoints} — UI phê duyệt + tiến độ agent
 components/recipes/            — panel Recipes (list, form tham số, Run,

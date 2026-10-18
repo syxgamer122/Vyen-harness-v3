@@ -70,7 +70,6 @@ import type { RouteReceipt } from '@/lib/routing/categories';
 import { scoreRequest } from '@/lib/routing/score-request';
 import { isToolFailure } from '@/lib/model-routing';
 import { SHARED_PREAMBLE, UNIVERSAL_BLOCKS, calibrationFor } from '@/lib/prompt/protocol';
-import { projectCapabilities, DEFAULT_TOOL_CANDIDATES, type ToolCandidate } from '@/lib/capability-projection';
 import { matchSkillsForRequest, generateSkillsPrompt } from '@/lib/skills/catalog';
 import { formatRecalledMemoriesBlock } from '@/lib/memory/recall';
 
@@ -1821,55 +1820,20 @@ export async function POST(req: Request) {
                   * để allowAgentTools=false một mình không được phép làm MCP
                   * biến mất im lặng.
                   */
-                  /* Capability projection : chiếu năng lực và lọc bớt MCP tool
-                   * theo ngân sách byte và tín hiệu request thay cho trần cứng 100 tool. */
-                  if ((mcpToolList && mcpToolList.length > 0) || (mcpProxyToolList && mcpProxyToolList.length > 0)) {
-                    const mcpCandidates: ToolCandidate[] = [
-                      ...(mcpToolList ?? []).map((t) => ({
-                        id: t.name,
-                        group: 'mcp' as const,
-                        description: t.description || t.name,
-                        bytes: JSON.stringify(t).length,
-                      })),
-                      ...(mcpProxyToolList ?? []).map((t) => ({
-                        id: t.name,
-                        group: 'mcp' as const,
-                        description: t.description || t.name,
-                        bytes: JSON.stringify(t).length,
-                      })),
-                    ];
-
-                    const allCandidates = [...DEFAULT_TOOL_CANDIDATES, ...mcpCandidates];
-                    const authoritySet = new Set<string>([
-                      ...DEFAULT_TOOL_CANDIDATES.map((c) => c.id),
-                      ...mcpCandidates.map((c) => c.id),
-                    ]);
-
-                    const projection = projectCapabilities({
-                      text: userQueryText,
-                      authority: authoritySet,
-                      budgetBytes: 16000,
-                      allCandidates,
-                    });
-
-                    const includedIds = new Set(projection.included.map((item) => item.id));
-                    if (mcpToolList) {
-                      mcpToolList = mcpToolList.filter((t) => includedIds.has(t.name));
-                    }
-                    if (mcpProxyToolList) {
-                      mcpProxyToolList = mcpProxyToolList.filter((t) => includedIds.has(t.name));
-                    }
-                    console.info(
-                      `[req:${requestId}][capability_projection] included=${projection.included.length} excluded=${projection.excluded.length} dropped=${projection.budget.droppedIds.length}`,
-                    );
-                    writeAnnotation({
-                      capabilityProjection: {
-                        includedCount: projection.included.length,
-                        excludedCount: projection.excluded.length,
-                        droppedCount: projection.budget.droppedIds.length,
-                      },
-                    });
-                  }
+                  /* ĐÃ GỠ capability-projection (2026-10-18).
+                   *
+                   * Nó lọc MCP tool bằng `scoreRequest` (regex) + ngân sách byte,
+                   * còn Tool Router ngay dưới lọc CHÍNH MCP tool đó bằng BM25 trên
+                   * schema thật, rồi lọc cả tool client native nữa — nhiều hơn và
+                   * không cần ước lượng.
+                   *
+                   * Lý do xoá: `DEFAULT_TOOL_CANDIDATES` khai 6.420 byte là số BỊA
+                   * đặt (fs_read = 420...) trong khi tool MCP dùng
+                   * `JSON.stringify(t).length` thật. Ngân sách 16.000 byte nên 40%
+                   * bị số bịa ăn mất, tool thật chỉ còn 60%.
+                   *
+                   * Đừng thêm lại: một việc lọc tool, một cơ chế duy nhất —
+                   * Tool Router (lib/mcp/tool-router.ts). */
 
                   /* Tool Router (P1-7): khi tổng số tool lớn (>30), index toàn bộ và lọc top-30
                      theo BM25 relevance với câu hỏi của user, kèm tools_search và tools_load. */
