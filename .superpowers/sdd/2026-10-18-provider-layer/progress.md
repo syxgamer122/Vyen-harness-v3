@@ -294,3 +294,111 @@ Không có hồi quy người dùng hôm nay (`route.ts` chưa từng set `toolC
   minor không vào fix pass.
 - **Test Focus #1 chứng minh ít hơn tên gọi**: nó canh "một nhánh không lặp lại
   nhãn", không phải "bí mật được che" (phần này nay đã có test riêng ở trên).
+
+# Lượt 2 (2026-10-18) — trả các nợ còn lại. Commit `b677f66`.
+
+Cả 4 nợ đều làm theo TDD: viết test đỏ trước, xanh, rồi mutation để chứng minh
+test không rỗng.
+
+## Nợ 1 — `fetch` không truyền được qua adapter (NỢ THẬT)
+
+- **Bằng chứng nợ có thật:** `app/api/chat/route.ts:1334-1338` tạo instance OpenAI
+  **thứ hai** kèm `fetch: nonStreamingFetch` cho đường `generateText`. Không có
+  đường truyền này thì đổi `route.ts` sang adapter là mất instance đó →
+  `generateText` gặp gateway trả SSE sẽ ném *"Invalid JSON response"*, đúng lỗi
+  khiến `/api/compact` trước đây luôn fail (ghi rõ trong
+  `lib/non-streaming-fetch.ts`).
+- **RED:** cả hai test đỏ với `expected +0 to be 1`.
+- **GREEN:** thêm `fetch?: typeof globalThis.fetch` vào `ProviderRuntimeConfig`,
+  truyền vào **cả hai** adapter — chỉ thêm ở một bên sẽ tạo adapter không đối
+  xứng, đúng dạng "hai chỗ rồi sẽ lệch" AGENTS.md §6 cảnh báo.
+- **Mutation:** bỏ `fetch: cfg.fetch` khỏi từng adapter → **mỗi lần đúng 1 test đỏ
+  ứng với adapter đó**.
+
+## Nợ 2 — Focus #5 trước đây chỉ có comment giữ (bây giờ có test)
+
+- Dùng `runtimeImportSpecs()` của máy quét kiểm kê thay vì regex: nó đã loại
+  `import type`, nên `import type { X } from './anthropic-adapter'` vẫn hợp lệ
+  (không sinh mã chạy). Có test riêng khoá đúng điều đó — không có nó thì guard
+  sẽ đỏ và người sau sẽ xoá luôn `import type` hợp lệ.
+- **Mutation:** thêm `import { resolveAnthropicModel } from './anthropic-adapter'`
+  vào `adapter.ts` → đỏ.
+
+## Nợ 3 — test tên nói quá hơn điều nó chứng minh
+
+- Test cũ tên *"userMessage không chứa API key"* nhưng truyền `statusError(500)`,
+  mà nhánh 500 **không nội suy `keyLabel`** vào `userMessage` → `not.toContain`
+  xanh vì **không có đường để rò**. Thay bằng hai test đúng nghĩa:
+  (a) bí mật trong body upstream bị che ở **cả hai** chuỗi, (b) `devLog` mang dấu
+  vết vận hành mà `userMessage` không mang.
+- **Mutation:** `redact` → `return text` → **2 test đỏ**; bỏ `requestId` khỏi
+  `devLog` → **1 test đỏ**.
+
+## Nợ 4 — `toolChoice` không phải nợ build; đóng bằng test chứ không bằng comment
+
+- **Đo:** `route.ts` có **0** lần set `toolChoice`. Cơ chế thật là
+  `lib/emulated-agent.ts` (render schema tool thành TEXT trong system prompt rồi
+  parse), đúng như spec §7. Nên Review Focus #4 của plan mô tả cơ chế repo
+  **không dùng và chưa từng dùng**.
+- `toolChoice` là tham số của *mỗi lần gọi* `streamText`/`generateText`, không
+  phải thuộc tính adapter. Thêm vào `ProviderRuntimeConfig` sẽ tạo một lựa chọn
+  giả — trông như đã xử lý, nhưng không ai dùng tới.
+- **Guard:** đọc AST (`PropertySignature` tên `toolChoice`) chứ không regex —
+  regex sẽ khớp cả comment. **Mutation:** khai `toolChoice?: 'auto' | 'none'` vào
+  interface → đỏ.
+
+### Bài học: regex khớp rộng hơn ý nghĩa — lần thứ 2 trong phiên
+
+Bản regex đầu tiên của guard trên (`/\btoolChoice\b/`) khớp **chính comment của
+tôi** trong `adapter.ts` và đỏ với `found` rỗng. Đúng loại lỗi AGENTS.md §2 mô tả.
+Sửa bằng cách đọc AST.
+
+## Nợ 5 — `next-env.d.ts` bị `next build` tự ghi lại
+
+- **Đo trước khi làm:** bỏ file đi rồi chạy `tsc --noEmit` → **exit 0**, dù file
+  nằm trong `include` của `tsconfig.json`. Nó không mang gánh gì cho typecheck;
+  chỉ gây bẩn cây sau mỗi lần build (Next đổi giữa `.next/types/` và
+  `.next/dev/types/` theo lệnh vừa chạy).
+- **Cách trả:** thêm vào `.gitignore` + `git rm --cached`. Next.js khuyến nghị
+  không track file này.
+- **Chi phí nếu sai:** clone mới sẽ không có file tới lúc `next dev`/`next build`
+  tự sinh — mà `next build` tự sinh, nên không ảnh hưởng. Hoàn tác bằng
+  `git rm --cached` ngược lại + bỏ dòng trong `.gitignore`.
+
+## Nợ 6 — flaky test chưa ghi đủ trong AGENTS.md §1, và tôi viết sai
+
+- Thêm `tests/redteam-picker.test.ts` vào bảng (đo trước: có **hai** ngân sách
+  thời gian — 200ms ở dòng 121, 500ms ở dòng 154).
+- **Rồi phát hiện dòng `secret-registry` đang ghi sai:** "Chạy riêng thì xanh".
+  Đo lại: **3/5 lần chạy đơn lẻ vẫn đỏ** (1, 1, 2 test đỏ). Nguyên nhân gốc là
+  tôi **tin lời tôi đã nói trước đó** thay vì đo. Đã sửa, kèm ghi chú rằng "chạy
+  riêng" **không** phải tiêu chuẩn phân biệt ở file này.
+- Đo cả hai file cùng chuẩn: `redteam-picker` 5/5 xanh khi chạy riêng;
+  `secret-registry` 3/5 đỏ. Không để một dòng theo chuẩn này, dòng kia theo
+  chuẩn khác.
+
+# SỬA LỖI SỐ LIỆU CỦA CHÍNH TÔI: "17 file chưa gán FORCE_LABEL" — SAI
+
+Tôi báo nợ này suốt phiên. Kiểm lại thì:
+
+- `FORCE_LABEL` là bản **ghi đè nhãn máy**, chỉ có **3** mục, đều `THAY-THE`
+  (`lib/db.ts`, `lib/fs-access.ts`, `lib/tool-permissions.ts`). 106/109 file `.ts`
+  trong `lib/` không có mục — đó là **bình thường**, máy tự gán nhãn cho chúng.
+- Con số **17** là nhóm file **kéo trình duyệt vào qua phụ thuộc xuyên** (mục
+  "Kéo trình duyệt vào qua phụ thuộc xuyên" trong `docs/cli-migration-inventory.md`).
+- Trong 17 đó, 1 file (`lib/tool-permissions.ts`) **đã có** nhãn → **còn 16 chưa
+  phân loại**, không phải 17.
+
+- **Chi phí của việc tôi sai này:** nếu ai đó mở `ly-do.ts` tìm "17 mục thiếu"
+  sẽ không thấy, và tưởng tôi đã bỏ sót. Tệ hơn, có thể tô thêm mục bừa cho 17
+  file để "cho khớp con số" — đúng cách làm hỏng bảng kiểm kê.
+- **Nguyên nhân:** tôi lấy con số "17 file kéo trình duyệt vào" từ ghi chú phiên
+  trước rồi **gán nghĩa khác** cho nó, không kiểm lại. Đây là lần thứ tư trong
+  phiên tôi "tin bằng chứng cũ thay vì đo" (ba lần trước: `Select-String` với
+  tiếng Việt, `Select-Object -Last` cắt mất khối, và so khớp chuẩn hoá whitespace).
+
+## 16 file còn nợ phán đoán của người
+
+Đây là nợ **duy nhất** còn lại mà tôi không tự quyết được — mỗi file đều cần câu
+hỏi "lõi CLI còn cần chức năng này không", mà câu trả lời nằm ở ý định sản
+phẩm chứ không nằm trong mã.
