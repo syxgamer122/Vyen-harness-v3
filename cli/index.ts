@@ -58,98 +58,111 @@ import type { AdapterKind } from '../lib/provider/adapter.ts';
 import { resolveOpenAIModel } from '../lib/provider/openai-adapter.ts';
 import { resolveAnthropicModel } from '../lib/provider/anthropic-adapter.ts';
 
-const prompt = process.argv.slice(2).join(' ').trim();
+/**
+ * Bọc trong hàm async thay vì dùng top-level `await`.
+ *
+ * Lý do: repo KHÔNG có `"type": "module"` trong package.json (thêm vào sẽ phá
+ * Next.js), nên `tsx` dịch file này thành **CJS** — mà CJS không có top-level
+ * await. Đo thật 2026-10-18: `Top-level await is currently not supported with the
+ * "cjs" output format`. Cách này giữ file chạy được dưới CẨ `node` lẫn `tsx`.
+ */
+async function main(): Promise<void> {
+  const prompt = process.argv.slice(2).join(' ').trim();
 
-if (!prompt) {
-  console.error('Dung: node cli/index.ts "<noi dung can hoi>"');
-  console.error('Bien bat buoc: VYEN_API_KEY, VYEN_MODEL');
-  process.exit(2);
-}
-
-const apiKey = process.env.VYEN_API_KEY ?? '';
-if (!apiKey) {
-  // Chủ ý KHÔNG in gì cả giá trị biến — lỗi kiểu này hay in ra cả key.
-  console.error('Thieu VYEN_API_KEY. Dat bien moi truoc khi chay.');
-  process.exit(2);
-}
-
-const model = process.env.VYEN_MODEL ?? '';
-if (!model) {
-  console.error('Thieu VYEN_MODEL. Dat bien moi truoc khi chay.');
-  process.exit(2);
-}
-
-// Kiểm tra thật, KHÔNG dựa vào `resolveAdapterKind`. Lý do: hàm đó trả thẳng
-// `cfg.kind` (identity), nên `resolveAdapterKind({kind}) !== kind` **luôn false**
-// — guard viết bằng cách đó không bao giờ bắt được gì. Chính lượt chạy thật đã
-// lộ ra điều này: đặt VYEN_KIND sai mà không có gì được in.
-const KINDS: readonly AdapterKind[] = ['anthropic', 'openai-compatible'];
-const kind = (process.env.VYEN_KIND ?? 'openai-compatible') as AdapterKind;
-if (!KINDS.includes(kind)) {
-  console.error(`VYEN_KIND khong hop le: ${kind}`);
-  console.error(`Gia tri dung: ${KINDS.join(' | ')}`);
-  process.exit(2);
-}
-const cfg = {
-  kind,
-  apiKey,
-  model,
-  ...(process.env.VYEN_BASE_URL ? { baseUrl: process.env.VYEN_BASE_URL } : {}),
-};
-
-console.error(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
-console.error('> (ket qua se do la day)\n');
-
-try {
-  const lm = kind === 'anthropic' ? resolveAnthropicModel(cfg) : resolveOpenAIModel(cfg);
-
-  /* BẮT LỖI QUA `onError`, KHÔNG DỰA VÀO try/catch QUANH VÒNG LẶP.
-   *
-   * Đo thật ngày 2026-10-18 với key sai: `result.textStream` **không ném** — nó
-   * kết thúc im lặng sau 0 chunk. `result.finishReason` không bao giờ settle.
-   * Nghĩa là `try { for await ... }` sẽ chạy trót và in ra MỘT CÂU RỖNG rồi
-   * exit 0, tức báo thành công cho một lần gọi thất bại — tệ hơn cả crash.
-   *
-   * `onError` là nơi duy nhất lỗi stream lộ ra. Lỗi ở đây là `APICallError` —
-   * đúng loại mà `lib/provider/upstream-diagnosis.ts` chẩn đoán được; chỉ là chưa
-   * import được, xem "VẤN ĐỀ ĐÃ GẶP" ở đầu file.
-   */
-  let streamError: unknown = null;
-  const result = streamText({
-    model: lm,
-    prompt,
-    onError: ({ error }) => {
-      streamError ??= error;
-    },
-  });
-
-  // Stream từng chặng ra stdout. Không dùng `generateText` vì một số gateway
-  // trả SSE khi request thiếu trường `stream`, khiến AI SDK ném
-  // "Invalid JSON response" — xem `lib/non-streaming-fetch.ts`.
-  let wrote = false;
-  for await (const chunk of result.textStream) {
-    process.stdout.write(chunk);
-    wrote = true;
+  if (!prompt) {
+    console.error('Dung: npm run cli -- "<noi dung can hoi>"');
+    console.error('Bien bat buoc: VYEN_API_KEY, VYEN_MODEL');
+    process.exit(2);
   }
-  // Chỉ xuống dòng khi thật sự có nội dung. Stream rỗng (lỗi 401, 429…) thì in
-  // dòng trống sẽ trông như đã có câu trả lời rỗng — dễ đọc nhầm thành thành công.
-  if (wrote) process.stdout.write('\n');
 
-  if (streamError) {
-    const msg = streamError instanceof Error ? streamError.message : String(streamError);
-    const name = streamError instanceof Error ? streamError.name : 'Error';
-    console.error(`\n> LOI (${name}): ${msg}`);
+  const apiKey = process.env.VYEN_API_KEY ?? '';
+  if (!apiKey) {
+    // Chủ ý KHÔNG in gì cả giá trị biến — lỗi kiểu này hay in ra cả key.
+    console.error('Thieu VYEN_API_KEY. Dat bien moi truoc khi chay.');
+    process.exit(2);
+  }
+
+  const model = process.env.VYEN_MODEL ?? '';
+  if (!model) {
+    console.error('Thieu VYEN_MODEL. Dat bien moi truoc khi chay.');
+    process.exit(2);
+  }
+
+  // Kiểm tra thật, KHÔNG dựa vào `resolveAdapterKind`. Lý do: hàm đó trả thẳng
+  // `cfg.kind` (identity), nên `resolveAdapterKind({kind}) !== kind` **luôn false**
+  // — guard viết bằng cách đó không bao giờ bắt được gì. Chính lượt chạy thật đã
+  // lộ ra điều này: đặt VYEN_KIND sai mà không có gì được in.
+  const KINDS: readonly AdapterKind[] = ['anthropic', 'openai-compatible'];
+  const kind = (process.env.VYEN_KIND ?? 'openai-compatible') as AdapterKind;
+  if (!KINDS.includes(kind)) {
+    console.error(`VYEN_KIND khong hop le: ${kind}`);
+    console.error(`Gia tri dung: ${KINDS.join(' | ')}`);
+    process.exit(2);
+  }
+
+  const cfg = {
+    kind,
+    apiKey,
+    model,
+    ...(process.env.VYEN_BASE_URL ? { baseUrl: process.env.VYEN_BASE_URL } : {}),
+  };
+
+  console.error(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
+  console.error('> (ket qua se do la day)\n');
+
+  try {
+    const lm = kind === 'anthropic' ? resolveAnthropicModel(cfg) : resolveOpenAIModel(cfg);
+
+    /* BẮT LỖI QUA `onError`, KHÔNG DỰA VÀO try/catch QUANH VÒNG LẶP.
+     *
+     * Đo thật ngày 2026-10-18 với key sai: `result.textStream` **không ném** — nó
+     * kết thúc im lặng sau 0 chunk. `result.finishReason` không bao giờ settle.
+     * Nghĩa là `try { for await ... }` sẽ chạy trót và in ra MỘT CÂU RỖNG rồi
+     * exit 0, tức báo thành công cho một lần gọi thất bại — tệ hơn cả crash.
+     *
+     * `onError` là nơi duy nhất lỗi stream lộ ra. Lỗi ở đây là `APICallError` —
+     * đúng loại mà `lib/provider/upstream-diagnosis.ts` chẩn đoán được; chỉ là
+     * chưa import được, xem "VẤN ĐỀ ĐÃ GẶP" ở đầu file.
+     */
+    let streamError: unknown = null;
+    const result = streamText({
+      model: lm,
+      prompt,
+      onError: ({ error }) => {
+        streamError ??= error;
+      },
+    });
+
+    // Stream từng chặng ra stdout. Không dùng `generateText` vì một số gateway
+    // trả SSE khi request thiếu trường `stream`, khiến AI SDK ném
+    // "Invalid JSON response" — xem `lib/non-streaming-fetch.ts`.
+    let wrote = false;
+    for await (const chunk of result.textStream) {
+      process.stdout.write(chunk);
+      wrote = true;
+    }
+    // Chỉ xuống dòng khi thật sự có nội dung. Stream rỗng (lỗi 401, 429…) thì in
+    // dòng trống sẽ trông như đã có câu trả lời rỗng — dễ đọc nhầm thành thành công.
+    if (wrote) process.stdout.write('\n');
+
+    if (streamError) {
+      const msg = streamError instanceof Error ? streamError.message : String(streamError);
+      const name = streamError instanceof Error ? streamError.name : 'Error';
+      console.error(`\n> LOI (${name}): ${msg}`);
+      process.exit(1);
+    }
+
+    const usage = await result.usage;
+    console.error(
+      `\n> xong. token: vao ${usage.promptTokens ?? '?'} / ra ${usage.completionTokens ?? '?'}`,
+    );
+    process.exit(0);
+  } catch (err) {
+    // Chỉ bắt được lỗi CỐ Ý ném ra (ví dụ config sai lúc dựng model). Lỗi từ
+    // provider đi qua `onError` ở trên, không đi qua đây.
+    console.error(`\n> LOI: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
-
-  const usage = await result.usage;
-  console.error(
-    `\n> xong. token: vao ${usage.promptTokens ?? '?'} / ra ${usage.completionTokens ?? '?'}`,
-  );
-  process.exit(0);
-} catch (err) {
-  // Chỉ bắt được lỗi CỐ Ý ném ra (ví dụ config sai lúc dựng model). Lỗi từ
-  // provider đi qua `onError` ở trên, không đi qua đây.
-  console.error(`\n> LOI: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
 }
+
+main();
