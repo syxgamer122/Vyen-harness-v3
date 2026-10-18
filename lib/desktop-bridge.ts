@@ -222,15 +222,6 @@ export interface VyenDoctorReport {
   registeredChannels: string[];
 }
 
-export interface VyenTeamworkArtifacts {
-  ok: boolean;
-  workspaceRoot: string;
-  hasTeamwork: boolean;
-  request: { exists: boolean; content?: string; mtime?: string };
-  plan: { exists: boolean; content?: string; mtime?: string };
-  progress: { exists: boolean; content?: string; mtime?: string };
-}
-
 export interface VyenSecurityAuditFinding {
   id: string;
   ruleId: string;
@@ -393,8 +384,6 @@ export interface VyenBridge {
   };
   /** Chẩn đoán sức khỏe hệ thống (terminal coding agent & Security) */
   doctor?(): Promise<VyenDoctorReport>;
-  /** Quản lý và kiểm tra tài liệu phân việc đa tác tử (Teamwork Triad) */
-  teamworkArtifacts?(): Promise<VyenTeamworkArtifacts>;
   /** Kiểm toán an ninh mã nguồn & cấu hình (Chaitin Security standard) */
   securityAudit?(): Promise<VyenSecurityAuditReport>;
 }
@@ -604,7 +593,6 @@ function createWebBridge(): VyenBridge {
       onServerStatus: () => () => {},
     },
     doctor: () => callWebBridge<VyenDoctorReport>('vyen:doctor'),
-    teamworkArtifacts: () => callWebBridge<VyenTeamworkArtifacts>('vyen:teamwork-artifacts'),
     securityAudit: () => callWebBridge<VyenSecurityAuditReport>('vyen:security-audit'),
     scheduler: {
       list: () => callWebBridge<ScheduleRecord[]>('vyen:scheduler-list'),

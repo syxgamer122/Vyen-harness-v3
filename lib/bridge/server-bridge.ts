@@ -159,31 +159,14 @@ export function initServerBridge(): BridgeDispatcher {
     };
   });
 
-  // 5. Teamwork Triad Artifacts endpoint (task inspection)
-  handlers.set('vyen:teamwork-artifacts', async () => {
-    const currentWs = (await handlers.get('vyen:workspace-get')?.(null)) as { path: string | null } | undefined;
-    const wsRoot = currentWs?.path || defaultWorkspace;
-    const teamworkDir = path.join(wsRoot, 'teamwork');
-
-    const readIfExists = (filename: string): { exists: boolean; content?: string; mtime?: string } => {
-      const p = path.join(teamworkDir, filename);
-      if (fs.existsSync(p)) {
-        const stat = fs.statSync(p);
-        const content = fs.readFileSync(p, 'utf8');
-        return { exists: true, content, mtime: stat.mtime.toISOString() };
-      }
-      return { exists: false };
-    };
-
-    return {
-      ok: true,
-      workspaceRoot: wsRoot,
-      hasTeamwork: fs.existsSync(teamworkDir),
-      request: readIfExists('REQUEST.md'),
-      plan: readIfExists('PLAN.md'),
-      progress: readIfExists('PROGRESS.md'),
-    };
-  });
+  /* ĐÃ GỠ handler `vyen:teamwork-artifacts` (2026-10-18).
+   *
+   * Nó đọc `<workspace>/teamwork/{REQUEST,PLAN,PROGRESS}.md`. Thư mục đó do
+   * teamwork engine ghi ra, mà engine đã bị xoá cùng CLI headless (2026-10-15).
+   * Không còn gì ghi vào đó nên handler chỉ có thể trả `hasTeamwork: false` và
+   * ba `exists: false` — và không có caller nào (kể cả test) gọi tới.
+   *
+   * Đừng thêm lại trừ khi chủ repo muốn khôi phục teamwork engine. */
 
   // 6. Security Audit endpoint (security scanning)
   handlers.set('vyen:security-audit', async (_event, payload?: unknown) => {

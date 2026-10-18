@@ -369,11 +369,13 @@ function extractToolBody(name: string, result: unknown): string {
       .join('\n');
   }
 
-  /* git_diff/git_log: KHÔNG phải raw string. Cả hai đường đều bọc trong
-     object — `use-chat-orchestration.ts` trả `{ diff }` / `{ log }`,
-     `executeGit` (tool-runner.ts) JSON.stringify kết quả adapter nên cũng là
-     object. `summarizeToolResult` có nhánh `typeof r === 'string'` là dự phòng
-     cho đường cũ; ở đây ta chấp nhận cả hai để không phụ thuộc lịch sử. */
+  /* git_diff/git_log: client tool trả `{ diff }` / `{ log }` — xem
+     `use-chat-orchestration.ts`. `summarizeToolResult` vẫn có nhánh
+     `typeof r === 'string'`: `emulated-agent.ts:444` đã chốn trước bằng
+     ternary riêng, nhưng `route.ts` gọi thẳng hàm này không qua chốn đó, nên
+     kết quả dạng chuỗi vẫn tới được và nhánh đó còn dùng để đếm dòng.
+     (Trước 2026-10-18 nhánh này được biện minh bằng `tool-runner.ts` — file đã
+     xoá, nên lý do cũ không còn đúng.) */
   if (name === 'git_diff') {
     return str(r.diff) || (typeof value === 'string' ? value : '');
   }
