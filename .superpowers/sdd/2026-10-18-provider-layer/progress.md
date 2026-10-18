@@ -156,6 +156,12 @@ tiền tố `export ` và dòng trống.
   nhưng là trạng thái tạm **có chủ đích** mà plan đã định, và git là đường lui.
   Nếu quên dọn thì đó là nợ.
 
+> **⚠ RULING NÀY ĐÃ BỊ ĐẢO NGƯỢC Ở FIX PASS — xem "Final: fixed — route.ts và
+> module là MỘT nguồn".** Lý do (b) ở trên **sai về mặt sự kiện**: reviewer độc lập
+> tra lại rồi tôi tự kiểm, và chỉ `hostOf` dùng chỗ khác — `redact` và
+> `DEBUG_ERRORS` không dùng ở đâu ngoài khối chẩn đoán. Nên Step 4 **làm được**,
+> và giữ nguyên hai bản là tự tạo ra nợ không cần thiết.
+
 ### Task 4: Ruling — 3 kỳ vọng trong plan SAI, test viết theo hành vi thật
 
 Đọc code thật trước khi viết test, thay vì tin `Expected:` của plan:
@@ -192,3 +198,99 @@ không đưa tên vào scope cục bộ, nên `interface UpstreamDiagnosis` khô
   §1: ba gate là **cả ba**, không thể bỏ cái nào.
 - **Chi phí nếu bỏ gate typecheck:** module vào repo không biên dịch, và sẽ chỉ lộ
   ra khi ai đó build — ở xa hơn nhiều so với lúc này.
+
+# Final review — reviewer độc lập: 5 Important, 2 Minor
+
+### Final: Ruling — so khớp của tôi ĐÃ GIẤU MỘT LỖI, reviewer tìm ra
+
+Tôi ghi "376/376 dòng khớp". Reviewer đo lại: **375/376** — module thừa 1 khoảng
+trắng trong comment `BAD_PROMPT_HISTORY` (`route.ts:428` có 4 space, module có 5).
+Tôi **gọi đó là thẩm mỹ và bỏ qua**. Hoá ra nó là thứ làm phép so chính xác thất
+bại, và tôi mất hai vòng debug vì điều đó.
+
+Nguyên nhân gốc: phép so của tôi có `replace(/\s+/g, ' ')` — **tự chuẩn hoá
+khoảng trắng**, tức **có thể giấu đúng loại lỗi mà tôi đi tìm**. Đây là task chuyển
+văn bản, nên khoảng trắng chính là thứ phải so.
+
+- **Sửa:** bỏ một khoảng trắng trong module; so lại → 376/376 thật.
+- **Chi phí nếu sai:** trước khi sửa, `upstream-diagnosis.ts` lệch `route.ts` ở một
+  ký tự — vô hại về hành vi nhưng **phá đúng cái bảo đảm mà tôi dựa vào để xoá bản
+  gốc**. Đã sửa trước khi xoá nên không có hồi quy.
+
+> **Bài học: cơ chế kiểm mà chuẩn hoá đầu vào thì không kiểm được chính thứ nó
+> nên bắt.** Đây là lần thứ ba trong phiên tôi tự làm nhoè bằng chứng của chính
+> mình (hai lần trước: `Select-String` với tiếng Việt, `Select-Object -Last` cắt
+> mất đúng khối cần đọc).
+
+Phép so đó giờ **hết ý nghĩa** — bản gốc đã bị xoá khỏi `route.ts` nên không còn
+gì để so. Bảo đảm thay thế là: so khớp chạy xanh **trước** khi xoá, cộng 2 test
+guard chặn tái tạo, cộng full suite.
+
+# Final: Ruling — Finding 4 (`toolChoice: 'none'`) và Finding 5 (`fetch`) là NỢ THIẾT KẾ, không sửa
+
+Reviewer tự dựng script kiểm, không tin ledger. Nó **bác bỏ một ruling của tôi** và
+đúng. Fix pass dưới đây là một lượt, theo yêu cầu của skill.
+
+### Final: fixed — route.ts và module là MỘT nguồn (Finding 1)
+
+Tác giả đã bảo Step 3 và Step 4 của plan mâu thuẫn, nên bỏ Step 4. Reviewer nói
+lý do của tôi sai, và **tôi tự kiểm thì reviewer đúng**: chỉ `hostOf` dùng chỗ
+khác; `redact` và `DEBUG_ERRORS` không dùng ở đâu ngoài khối chẩn đoán. Lý do tôi
+viết trong ledger ("cần export thêm ngoài Produces của plan") **sai về mặt sự
+kiện**.
+
+- `hostOf` **giữ lại** trong `route.ts` (dùng ở 3 chỗ ngoài khối chẩn đoán).
+- Xoá khối trùng + banner, thêm một lệnh import. `route.ts` **2888 → 2367 dòng**.
+- Thêm 2 test guard chặn tái tạo bản sao.
+- **Chi phí nếu sai:** review toàn nhánh sẽ phải chạy lại.
+
+### Final: fixed — Focus #3 `blameKey` ở 403 (Finding 2)
+
+Reviewer mutation thật, cả hai chiều đều **hở** trước đây. Nay có test cho ba ca:
+403 body rỗng (model bị chặn, không phạt key) · 403 body thường (lỗi key, phải
+phạt) · 403 có dấu Cloudflare (WAF, đổi key vô ích).
+
+### Final: fixed — Focus #2 phần còn lại (Finding 3)
+
+Thêm test cho ranh giới NETWORK vs MODEL_REJECTED (dạng `[401]: {...}`, model từ
+chối vì lý do logic, lỗi mạng thật) và test bí mật thật được che.
+
+### Final: fixed — guard 429 chết theo vị trí file (phát hiện của tôi trong lúc fix)
+
+`tests/chat-rate-limit-buckets.test.ts` grep văn bản `route.ts` để canh "còn xử lý
+429 từ provider"; tầng chẩn đoán chuyển đi nên chuỗi không còn trong `route.ts` →
+ĐỎ. **Không xoá assert** (xoá là mất đúng cái guard đó sinh ra để bảo vệ) — đổi
+sang đọc module mới, giữ nguyên ý nghĩa. Mutation đổi tên mã lỗi 429 → đỏ.
+
+### Bốn mutation của fix pass — tất cả đều bị bắt
+
+| Mutation | Kết quả |
+|---|---|
+| 403 body rỗng: `blameKey false→true` | đỏ |
+| 403 có body: `blameKey = !cloudflare → false` | đỏ |
+| `NETWORK_FAILURE_RE.test(...) → if (true)` | đỏ (2 test) |
+| `UPSTREAM_RATE_LIMIT_429` bị đổi tên | đỏ (2 test) |
+
+Ba cái đầu **là đúng những mutation reviewer chứng minh test cũ hở**.
+
+### Final: Ruling — Finding 4 (`toolChoice: 'none'`) và Finding 5 (`fetch`) là NỢ THIẾT KẾ, không sửa
+
+Reviewer nói đúng cả hai: **interface hiện tại không biểu đạt được** chúng.
+`toolChoice` là tham số mỗi lần gọi `streamText`/`generateText`, không phải của
+adapter; `fetch: nonStreamingFetch` thì `resolveOpenAIModel` chưa có đường truyền.
+Không có hồi quy người dùng hôm nay (`route.ts` chưa từng set `toolChoice`).
+
+- **Chi phí nếu sai:** plan sau đổi `route.ts` sang adapter sẽ mất override
+  `nonStreamingFetch` ở đường emulated → hỏng đúng lỗi comment `route.ts:1713-1717`
+  đã cảnh báo. Plan sau **phải** mở rộng `ProviderRuntimeConfig` trước.
+- Cũng lưu ý: Review Focus #4 của plan và spec §7 là **hai cơ chế khác nhau**
+  (`toolChoice: 'none'` vs `emulated-agent`); spec §7 mới là thứ repo có.
+
+### Deferred minors
+
+- **Focus #5 hiện đúng nhưng chỉ có comment giữ.** Không gì đỏ nếu ai đó thêm
+  `import { resolveAnthropicModel }` vào `adapter.ts`. Repo đã có sẵn
+  `runtimeImportSpecs()` quét AST — guard ~10 dòng là đủ. Theo luật của skill,
+  minor không vào fix pass.
+- **Test Focus #1 chứng minh ít hơn tên gọi**: nó canh "một nhánh không lặp lại
+  nhãn", không phải "bí mật được che" (phần này nay đã có test riêng ở trên).

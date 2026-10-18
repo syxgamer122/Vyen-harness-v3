@@ -188,7 +188,7 @@ export function diagnoseUpstreamError(
 
   /* Lỗi VALIDATE PROMPT phía SDK (AI_InvalidPromptError): history chat nhiễm
      tin nhắn hỏng (vd text leaked từ upstream agent lạ như pool Notion của
-     ). Không phải lỗi kết nối hay key — trước đây rơi vào nhánh
+    ). Không phải lỗi kết nối hay key — trước đây rơi vào nhánh
      status=undefined và bị gắn nhãn sai "Không kết nối được tới AI Provider",
      khiến người dùng tưởng provider mới chết trong khi chỉ cần bỏ tin hỏng. */
   const rawErrMsg = e instanceof Error ? e.message : String(e ?? '');

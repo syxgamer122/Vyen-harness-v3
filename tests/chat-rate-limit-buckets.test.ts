@@ -20,6 +20,11 @@ import path from 'node:path';
 
 const ROUTE = path.resolve(__dirname, '../app/api/chat/route.ts');
 const source = fs.readFileSync(ROUTE, 'utf8');
+// Nhánh 429 đã tách sang module chẩn đoán dùng chung (plan provider-layer),
+// nên `UPSTREAM_RATE_LIMIT_429` không còn nằm trong route.ts. Guard bên dưới
+// theo Ý NGHĨA — "còn xử lý 429 từ provider" — chứ không theo vị trí file.
+const DIAGNOSIS = path.resolve(__dirname, '../lib/provider/upstream-diagnosis.ts');
+const diagnosisSource = fs.readFileSync(DIAGNOSIS, 'utf8');
 
 describe('/api/chat không tự throttle request hợp lệ', () => {
   it('route không import checkRateLimit', () => {
@@ -42,7 +47,7 @@ describe('/api/chat không tự throttle request hợp lệ', () => {
     // Điều kiện đảo: xoá nhánh này là ĐỎ — 429 upstream là lỗi TẠM, phải
     // retry model khác chứ không phải lỗi của người dùng.
     expect(source).toMatch(/RETRYABLE_SAME_MODEL_STATUSES/);
-    expect(source).toMatch(/UPSTREAM_RATE_LIMIT_429/);
+    expect(diagnosisSource).toMatch(/UPSTREAM_RATE_LIMIT_429/);
   });
 
   it('vẫn còn guard thật: same-origin + body cap + schema', () => {
