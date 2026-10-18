@@ -27,18 +27,36 @@ export const CORE_ENTRIES = [
   'lib/mcp/tool-mapper.ts',
 ];
 
-/** Import không nội bộ — không có file tương ứng trong repo nên bỏ qua. */
-const EXTERNAL = /^(ai|zod|next|react|react-dom|node:[a-z/]+|[a-z@][^/']*)$/;
 
-/** `from '@/lib/x'` hoặc `from '@/x'` → đường dẫn repo tương ứng. */
-export function resolveInternal(spec: string): string | null {
-  if (!spec.startsWith('@/')) return null;
+
+/**
+ * Một spec import, quy về đường dẫn repo tương ứng với file `fromFile`.
+ *
+ * Phải xử lý BA dạng: `@/x` (alias), `./x` và `../x` (tương đối); dạng khác là
+ * gói ngoài. Bỏ sót dạng tương đối là lỗi nghiêm trọng: review độc lập (2026-10-18)
+ * phát hiện `zeromem/tools.ts` import `./store` bị bỏ qua, khiến
+ * `zeromem/store.ts` — thật ra lõi dùng — bị gán `XOA`, tức bảng dẫn dắt kế
+ * hoạch xoá code đang chạy.
+ */
+export function resolveInternal(spec: string, fromFile: string): string | null {
+  let base: string;
+  if (spec.startsWith('@/')) {
+    base = spec.slice(2);
+  } else if (spec.startsWith('./') || spec.startsWith('../')) {
+    base = path.posix.join(path.posix.dirname(fromFile), spec);
+  } else {
+    return null;
+  }
   // `@/` tro toi GOC REPO, khong phai `lib/` — nen spec da co `lib/` san.
-  const base = spec.slice(2);
-  if (EXTERNAL.test(base)) return null;
   // Spec co the da co duoi san (`@/lib/ipc.cjs`) — kiem tra chinh no truoc,
 // neu khong moi noi them.
-  for (const candidate of [base, `${base}.ts`, `${base}.cjs`, `${base}.tsx`, `${base}/index.ts`]) {
+  for (const candidate of [
+    base,
+    `${base}.ts`,
+    `${base}.cjs`,
+    `${base}.tsx`,
+    `${base}/index.ts`,
+  ]) {
     if (existsSync(candidate)) return candidate.split(path.sep).join('/');
   }
   return null;
@@ -47,12 +65,12 @@ export function resolveInternal(spec: string): string | null {
 function importsOf(file: string): string[] {
   const src = readFileSync(file, 'utf8');
   const out: string[] = [];
-  const re = /from\s+['"]([^'"]+)['"]/g;
+  const re = /(?:from|import)\s*['"]([^'"]+)['"]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
-    const resolved = resolveInternal(m[1]);
+    const resolved = resolveInternal(m[1], file);
     // Spec sai dẫn đường là lỗi dữ liệu, im lặng bỏ qua là báo cáo sai.
-    if (m[1].startsWith('@/') && resolved === null) {
+    if (resolved === null && m[1].startsWith('@/')) {
       throw new Error(`${file}: import không giải được tới file thật: '${m[1]}'`);
     }
     if (resolved) out.push(resolved);

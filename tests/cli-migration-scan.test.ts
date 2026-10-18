@@ -17,7 +17,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
-import { CORE_ENTRIES, reachableFrom, unreached } from '@/scripts/cli-migration/import-graph';
+import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached } from '@/scripts/cli-migration/import-graph';
 import { countTsFiles } from '@/scripts/cli-migration/build-inventory';
 
 describe('scanFile', () => {
@@ -46,6 +46,35 @@ describe('scanFile', () => {
   it('bỏ qua guard typeof window — không phải API trình duyệt chỉ-server', () => {
     const src = ['if (typeof window !== "undefined") {', '  return null;', '}'].join('\n');
     expect(scanFile(src, 'lib/demo.ts')).toEqual([]);
+  });
+
+  /* Review C1 — review độc lập phát hiện bảng đếm CẢ COMMENT và STRING.
+   * 39/44 dòng bảng không có dòng code nào dùng API nào. Có dòng còn phủ định
+   * chính nó: `lib/turns.ts:32` viết "không kéo Dexie vào đúng import".
+   * Chỉ đếm trong AST thì mới phân biệt được comment với code. */
+  it('KHÔNG đếm API nằm trong comment', () => {
+    const src = [
+      '/**',
+      ' * Thuần function, không Dexie/React → test được trong node.',
+      ' */',
+      'export function noop() {}',
+    ].join('\n');
+    expect(scanFile(src, 'lib/demo.ts')).toEqual([]);
+  });
+
+  it('KHÔNG đếm API nằm trong string literal', () => {
+    const src = "export const skill = { name: 'Dexie IndexedDB Schema & Transactions' };";
+    expect(scanFile(src, 'lib/demo.ts')).toEqual([]);
+  });
+
+  it('VẪN đếm API nằm trong import — import là dùng thật', () => {
+    const src = "import Dexie from 'dexie';";
+    expect(scanFile(src, 'lib/demo.ts').map((h) => h.api)).toEqual(['Dexie']);
+  });
+
+  it('đếm được API dạng dotted: navigator.storage', () => {
+    const src = 'const x = await navigator.storage.getDirectory();';
+    expect(scanFile(src, 'lib/demo.ts').map((h) => h.api)).toEqual(['navigator.storage']);
   });
 });
 
@@ -96,6 +125,40 @@ describe('import-graph', () => {
     expect(unreached(['lib/db.ts'], ['lib/agent-tools-server.ts'])).toContain('lib/db.ts');
   });
 
+  /* Review C3 — review độc lập phát hiện đồ thị BỎ QUA import tương đối và
+   * dynamic import. Hậu quả: `lib/zeromem/store.ts` bị gán XOA trong khi
+   * `zeromem/tools.ts` (một CORE_ENTRY) import nó bằng `from './store'`.
+   * Tức bảng dẫn dắt kế hoạch xoá code lõi đang chạy. */
+  it('đi được qua import TƯƠNG ĐỐI', () => {
+    const core = reachableFrom();
+    expect(core.has('lib/zeromem/tools.ts')).toBe(true);
+    expect(core.has('lib/zeromem/store.ts')).toBe(true);
+  });
+
+  /* Đo thật thì lõi hiện KHÔNG có dynamic import nội bộ nào: quét cả đồ thị chỉ ra
+   * đúng một `import(...)` và nó trỏ tới `node:dns/promises` — gói ngoài. Test
+   * "dynamic import" viết theo giả định sẽ là ví dụ thứ hai của loại test tự
+   * chứng minh: nó so với điều tôi TƯỞNG chứ không so với điều repo CÓ.
+   * Test dưới đây bảo vệ đúng lúc cần: thêm `await import('./x')` vào một file
+   * lõi rồi quên mở rộng đồ thị — file đó sẽ rơi ra và bị gán XOA. */
+  it('mọi dynamic import NỘI BỘ của file lõi đều phải nằm trong đồ thị', () => {
+    const core = reachableFrom();
+    const re = /(?:await\s+)?import\s*\(\s*['"]([^'"]+)['"]/g;
+    const missing: string[] = [];
+    for (const f of core) {
+      const src = readFileSync(f, 'utf8');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src))) {
+        const s = m[1];
+        const internal = s.startsWith('@/') || s.startsWith('./') || s.startsWith('../');
+        if (!internal) continue;
+        const resolved = resolveInternal(s, f);
+        if (resolved && !core.has(resolved)) missing.push(`${f} -> ${s}`);
+      }
+    }
+    expect(missing, `dynamic import nội bộ lọt khỏi đồ thị lõi: ${missing.join(', ')}`).toEqual([]);
+  });
+
   it('mọi entry mặc định đều là file có thật — entry sai là kết luận sai', () => {
     for (const e of CORE_ENTRIES) {
       expect(existsSync(e), `CORE_ENTRIES chứa file không tồn tại: ${e}`).toBe(true);
@@ -136,7 +199,9 @@ describe('bảng kiểm kê', () => {
     const rows = md.split('\n').filter((l) => l.startsWith('| `lib/'));
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      expect(row, `nhãn phải là GHIU | VIET-LAI | XOA: ${row}`).toMatch(/\| (GHIU|VIET-LAI|XOA) \|/);
+      expect(row, `nhãn phải là GHIU | VIET-LAI | XOA | THAY-THE: ${row}`).toMatch(
+        /\| (GHIU|VIET-LAI|XOA|THAY-THE) \|/,
+      );
     }
   });
 });

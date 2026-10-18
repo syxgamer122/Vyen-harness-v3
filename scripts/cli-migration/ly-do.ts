@@ -7,9 +7,24 @@
  *
  * File chưa có trong đây sẽ in ra `—` chứ không bịa lý do.
  *
- * Quy ước: viết ngắn, đúng những gì file LÀM, không mô tả cách nó làm.
- * `chưa xác minh` = tôi chưa đọc file, đừng tin.
+ * `FORCE_LABEL` cho các file mà tiêu chí máy SAI — máy không biết lõi còn cần
+ * chức năng đó qua đường khác hay không. Review độc lập (2026-10-18) bắt được
+ * `db.ts` và `fs-access.ts` bị gán XOA, trong khi spec §5 nói rõ phải có
+ * `lib/session/` (thay Dexie) và `lib/tools/fs-node.ts` (thay File System Access
+ * API). Đọc "xoá" sẽ khiến kế hoạch sau xoá đúng hai thứ mà spec bắt phải viết lại.
+ *
+ * Quy ước: viết ngắn, đúng những gì file LÀM và điều MẤT nếu bỏ, không mô tả
+ * cách nó làm. `chưa xác minh` = tôi chưa đọc file, đừng tin.
  */
+export const FORCE_LABEL: Record<string, string> = {
+  // Không nằm trong đồ thị lõi, nhưng spec §5 bắt phải có bản thay thế trên Node.
+  'lib/db.ts': 'THAY-THE',
+  'lib/fs-access.ts': 'THAY-THE',
+  // spec §7: duyệt tool nguy hiểm là thứ người dùng tin CLI nhất. Bỏ thì mất
+  // toàn bộ cơ chế duyệt, dù máy thấy nó không nằm trong đồ thị lõi.
+  'lib/tool-permissions.ts': 'THAY-THE',
+};
+
 export const LY_DO: Record<string, string> = {
   'lib/agent-tools-server.ts': 'Tool server của agent (web_search, web_fetch, memory)',
   'lib/agent-tools.ts': 'Định nghĩa tool phía client; lõi server import để dựng doc registry',
@@ -30,7 +45,7 @@ export const LY_DO: Record<string, string> = {
   'lib/memory/agent-memory.ts': 'Trần ký tự mỗi entry memory của agent',
   'lib/memory/store.ts': 'Chống trùng lặp digest cho memory của agent',
   'lib/message-text.ts': 'Chuẩn hoá text lưu/gửi, không chứa artifact',
-  'lib/model-meta.ts': 'Tra cửa sổ ngữ cảnh theo model — lõi context-budget dùng',
+  'lib/model-meta.ts': 'Cửa sổ ngữ cảnh hiển thị theo model — chỉ UI dùng, lõi KHÔNG cần',
   'lib/model-routing.ts': 'Vai trò của model trong lượt (planner/coder)',
   'lib/post-edit-check.ts': 'Khoảng cách tối thiểu giữa hai vòng check sau khi sửa',
   'lib/provider-secure-key.ts': 'Kho API key mã hoá qua desktop secure store',

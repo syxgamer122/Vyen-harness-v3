@@ -18,7 +18,7 @@ import { readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { scanBrowserApis, type ScanHit } from './scan-browser-apis.ts';
 import { CORE_ENTRIES, reachableFrom } from './import-graph.ts';
-import { LY_DO } from './ly-do.ts';
+import { FORCE_LABEL, LY_DO } from './ly-do.ts';
 
 const BOILERPLATE_DIRS = new Set(['node_modules', '.next', 'dist', 'build', 'coverage']);
 
@@ -69,7 +69,7 @@ export function renderInventory(scan: ScanHit[], core: Set<string>): string {
     .map((file) => {
       const apis = byFile.get(file)!.join(', ');
       const inCore = core.has(file);
-      const label = inCore ? 'VIET-LAI' : 'XOA';
+      const label = FORCE_LABEL[file] ?? (inCore ? 'VIET-LAI' : 'XOA');
       // Lý do lấy từ ly-do.ts — nơi phán đoán của người sống, tách khỏi script
       // để chạy lại generator không xoá mất. Chưa có thì in `—`, không bịa.
       const why = LY_DO[file] ?? '—';
@@ -85,7 +85,8 @@ export function renderInventory(scan: ScanHit[], core: Set<string>): string {
     '| nhãn | điều kiện |\n|---|---|\n' +
     '| `GHIU` | không chạm API trình duyệt |\n' +
     '| `VIET-LAI` | chạm API trình duyệt **và** nằm trong đồ thị lõi → lõi cần, phải có bản Node |\n' +
-    '| `XOA` | chạm API trình duyệt và **không** nằm trong đồ thị lõi → thuộc tính năng web |\n\n' +
+    '| `XOA` | chạm API trình duyệt và **không** nằm trong đồ thị lõi → thuộc tính năng web |\n' +
+    '| `THAY-THE` | máy gán sai — lõi vẫn cần chức năng này qua đường khác. Nhãn do người đặt trong `ly-do.ts`, **đọc trước khi lên kế hoạch** |\n\n' +
     '> Chỉ file chạm API trình duyệt mới có mặt trong bảng. File không chạm thì không cần\n' +
     '> phân loại — chúng dùng được nguyên vẹn cho lõi Node.\n\n' +
     '## Điểm vào của lõi\n\n' +
