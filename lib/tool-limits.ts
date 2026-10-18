@@ -64,7 +64,8 @@ export function loadSpillSaver(): SpillSaver | null {
   }
   try {
     const req = eval('require') as (id: string) => unknown;
-    const ipc = req('../ipc.cjs') as { saveSpillText?: SpillSaver };
+    // Đường dẫn tương đối TỪ lib/tool-limits.ts — ipc.cjs nằm cùng thư mục.
+    const ipc = req('./ipc.cjs') as { saveSpillText?: SpillSaver };
     spillSaverCache = typeof ipc?.saveSpillText === 'function' ? ipc.saveSpillText : null;
   } catch {
     spillSaverCache = null;

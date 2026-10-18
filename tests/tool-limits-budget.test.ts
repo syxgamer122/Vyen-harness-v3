@@ -21,7 +21,6 @@ import {
 import {
   DOOM_LOOP_THRESHOLD,
   TOOL_RESULT_MAX_CHARS,
-  loadSpillSaver,
   serializeToolResult,
   truncateToolResult,
 } from '@/lib/tool-limits';
@@ -29,16 +28,32 @@ import {
 describe('loadSpillSaver — không được làm hỏng bundle trình duyệt', () => {
   /* lib/tool-limits.ts được import bởi react/use-chat-orchestration.ts:57, tức
    * nằm trong bundle trình duyệt. Nếu loader chạm `require('../ipc.cjs')` ở đây
-   * thì bundle sập; nếu ném lỗi thì hàm bị gọi ở trình duyệt sẽ vỡ. Phải trả
-   * null êm ở cả hai nơi. */
-  it('không ném khi môi trường không có Node', () => {
-    expect(() => loadSpillSaver()).not.toThrow();
+   * thì bundle sập; nếu ném lỗi thì hàm bị gọi ở trình duyệt sẽ vỡ.
+   *
+   * PHẢI nạp lại module ở mỗi case: loader cache kết quả ở module scope, nên
+   * nếu case đầu đã gọi ở Node thì case sau nhận cache và `window` bị bỏ qua
+   * — test xanh dù guard có hay không. */
+  async function freshLoader(): Promise<() => unknown> {
+    vi.resetModules();
+    const mod = await import('@/lib/tool-limits');
+    return mod.loadSpillSaver as () => unknown;
+  }
+
+  it('không ném khi môi trường không có Node', async () => {
+    const load = await freshLoader();
+    expect(() => load()).not.toThrow();
   });
 
-  it('trả null khi có `window` — tức đang ở trình duyệt', () => {
+  it('trong Node (không `window`): trả về hàm lưu spill', async () => {
+    const load = await freshLoader();
+    expect(typeof load()).toBe('function');
+  });
+
+  it('có `window` — tức trình duyệt: trả null', async () => {
+    const load = await freshLoader();
     vi.stubGlobal('window', {});
     try {
-      expect(loadSpillSaver()).toBeNull();
+      expect(load()).toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }

@@ -21,8 +21,12 @@ let truncateShellOutput: (
 ) => { text: string; truncated: boolean; savedTo?: string; previewHint?: string };
 
 let isSavedShellOutput: (p: string) => boolean;
-let registerSavedShellOutput: (p: string) => void;
+let registerSavedShellOutput: (p: string, kind?: string) => void;
 let SAVED_OUTPUT_REGISTRY_MAX: number;
+let saveSpillText: (
+  content: string,
+  suggestedName: string,
+) => { savedTo: string; bytes: number; notice: string } | null;
 
 try {
   const ipc = require('../lib/ipc.cjs') as Record<string, unknown>;
@@ -30,12 +34,14 @@ try {
   isSavedShellOutput = ipc.isSavedShellOutput as typeof isSavedShellOutput;
   registerSavedShellOutput = ipc.registerSavedShellOutput as typeof registerSavedShellOutput;
   SAVED_OUTPUT_REGISTRY_MAX = ipc.SAVED_OUTPUT_REGISTRY_MAX as number;
+  saveSpillText = ipc.saveSpillText as typeof saveSpillText;
 } catch {
   // Nếu ipc.cjs không export trực tiếp, test sẽ skip
   truncateShellOutput = null as any;
   isSavedShellOutput = null as any;
   registerSavedShellOutput = null as any;
   SAVED_OUTPUT_REGISTRY_MAX = 0;
+  saveSpillText = null as any;
 }
 
 // Cleanup temp files created during tests
@@ -183,5 +189,61 @@ describe.skipIf(!isSavedShellOutput)('saved output registry — fs_read whitelis
     registerSavedShellOutput(newest);
     expect(isSavedShellOutput(first)).toBe(false);
     expect(isSavedShellOutput(newest)).toBe(true);
+  });
+});
+
+/**
+ * Spill: lưu phần kết quả tool bị cắt ra file app tự ghi để `fs_read` đọc lại
+ * được. Xem docs/superpowers/specs/2026-10-18-tool-result-spill-design.md.
+ */
+/* KHÔNG dùng describe.skipIf ở đây: skip làm test im lặng xanh trước khi có
+ * saveSpillText, tức test rỗng. Feature phải FAIL thật cho tới khi ipc.cjs
+ * export nó. */
+describe('saveSpillText', () => {
+  it('ghi file tạm, nội dung khớp byte-for-byte, trả savedTo + bytes', () => {
+    const content = 'xin chào, đây là nội dung bị cắt';
+    const r = saveSpillText(content, 'web_fetch.txt');
+    expect(r).not.toBeNull();
+    tempFiles.push(r!.savedTo);
+    expect(fs.readFileSync(r!.savedTo, 'utf8')).toBe(content);
+    expect(r!.bytes).toBe(Buffer.byteLength(content, 'utf8'));
+    expect(r!.notice).toContain(r!.savedTo);
+  });
+
+  it('nội dung rỗng → trả null, không tạo file', () => {
+    expect(saveSpillText('', 'x.txt')).toBeNull();
+  });
+
+  /* Review Focus #1: suggestedName do model kiểm soát, có thể bị ép ghi file
+   * ngoài tmpdir qua prompt-injection. Mọi biến thể phải nằm trong tmpdir. */
+  it.each([
+    '../../evil.txt',
+    '..\\..\\windows\\system32\\evil.txt',
+    '/etc/passwd',
+    'a/b/c.txt',
+    '....//....//x.txt',
+  ])('suggestedName độc hại %s vẫn nằm trong tmpdir', (name) => {
+    const r = saveSpillText('payload', name);
+    expect(r).not.toBeNull();
+    tempFiles.push(r!.savedTo);
+    expect(path.dirname(path.resolve(r!.savedTo))).toBe(path.resolve(os.tmpdir()));
+  });
+
+  it('suggestedName rỗng hoặc toàn ký tự lạ → vẫn ghi được, không ném', () => {
+    for (const name of ['', '///', '...', '⚠️⚠️']) {
+      const r = saveSpillText('payload', name);
+      expect(r, `tên: ${JSON.stringify(name)}`).not.toBeNull();
+      tempFiles.push(r!.savedTo);
+      expect(fs.existsSync(r!.savedTo)).toBe(true);
+    }
+  });
+
+  it('hai lần ghi → hai file khác nhau, không đè lên nhau', () => {
+    const a = saveSpillText('nội dung A', 'cùng-tên.txt');
+    const b = saveSpillText('nội dung B', 'cùng-tên.txt');
+    tempFiles.push(a!.savedTo, b!.savedTo);
+    expect(a!.savedTo).not.toBe(b!.savedTo);
+    expect(fs.readFileSync(a!.savedTo, 'utf8')).toBe('nội dung A');
+    expect(fs.readFileSync(b!.savedTo, 'utf8')).toBe('nội dung B');
   });
 });
