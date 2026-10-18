@@ -111,7 +111,18 @@ export async function readHintsFromWorkspace(): Promise<{ file: string; content:
 export async function readAgentFilesFromWorkspace(): Promise<
   { name: string; content: string }[]
 > {
+  // Trần khớp `BodySchema.agents` ở route.ts. Gửi vượt trần sẽ khiến
+  // `safeParse` fail và mọi lượt chat sau đó trả 400 — một file agent quá dài
+  // đủ để làm hỏng app cho người dùng đó.
+  const MAX_FILES = 30;
+  const MAX_CHARS = 4_000;
   const entries: { name: string; content: string }[] = [];
+  const push = (name: string, content: string) => {
+    if (entries.length >= MAX_FILES) return;
+    if (!content.trim()) return;
+    entries.push({ name, content: content.slice(0, MAX_CHARS) });
+  };
+
   if (isVyenDesktop()) {
     try {
       const files = (await desktopFsList('.vyen/agents')).filter(
@@ -122,8 +133,7 @@ export async function readAgentFilesFromWorkspace(): Promise<
           const r = (await desktopFsRead(`.vyen/agents/${e.name}`)) as unknown as {
             content?: string;
           };
-          const content = String(r.content ?? '');
-          if (content.trim()) entries.push({ name: e.name, content });
+          push(e.name, String(r.content ?? ''));
         } catch {
           /* file không đọc được — bỏ, agent còn lại vẫn dùng được */
         }
@@ -143,8 +153,7 @@ export async function readAgentFilesFromWorkspace(): Promise<
       if (entry.kind !== 'file' || !entry.name.endsWith('.md')) continue;
       try {
         const fh = await dir.getFileHandle(entry.name);
-        const content = await (await fh.getFile()).text();
-        if (content.trim()) entries.push({ name: entry.name, content });
+        push(entry.name, await (await fh.getFile()).text());
       } catch {
         /* bỏ qua file hỏng */
       }

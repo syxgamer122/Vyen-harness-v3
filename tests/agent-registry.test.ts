@@ -1,72 +1,70 @@
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  loadAgentRegistry,
+  loadAgentRegistryFromEntries,
   resolveAgentDefinition,
   describeAgents,
 } from '@/lib/agents/agent-registry';
 
-const dirs: string[] = [];
-
-function dirWith(files: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), 'vyen-agents-'));
-  dirs.push(dir);
-  mkdirSync(join(dir, 'nested'), { recursive: true });
-  for (const [name, body] of Object.entries(files)) {
-    writeFileSync(join(dir, name), body);
-  }
-  return dir;
-}
-
 const DEF = (d: string) => `---\ndescription: ${d}\n---\nbody\n`;
+const reg = (files: Record<string, string>) =>
+  loadAgentRegistryFromEntries(
+    Object.entries(files).map(([name, content]) => ({ name, content })),
+  );
 
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-
-describe('loadAgentRegistry', () => {
-  it('thư mục không tồn tại → agents rỗng, warnings rỗng, KHÔNG ném lỗi', () => {
-    const r = loadAgentRegistry(join(tmpdir(), 'vyen-khong-co-that'));
+describe('loadAgentRegistryFromEntries', () => {
+  it('danh sách rỗng → agents rỗng, warnings rỗng, KHÔNG ném lỗi', () => {
+    const r = loadAgentRegistryFromEntries([]);
     expect(r.agents).toEqual([]);
     expect(r.warnings).toEqual([]);
   });
 
-  it('nạp .md ở cấp đĩa, bỏ qua thư mục con', () => {
-    const r = loadAgentRegistry(dirWith({ 'a.md': DEF('A'), 'nested/b.md': DEF('B') }));
-    expect(r.agents.map((a) => a.name)).toEqual(['a']);
+  it('nạp mọi entry', () => {
+    const r = reg({ 'a.md': DEF('A'), 'b.md': DEF('B') });
+    expect(r.agents.map((a) => a.name)).toEqual(['a', 'b']);
+  });
+
+  it('tên lặp → giữ bản đầu, ghi warning', () => {
+    const r = loadAgentRegistryFromEntries([
+      { name: 'a.md', content: DEF('đầu') },
+      { name: 'a.md', content: DEF('sau') },
+    ]);
+    expect(r.agents.map((x) => x.description)).toEqual(['đầu']);
+    expect(r.warnings.some((w) => w.includes('trùng tên'))).toBe(true);
   });
 
   it('file hỏng bị bỏ qua và ghi 1 warning, file tốt vẫn nạp', () => {
-    const r = loadAgentRegistry(dirWith({ 'good.md': DEF('G'), 'bad.md': 'không có frontmatter' }));
+    const r = reg({ 'good.md': DEF('G'), 'bad.md': 'không có frontmatter' });
     expect(r.agents.map((a) => a.name)).toEqual(['good']);
     expect(r.warnings).toHaveLength(1);
     expect(r.warnings[0]).toContain('bad.md');
   });
 
   it('sắp xếp theo name', () => {
-    const r = loadAgentRegistry(dirWith({ 'z.md': DEF('Z'), 'a.md': DEF('A') }));
+    const r = reg({ 'z.md': DEF('Z'), 'a.md': DEF('A') });
     expect(r.agents.map((a) => a.name)).toEqual(['a', 'z']);
   });
 });
 
 describe('resolveAgentDefinition', () => {
   it('khớp chính xác tên file', () => {
-    const r = loadAgentRegistry(dirWith({ 'code-reviewer.md': DEF('review') }));
-    const hit = resolveAgentDefinition(r, 'code-reviewer');
+    const hit = resolveAgentDefinition(reg({ 'code-reviewer.md': DEF('review') }), 'code-reviewer');
     expect(hit.ok && hit.definition.description).toBe('review');
   });
 
-  it('tên không có → lỗi nêu available', () => {
-    const r = loadAgentRegistry(dirWith({ 'only.md': DEF('O') }));
-    const miss = resolveAgentDefinition(r, 'nope');
+  it('phân biệt hoa thường — tên sai hoa thường thì không khớp', () => {
+    const r = reg({ 'Code-Reviewer.md': DEF('review') });
+    expect(resolveAgentDefinition(r, 'code-reviewer').ok).toBe(false);
+    expect(resolveAgentDefinition(r, 'Code-Reviewer').ok).toBe(true);
+  });
+
+  it('tên không có → lỗi nêu available trong chính chuỗi error', () => {
+    const miss = resolveAgentDefinition(reg({ 'only.md': DEF('O') }), 'nope');
     expect(miss.ok === false && miss.available).toEqual(['only']);
     expect(miss.ok === false && miss.error).toContain('only');
   });
 
   it('registry rỗng → available rỗng, error vẫn nói cho model biết chưa có agent', () => {
-    const miss = resolveAgentDefinition(loadAgentRegistry(join(tmpdir(), 'vyen-rong-2')), 'x');
+    const miss = resolveAgentDefinition(loadAgentRegistryFromEntries([]), 'x');
     expect(miss.ok === false && miss.available).toEqual([]);
     expect(miss.ok === false && miss.error).toContain('Chưa có agent nào');
   });
@@ -74,11 +72,11 @@ describe('resolveAgentDefinition', () => {
 
 describe('describeAgents', () => {
   it('rỗng → chuỗi rỗng', () => {
-    expect(describeAgents(loadAgentRegistry(join(tmpdir(), 'vyen-rong')))).toBe('');
+    expect(describeAgents(loadAgentRegistryFromEntries([]))).toBe('');
   });
 
   it('mỗi agent một dòng "tên — mô tả", KHÔNG kèm phần tools', () => {
-    const s = describeAgents(loadAgentRegistry(dirWith({ 'a.md': DEF('làm việc A') })));
+    const s = describeAgents(reg({ 'a.md': DEF('làm việc A') }));
     expect(s).toContain('a — làm việc A');
     expect(s).not.toContain('tools');
   });
