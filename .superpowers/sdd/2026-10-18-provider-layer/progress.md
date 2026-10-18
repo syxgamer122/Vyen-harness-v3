@@ -120,3 +120,75 @@ describe thay vì 3. Đã trả lại trước khi chạy test.
   và Task 3 xong với 3 test thay vì 4 — đúng loại tự chứng minh mà ledger cảnh báo.
 - **Bài học:** sau mỗi sửa file test, đếm lại số `describe`/`it` — không tin rằng
   `edit` chỉ sửa đúng chỗ mình nghĩ.
+
+## Task 4: complete (tests: npx vitest run tests/provider-diagnosis.test.ts → 7 passed)
+
+Module `lib/provider/upstream-diagnosis.ts` chuyển từ `route.ts` các dòng 225-299 và
+346-665. `UpstreamScope` **re-export** từ `@/lib/api-keys`, không định nghĩa lại.
+
+### Kiểm chứng bản chuyển: SO KHỚP CƠ HỌC, không chỉ test
+
+7 test hành vi xanh KHÔNG đủ — chúng không soi được lỗi gõ trong regex hay trong
+comment. Nên tôi so từng dòng module với vùng tương ứng trong `route.ts`, chỉ bỏ
+tiền tố `export ` và dòng trống.
+
+**Phát hiện được: tôi đã làm hỏng ký tự `ướ`** trong một dòng comment
+(`...stream 200 dưới dạng [401]...` → `d␦␦␦i dạng`). 7 test không thấy. Sửa bằng
+`node` (không qua PowerShell, để không hỏng tiếp lần nữa), rồi so lại:
+**376/376 dòng khớp, 0 khác biệt.**
+
+- **Bài học:** với task dạng "chuyển nguyên văn", test hành vi chỉ chứng minh phần
+  mình đã nghĩ tới. So khớp cơ học mới chứng minh phần mình **không** nghĩ tới.
+
+### Task 4: Ruling — BỎ Step 4 (trỏ import trong `route.ts`)
+
+- **Plan Step 4** nói đổi import trong `route.ts` sang module mới. **Plan Step 3**
+  nói **không xoá code cũ** ở `route.ts`.
+- **Hai đó mâu thuẫn:** route.ts đang khai báo `function diagnoseUpstreamError` ở
+  cấp module. Import cùng tên từ module mới vào sẽ ra **duplicate identifier** —
+  TypeScript không cho phép. Muốn trỏ import thì **bắt buộc phải xoá** khai báo cũ.
+- **Quyết định:** làm Step 3 trọn vẹn; **bỏ Step 4**. Lý do: (a) xoá trên file
+  153KB là thay đổi lớn nhất của plan này, (b) `hostOf`, `redact`, `DEBUG_ERRORS`
+  còn được dùng ở nhiều chỗ khác trong `route.ts` nên phải export thêm ngoài
+  `Produces` của plan, (c) plan tự ghi phần dọn dẹp thuộc plan sau.
+- **Chi phí nếu sai:** tồn tại **hai bản** logic chẩn đoán trong repo cho tới khi
+  plan sau dọn. Đây đúng là dạng "hai nguồn sự thật" mà AGENTS.md §6 cảnh báo —
+  nhưng là trạng thái tạm **có chủ đích** mà plan đã định, và git là đường lui.
+  Nếu quên dọn thì đó là nợ.
+
+### Task 4: Ruling — 3 kỳ vọng trong plan SAI, test viết theo hành vi thật
+
+Đọc code thật trước khi viết test, thay vì tin `Expected:` của plan:
+
+1. **401 → `stopFailover` là FALSE**, plan viết true. `stopFailover` chỉ được đặt
+   true khi `scope === 'request'` hoặc `status === 404`; 401 có scope `key-auth`.
+   Semantics đúng: 401 là lỗi key *này* nên vẫn nên thử key khác — `blameKey: true`
+   mới là tín hiệu bỏ qua key này.
+2. **`[429]: {...}` KHÔNG cho status 429.** `diagnoseUpstreamError` gọi thẳng
+   `getStatusCode`, KHÔNG qua `normalizeGatewayStreamError`; regex của hàm đó tìm
+   `HTTP NNN`. Định dạng gateway thật là `Upstream returned HTTP 502`.
+3. **Review Focus #2 cần test đúng hình dạng**: phải đi qua
+   `normalizeGatewayStreamError` trước, mới chứng minh được bước gắn `statusCode`.
+
+- **Chi phí nếu sai:** nếu hành vi thật khác tôi đoán, thì module đã chuyển sai
+  logic mà test vẫn xanh. Nhưng so khớp cơ học 376/376 với `route.ts` đã chứng
+  minh logic **không đổi** — test chỉ khoá lại điều đó ở tầng hành vi.
+
+### Task 4: Ruling — `export type` KHÔNG tạo binding cục bộ (CHỈ `tsc` bắt được)
+
+Lần chạy full gate đầu tiên của Task 4 cho `typecheck exit=2`:
+
+```
+lib/provider/upstream-diagnosis.ts(130,10): error TS2304: Cannot find name 'UpstreamScope'
+```
+
+Vì sao: `export type { UpstreamScope } from '@/lib/api-keys'` **re-export** nhưng
+không đưa tên vào scope cục bộ, nên `interface UpstreamDiagnosis` không resolve
+được. Sửa bằng cách thêm `import type { UpstreamScope }` cạnh bên.
+
+- **Đáng chú ý nhất:** **7/7 test vẫn XANH** khi module không compile. Vitest
+  không typecheck, nên "test xanh" hoàn toàn không bảo đảm code biên dịch được.
+  Chỉ `npm run typecheck` mới bắt. Đây là bằng chứng cụ thể cho luật của AGENTS.md
+  §1: ba gate là **cả ba**, không thể bỏ cái nào.
+- **Chi phí nếu bỏ gate typecheck:** module vào repo không biên dịch, và sẽ chỉ lộ
+  ra khi ai đó build — ở xa hơn nhiều so với lúc này.

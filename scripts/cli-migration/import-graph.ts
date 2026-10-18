@@ -54,6 +54,9 @@ export const CORE_ENTRIES = [
   'lib/provider/adapter.ts',
   'lib/provider/openai-adapter.ts',
   'lib/provider/anthropic-adapter.ts',
+  // Task 4 tạo thêm file thứ tư trong `lib/provider/` — plan viết trước nên
+  // Global Constraint của plan yêu cầu mọi plan lõi khai entry mới ở đây.
+  'lib/provider/upstream-diagnosis.ts',
 ];
 
 

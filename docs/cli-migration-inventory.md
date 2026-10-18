@@ -29,6 +29,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/provider/adapter.ts`
 - `lib/provider/openai-adapter.ts`
 - `lib/provider/anthropic-adapter.ts`
+- `lib/provider/upstream-diagnosis.ts`
 
 ## Bằng chứng dòng
 
