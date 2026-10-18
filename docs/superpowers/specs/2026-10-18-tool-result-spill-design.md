@@ -2,10 +2,18 @@
 
 - Ngày: 2026-10-18
 - Phạm vi: Spec #1 trong chuỗi port mẫu kiến trúc từ DeepSeek Harness (dsh). Độc lập với các spec sau (`subagent-control`, session log).
-- Trạng thái: chờ review
+- Trạng thái: chờ review — **đã sửa lần 2** sau khi AGENTS.md §6 bổ sung luật "dùng lại cái đang có".
 - Nguồn tham khảo: `deepseek-harness` @ `packages/spill/spill`, `packages/spill/spill-local`, `packages/spill/spill-policy`; `docs/subsystems/spill.md`
 
 ---
+
+## 0. Lần sửa này thay đổi gì
+
+Bản đầu đề xuất tạo mới `lib/spill/{types,store,notice}.ts`. Đó là **dựng hệ thống thứ hai cho một việc đã có cơ chế** — đúng thứ AGENTS.md §6 cấm.
+
+Bản này sửa: **mở rộng `lib/ipc.cjs`**, vốn đã làm đúng việc này cho `shell_run`.
+
+Rủi ro mà bản đầu dấu ở §11 (chưa xác minh) nay đã có bằng chứng — xem §11.
 
 ## 1. Vấn đề
 
@@ -15,19 +23,15 @@
 ...[đã cắt bớt N ký tự ở giữa]...
 ```
 
-Hệ quả thực tế:
+Hệ quả:
 
 - `fs_read` trả tối đa 24.000 ký tự nên vừa khít — không lỗi.
 - `shell_run` cắt ở 2.000 dòng / 50 KB (`README.md:47`) — phần bị cắt **có** đường đọc lại (`savedTo`).
-- **Mọi tool còn lại không có đường đọc lại.** Kết quả `web_fetch` 60.000 ký tự, `code_verify` với log dài, `fs_search` trả 30 dòng — cắt là mất.
+- **Mọi tool còn lại không có đường đọc lại.** `web_fetch` 60.000 ký tự, `code_verify` với log dài — cắt là mất.
 
-Mô hình dự đoán của agent dựa vào dữ liệu đã biến mất → model đoán bừa, hoặc gọi lại tool với tham số khác tốn thêm một vòng. Đây là dạng lỗi tốn tiền nhất: sai âm thầm.
+Model mất dữ liệu rồi đoán bừa, hoặc gọi lại tool tốn thêm vòng LLM. Đây là dạng lỗi tốn tiền nhất: sai âm thầm.
 
-Trong dsh, `docs/subsystems/spill.md:90` mô tả seam:
-> "It persists the FULL `content` and REJECTS on a real storage failure."
-
-Và `:92` nói rõ chính sách thay thế:
-> "replaces an over-`maxInlineTokens` text/image result with ordered head/tail content and a spill address, best-effort: a save failure keeps the original inline result rather than turning a successful call into an `isError`."
+dsh mô tả seam (`docs/subsystems/spill.md:90, :92`): lưu **toàn bộ** content, thay kết quả quá ngưỡng bằng head/tail + địa chỉ spill, **best-effort** — lỗi lưu thì giữ nguyên kết quả inline, không biến call thành công thành `isError`.
 
 ## 2. Mục tiêu
 
@@ -36,107 +40,86 @@ Thay "cắt rồi quên" bằng "cắt nhưng vẫn đọc lại được".
 Tiêu chí thành công:
 
 1. Kết quả tool vượt ngưỡng → nội dung **đầy đủ** vẫn tồn tại ở nơi `fs_read` đọc được, và model được cho biết đường dẫn.
-2. Ngưỡng và hình dạng preview **không đổi** so với hiện tại (24.000, 70% đầu + 25% đuôi) — không đổi hành vi ngoài ý muốn.
-3. Lỗi ghi file **không** biến một tool call thành công thành thất bại.
+2. Ngưỡng và hình dạng preview **không đổi** (24.000, 70% đầu + 25% đuôi).
+3. Lỗi ghi file **không** biến tool call thành công thành thất bại.
 4. Bí mật không bao giờ nằm trên đĩa.
-5. Không sinh code chết mới.
+5. **Không tạo thêm cơ chế chồng lên cơ chế sẵn có.**
+6. Không sinh code chết mới.
 
-Ngoài phạm vi: retention/cleanup theo tuổi, giữ ảnh, định giá token, spill cho session-reference, đường IndexedDB cho web. Xem §9.
+Ngoài phạm vi: retention theo tuổi, giữ ảnh, định giá token, spill cho session-reference, đường IndexedDB. Xem §9.
 
 ## 3. Quyết định thiết kế
 
 | Quyết định | Lý do — căn cứ |
 |---|---|
-| Lưu ra **file**, không vào Dexie | `spill-local/src/store.ts:115` dùng `open(path,'wx',0o600)` thẳng, **không** qua `ctx.fs`. Lý do: model đọc lại bằng `read`/`grep`/`fs_read` **sẵn có**, không cần tool mới. Dexie sẽ bắt buộc phải viết `spill_read` mới — tệ hơn. |
-| File do **app tự ghi, ngoài workspace** | `README.md:47`: temp file output shell là *"ngoại lệ duy nhất ngoài workspace, chỉ file do app ghi trong phiên hiện tại"*. `lib/ipc.cjs:592` đã có registry cho đúng loại file này. Tái dùng, không bịa cơ chế mới. |
-| Ghi bằng `node:fs` từ **server** | `serializeToolResult` chạy chủ yếu ở server: `lib/emulated-agent.ts:463,560`, `lib/mcp/tool-mapper.ts:382,391,396`. `app/api/chat/route.ts:100` khai báo `runtime='nodejs'` → có quyền ghi file. Không cần vòng IPC. |
-| Ngưỡng **giữ nguyên 24.000** | `maxInlineTokens` của dsh mặc định là *tắt*; Vyen đang bật. Không sửa hằng số hành vi nếu không được yêu cầu. |
-| Lỗi lưu → **giữ nguyên inline** | `docs/subsystems/spill.md:92`. `isError` sau một tool call thành công là hành vi sai. |
-| `redact` **trước** khi spill | `lib/tool-limits.ts:62-65`: phải redact trước khi cắt, vì khoá bí mật vắt qua ranh giới cắt không khớp regex nào. Spill bản thô ⇒ bí mật nằm trên đĩa. **Thứ tự này là ràng buộc, không phải tuỳ chọn.** |
+| **Mở rộng `lib/ipc.cjs`**, không tạo `lib/spill/` | `ipc.cjs:633` `truncateShellOutput` đã làm đúng việc này cho shell: ghi full ra temp file + `registerSavedShellOutput` + `fs_read` đọc lại được qua whitelist `ipc.cjs:319`. Dựng thêm là chắt vá. |
+| Lưu ra **file**, không vào Dexie | `spill-local/src/store.ts:115` ghi thẳng `node:fs`, không qua `ctx.fs`. Đọc lại bằng `fs_read` **sẵn có**, không cần tool mới. Dexie sẽ bắt buộc phải viết `spill_read` mới. |
+| Ghi bằng `node:fs` từ **server** | `serializeToolResult` chạy chủ yếu ở server: `lib/emulated-agent.ts:463,560`, `lib/mcp/tool-mapper.ts:382,391,396`. `app/api/chat/route.ts:100` khai báo `runtime='nodejs'`. Không cần vòng IPC. |
+| Ngưỡng **giữ nguyên 24.000** | `maxInlineTokens` của dsh mặc định tắt; Vyen đang bật. Không sửa hằng số hành vi nếu không được yêu cầu. |
+| Lỗi lưu → **giữ nguyên inline** | `docs/subsystems/spill.md:92`. `isError` sau một call thành công là hành vi sai. |
+| `redact` **trước** khi spill | `lib/tool-limits.ts:62-65`: phải redact trước khi cắt, vì khoá bí mật vắt qua ranh giới cắt không khớp regex nào. Spill bản thô ⇒ bí mật nằm trên đĩa. **Ràng buộc, không phải tuỳ chọn.** |
+| **Tách chính sách sống khỏi shell output** | `ipc.cjs:599` giới hạn 50 file và **xoá file khỏi đĩa khi đẩy ra** (`:615`). Đúng cho shell output — agent đọc ngay trong lượt đó, sai cho spill — spill sinh ra để đọc *sau*, có thể sau cả lần compaction. Xem §4.2. |
 
 ## 4. Thành phần
 
-### 4.1 `lib/spill/types.ts` (mới)
+### 4.1 `lib/ipc.cjs` — sửa (không tạo file mới)
 
-```ts
-/** Yêu cầu lưu một artifact. */
-interface SaveTextSpill {
-  /** Gợi ý tên tệp. Backend tự sanitize thành MỘT path segment an toàn. */
-  suggestedName: string;
-  /** Toàn văn cần lưu (UTF-8), ĐÃ redact. */
-  content: string;
-}
+Registry hiện tại: `savedShellOutputs` là `Map<key, path>` (`:600`), tự dọn khi >50.
 
-/** Kết quả lưu: locator + độ dài byte + hướng dẫn đọc lại. */
-interface SpillRef {
-  /** Handle opaque. Consumer hiển thị kèm retrievalHint, KHÔNG parse. */
-  locator: string;
-  bytes: number;
-  retrievalHint: string;
-}
+Đổi value thành `{ path, kind }` với `kind: 'shell' | 'spill'`, và tách chính sách đẩy ra:
+
+- Đầy thì **ưu tiên loại `shell` cũ nhất** trước (nó chết cùng lượt, không ai đọc nữa).
+- Chỉ loại `spill` khi đã hết `shell` và vẫn vượt trần.
+
+Hàm mới, đặt cạnh `truncateShellOutput`:
+
+```
+saveSpillText(content, suggestedName) -> { savedTo, bytes, previewHint } | null
 ```
 
-`locator` là **string thường**, không branded type. Vyen chưa có quy ước branded id (`core.md` của dsh là ngôn ngữ riêng của họ); thêm branded id ở đây là trả phí không đổi lấy gì.
+Trả `null` khi ghi lỗi — người gọi fallback. Ghi **exclusive** (`flag: 'wx'`) theo `spill-local/src/store.ts:115` để symlink có sẵn không chuyển hướng được. Tên `<random>-<sanitize(suggestedName)>`, `sanitize` giữ đúng **một** path segment.
 
-### 4.2 `lib/spill/store.ts` (mới)
+Trần riêng cho spill (`SPILL_REGISTRY_MAX`), đặt lớn hơn hẳn 50 vì tuổi thọ khác hẳn.
 
-Hàm thuần, không async, không class:
+### 4.2 `lib/ipc.cjs` — whitelist `fs_read`
 
-```ts
-function saveTextSpill(input: SaveTextSpill): SpillRef
-```
+`ipc.cjs:319` hiện kiểm `isSavedShellOutput(payload.relPath)`. Sửa thành kiểm **cả hai loại** — spill phải đọc được qua cùng đường. Không thêm nhánh riêng cho `fs_read`.
 
-- Thư mục đích: cùng temp root mà `lib/ipc.cjs` dùng cho output shell.
-- Tên tệp: `<random>-<sanitize(suggestedName)>` — tránh trùng, `sanitize` giữ đúng **một** path segment (bỏ `/`, `\`, `..`).
-- Ghi **exclusive** (`flag: 'wx'`) để symlink có sẵn không thể chuyển hướng — theo `spill-local/src/store.ts:115`.
-- Ném lỗi nếu ghi thất bại. Người gọi quyết định degrade.
+### 4.3 `lib/tool-limits.ts` — sửa một chỗ
 
-### 4.3 `lib/spill/notice.ts` (mới)
-
-Sinh dòng thông báo cho model. Theo `spill-policy/src/notice.ts` của dsh: nêu **số byte đã bị lược bỏ** và cách đọc lại. Không phải "nội dung đã bị cắt" chung chung — phải đủ để model biết mình đang thiếu bao nhiêu và lấy ở đâu.
-
-### 4.4 `lib/tool-limits.ts` (sửa)
-
-`serializeToolResult` (`:52-67`) đổi đúng một chỗ:
+`serializeToolResult` (`:52-67`):
 
 ```
 raw = JSON.stringify(result)
   ↓ redactSecretText(raw)              // giữ nguyên thứ tự này
-  ↓ spill-or-truncate (logic mới, thay truncateToolResult)
+  ↓ len <= 24_000 ? → trả thẳng
+  ↓ saveSpillText(redacted)
+     ├─ thành công → head + GAP + tail + notice(savedTo, bytes)
+     └─ null      → truncateToolResult(redacted)   ← hành vi cũ, y hệt
 ```
 
-Logic mới (giữ nguyên hợp đồng cũ khi không spill):
-- `redacted.length <= maxChars` → trả `redacted`, **không đổi**.
-- Ngược lại → thử `saveTextSpill({ suggestedName: <tên tool>.txt, content: redacted })`.
-  - Thành công → trả `head + GAP + tail + notice(ref)` với **tổng ký tự vẫn ≤ `maxChars`**.
-  - Thất bại → rơi về `truncateToolResult(redacted, maxChars)` y hệt hiện tại.
+`truncateToolResult` giữ nguyên, không xoá — dùng làm fallback và giữ test cũ xanh.
 
-`truncateToolResult` giữ nguyên, không xoá — dùng làm đường fallback và để test cũ không đổi.
+### 4.4 Dòng thông báo cho model
 
-### 4.5 `fs_read` chấp nhận đường dẫn spill
+Nêu **số byte đã bị lược bỏ** và cách đọc lại, theo `spill-policy/src/notice.ts` của dsh. Không phải "nội dung đã bị cắt" chung chung — model phải biết mình đang thiếu bao nhiêu và lấy ở đâu.
 
-`fs_read` (`react/use-chat-orchestration.ts:1750`) phải đọc được tệp spill. Cơ chế sẵn có: `lib/ipc.cjs:622` kiểm "đường dẫn này có phải temp file app tự ghi trong phiên này không". Spill phải đăng ký vào **cùng registry đó**.
-
-> **Rủi ro chưa xác minh — xem §11.** Đây là mắt nối duy nhất chưa kiểm chứng được và là thứ phải làm đầu tiên khi triển khai.
+Sinh ngay trong `saveSpillText` (đã có `bytes`) thay vì một module `notice.ts` riêng.
 
 ## 5. Luồng dữ liệu
 
 ```
 tool trả về result
-  ↓
-JSON.stringify                    (tool-limits.ts:58, có try/catch sẵn)
-  ↓
-redactSecretText                  (bắt buộc trước mọi thứ)
-  ↓
-len <= 24_000 ?  ── có ──▶ trả thẳng, kết thúc
+  ↓ JSON.stringify                      (tool-limits.ts:58, có try/catch sẵn)
+  ↓ redactSecretText                    (bắt buộc trước mọi thứ)
+  ↓ len <= 24_000 ? ── có ──▶ trả thẳng
   ↓ không
-saveTextSpill(redacted)
-  ├─ thành công ─▶ head(70%) + GAP + tail(25%) + notice(locator, bytes)
-  │                 tổng ≤ 24_000
-  └─ thất bại  ─▶ truncateToolResult(redacted)   ← hành vi cũ, y hệt
+  ↓ saveSpillText(redacted)
+     ├─ OK   ─▶ head(70%) + GAP + tail(25%) + notice(savedTo, bytes), tổng ≤ 24_000
+     └─ lỗi ─▶ truncateToolResult(redacted)   ← y hệt hiện tại
 ```
 
-Sau đó model thấy trong kết quả:
+Model thấy:
 
 ```
 <phần đầu>
@@ -145,94 +128,96 @@ Sau đó model thấy trong kết quả:
 
 <phần đuôi>
 
-[Phần giữa (12.480 ký tự) đã lưu: C:\...\abc123-shell_run.txt
+[Phần giữa (12.480 ký tự) đã lưu: C:\...\vyen-spill-a3f2-web_fetch.txt
  Đọc bằng fs_read(path, start_line, line_count) hoặc fs_search(path).]
 ```
 
-Model gọi `fs_read` với `start_line`/`line_count` (`README.md:36`) → đọc đúng phần nó cần. Không tốn thêm một vòng LLM để "re-fetch toàn bộ".
+Rồi `fs_read` với `start_line`/`line_count` (`README.md:36`) → đọc đúng phần cần, không tốn thêm vòng LLM.
 
 ## 6. Xử lý lỗi
 
 | Tình huống | Hành vi |
 |---|---|
 | `JSON.stringify` ném | Đã có try/catch → `'"[kết quả không serialize được]"'`. Không đổi. |
-| Không đĩa đầy / không quyền ghi | `saveTextSpill` ném → fallback `truncateToolResult`. **Tool call vẫn thành công.** |
+| Không đĩa đầy / không quyền ghi | `saveSpillText` trả `null` → fallback `truncateToolResult`. **Tool call vẫn thành công.** |
 | `sanitize(suggestedName)` ra chuỗi rỗng | Dùng tên mặc định `spill.txt`. Không ném. |
-| `fs_read` gọi tới tệp spill đã bị xoá | Trả lỗi `FsError` bình thường. Tool khác không ảnh hưởng. |
-| `redactSecretText` không nhận ra bí mật | Không thay đổi — đây là hạn chế có sẵn, ghi ở `PLAN.md:988-991`. Không mở rộng phạm vi. |
+| Spill bị đẩy khỏi registry | File bị xoá → `fs_read` trả lỗi tệp không tồn tại. Tool khác không ảnh hưởng. |
+| Registry tràn toàn bộ là spill | Đẩy spill cũ nhất. Chấp nhận mất dữ liệu cũ — cùng đánh đổi với shell output. |
+| `redactSecretText` không nhận ra bí mật | Không thay đổi — hạn chế có sẵn ghi ở `PLAN.md:988-991`. Không mở rộng phạm vi. |
 
 Nguyên tắc chung: **spill là best-effort. Mất spill = mất tiện ích, không phải mất tác vụ.**
 
 ## 7. Kiểm thử
 
-Bám theo `tests/` hiện có — không framework mới.
-
 | Test | Kiểm |
 |---|---|
-| `tests/spill.test.ts` | `saveTextSpill` tạo tệp, tên sanitize đúng, nội dung khớp byte-for-byte, ghi exclusive (lần 2 cùng tên không overwrite) |
-| `tests/spill.test.ts` | `serializeToolResult` ≤ ngưỡng → **không** tạo tệp nào |
-| `tests/spill.test.ts` | > ngưỡng + lưu được → tệp chứa **bản đã redact**, không chứa chuỗi thử bí mật |
-| `tests/spill.test.ts` | > ngưỡng + lưu lỗi (mock `node:fs.writeFile` ném) → output khớp **chính xác** `truncateToolResult` cũ |
-| `tests/spill.test.ts` | Tổng ký tự preview ≤ `maxChars` ở mọi tỷ lệ head/tail |
-| `tests/spill.test.ts` | **Mutation bắt buộc**: bỏ `redactSecretText` khỏi chuỗi → phải đỏ |
-| `tests/spill.test.ts` | `suggestedName` = `../../evil.txt` → kết quả nằm trong temp root, không thoát ra ngoài |
-| `tests/spill.test.ts` | `maxChars` tùy biến (`EMU_MAX_RESULT_CHARS`) vẫn spill đúng |
+| `tests/shell-tool.test.ts` (bổ sung) | `saveSpillText` tạo tệp, tên sanitize đúng, nội dung khớp byte-for-byte, ghi exclusive |
+| `tests/shell-tool.test.ts` | **Mutation bắt buộc**: bỏ `redactSecretText` khỏi chuỗi → phải đỏ |
+| `tests/shell-tool.test.ts` | `suggestedName` = `../../evil.txt` → nằm trong tmpdir, không thoát ra ngoài |
+| `tests/shell-tool.test.ts` | **Ưu tiên đẩy `shell` trước `spill`**: đầy registry thì file shell cũ bị xoá, spill còn nguyên |
+| `tests/shell-tool.test.ts` | `isSavedShellOutput` (hoặc hàm tổng quát hoá) trả `true` cho path spill |
+| `tests/tool-result-body.test.ts` | ≤ ngưỡng → **không** tạo tệp nào |
+| `tests/tool-result-body.test.ts` | > ngưỡng + lưu được → tệp chứa **bản đã redact** |
+| `tests/tool-result-body.test.ts` | > ngưỡng + lưu lỗi (mock `node:fs.writeFileSync` ném) → output khớp **chính xác** `truncateToolResult` cũ |
+| `tests/tool-result-body.test.ts` | Tổng ký tự preview ≤ `maxChars` ở mọi tỷ lệ head/tail, kể cả `EMU_MAX_RESULT_CHARS` |
 
-Cập nhật test hiện có nếu chúng khẳng định hành vi cắt: `agent-tools.ts:258` có comment nói rõ cố ý **không** dùng `truncateToolResult` — kiểm tra không bị ảnh hưởng.
-
-Chạy: `npx vitest run tests/spill.test.ts` (CI đã có `ci.yml:31` chạy toàn bộ).
+Chạy: `npx vitest run tests/shell-tool.test.ts tests/tool-result-body.test.ts`. CI đã chạy toàn bộ (`ci.yml:31`).
 
 ## 8. Tài liệu phải cập nhật
 
-`npm run docs:check` kiểm path/script/env có thật — nhưng **không** kiểm claim dạng prose. Nên phải sửa tay:
+`docs:check` kiểm path/script/env — không kiểm claim dạng prose. Sửa tay:
 
 | File | Sửa |
 |---|---|
-| `README.md:165` | *"kết quả tool bị cắt ở 24.000 ký tự"* → phải nói rõ phần bị cắt **vẫn đọc lại được** và ở đâu |
-| `README.md:47` | Nói rõ temp file giờ dùng chung một cơ chế cho mọi tool, không chỉ `shell_run` |
-| `PLAN.md` §8 "Việc chưa làm" | Gỡ mục liên quan nếu có |
+| `README.md:165` | *"kết quả tool bị cắt ở 24.000 ký tự"* → nói rõ phần bị cắt **vẫn đọc lại được** và ở đâu |
+| `README.md:47` | Temp file giờ dùng chung một cơ chế cho mọi tool, không chỉ `shell_run` |
 
 ## 9. Ngoài phạm vi (có chủ ý)
 
-- **Retention / cleanup theo tuổi.** Tệp spill tích tụ trong temp root. `spill-local/src/cleanup.ts` của dsh là 19 KB. Ở đợt này chấp nhận tích tụ; temp dir của OS tự dọn khi khởi động lại.
-- **Ảnh.** dsh giữ content block ảnh + định giá token ảnh (`spill-policy/src/index.ts:57-75`). Vyen chưa dùng ContentBlock. Bỏ.
+- **Ảnh.** dsh giữ content block ảnh + định giá token ảnh (`spill-policy/src/index.ts:57-75`). Vyen chưa dùng ContentBlock.
 - **Spill cho session-reference.** Bỏ.
-- **Token-meter.** Vyen đếm ký tự, không đếm token. Không đưa vào.
-- **Đường IndexedDB cho web.** Xem §10.
+- **Token-meter.** Vyen đếm ký tự, không đếm token.
+- **Đường IndexedDB cho web/PWA.** Xem §10.
+- **Dọn file spill theo tuổi.** `spill-local/src/cleanup.ts` của dsh là 19 KB. Đợt này dựa vào đẩy-ra-registry; tmpdir của OS tự dọn khi khởi động lại.
 
 ## 10. Ràng buộc đã biết: web/PWA
 
-Cơ chế nằm ở `node:fs` chạy trên Next.js server. Điều này đúng khi **Next server chạy trên cùng máy với workspace** — tức đúng trong mô hình triển khai thật của Vyen:
+Cơ chế nằm ở `node:fs` chạy trên Next.js server. Đúng khi **Next server chạy trên cùng máy với workspace**:
 
 - Desktop: `launch-desktop.cjs` spawn Next server cục bộ ✅
 - Web/PWA chạy `next start` cục bộ ✅
 - Web server từ xa (chưa tồn tại) ❌ tệp nằm trên máy server, client không đọc được
 
-**Không phải hồi quy:** trên web/PWA hành vi là truncate như cũ — không mất gì so với hiện tại. Và `shell_run` / `git_*` vốn đã là desktop-only (`lib/agent-tools.ts:1162`), nên phần lớn tool sinh output lớn cũng chỉ chạy desktop.
+**Không phải hồi quy**: trên web/PWA hành vi là truncate như cũ. Và `shell_run` / `git_*` vốn đã desktop-only (`lib/agent-tools.ts:1162`), nên phần lớn tool sinh output lớn cũng chỉ chạy desktop.
 
-Nếu sau này Vyen có server từ xa nhiều người, phải làm đường IndexedDB. Đó là spec riêng, không kéo vào đây.
+Nếu sau này có server từ xa nhiều người, phải làm đường IndexedDB — spec riêng.
 
-## 11. Rủi ro chưa xác minh
+## 11. Rủi ro §11 đã giải — có bằng chứng
 
-**`fs_read` có đọc được tệp do server ghi không?** — đây là rủi ro duy nhất có thể làm hỏng thiết kế.
+Bản đầu nêu rủi ro: *"liệu `fs_read` đọc được tệp do server ghi không?"*. **Đã xác minh được, cùng tiến trình:**
 
-Đã xác minh: `lib/ipc.cjs:622` có cơ chế kiểm "đường dẫn là temp file app ghi trong phiên này", và `:314` nói `fs_read` đã có bản riêng đọc loại đó.
+```
+app/api/bridge/route.ts:5-6, :71   → initServerBridge()
+lib/bridge/server-bridge.ts:75      → require('../ipc.cjs')
+app/api/chat/route.ts:100          → runtime = 'nodejs'
+```
 
-**Chưa xác minh:** registry đó được đăng ký từ đâu, và tiến trình Next.js server có nằm trong cùng phạm vi với `lib/ipc.cjs` hay không.
+`initServerBridge()` chạy ở API route Next.js; `route.ts` cũng ở Next.js server. Cùng tiến trình → cùng cache `require` của Node → **cùng một instance `savedShellOutputs`**.
 
-Hai đường đi nếu không nối được:
+Nên `serializeToolResult` gọi `require('../ipc.cjs')` sẽ thấy đúng registry mà `fs_read` kiểm ở `ipc.cjs:319`.
 
-1. **Fallback A — dùng nếu registry không nối được:** ghi vào `<workspace>/.vyen/spills/`, dùng đúng cơ chế miễn phê duyệt mà temp file shell đang có. Đọc được mọi nơi kể cả web. Điều kiện phải xác minh: cơ chế miễn phê duyệt có áp dụng cho thư mục con `.vyen/` hay chỉ cho temp dir.
-2. **Fallback B — chỉ khi A không dùng được:** thêm tool `spill_read`. Nhiều việc hơn, và làm mất lý do chính của việc chọn file. **Tránh nếu có thể.**
+**Rủi ro mới phát hiện khi đọc code** — và là lý do §4.1 phải tách chính sách đẩy ra:
 
-Việc đầu tiên khi triển khai: đọc `lib/ipc.cjs` quanh `:592-650` và `lib/bridge/` để xác định chính xác phạm vi registry, rồi chọn A hay B. Không suy đoán từ tài liệu.
+`ipc.cjs:599, :610-619` giới hạn 50 file, và **xoá file khỏi đĩa** khi bị đẩy ra. Thiết kế đúng cho shell output (đọc ngay trong lượt, xoá là được), nhưng sai cho spill (thiết kế để đọc *sau*, có thể sau compaction). Nếu dùng nguyên xi, một phiên dài sẽ xoá mất đúng những file mà model còn định đọc.
 
 ## 12. Tiêu chí "xong"
 
 - [ ] `npx tsc --noEmit` exit 0
-- [ ] `npm run lint` exit 0
-- [ ] `npx vitest run` xanh, gồm mutation test ở §7
-- [ ] `npm run docs:check` exit 0
-- [ ] Thử tay: một tool trả >24.000 ký tự → model thấy đường dẫn → `fs_read` đọc lại được phần đã mất
+- [ ] `npm run lint` — 0 lỗi mới
+- [ ] `npx vitest run` xanh, gồm mutation test §7
+- [ ] `npm run docs:check` OK
+- [ ] Không tạo file mới nào ngoài `tests/` — dấu hiệu đã mở rộng đúng chỗ
+- [ ] Thử tay: tool trả >24.000 ký tự → model thấy đường dẫn → `fs_read` đọc lại được phần đã mất
 - [ ] Thử tay: `shell_run` lỗi đĩa (giả lập) → tool call vẫn thành công
+- [ ] Registry đầy → spill còn nguyên, shell bị đẩy trước
 - [ ] `README.md` đã sửa §8
