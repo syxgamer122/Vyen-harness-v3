@@ -21,7 +21,7 @@ import { ShieldCheck, ShieldAlert, AlertTriangle, RefreshCw, X, Search, Link2, C
  * (fs_write, fs_edit, shell_run, code_patch, mcp_call) trong khi cột `action`
  * ghi ra là loại sự kiện — chọn bất kỳ giá trị nào cũng ra "không có bản
  * ghi", y hệt một nhật ký sạch. Bảy dòng dưới là kết quả grep mọi call site
- * của `recordAuditLog` (core/agent-runtime/tool-runner.ts,
+ * của `recordAuditLog` (lib/agent-tools.ts,
  * react/use-chat-orchestration.ts, lib/auto-pilot.ts):
  *
  *   approval · rejection · file_modification · shell_execution

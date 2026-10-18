@@ -326,7 +326,7 @@ function extractToolBody(name: string, result: unknown): string {
   const r = (value ?? {}) as Record<string, unknown>;
 
   /* Nhóm fs_*: client tool JSON.stringify trước khi trả, nhưng đường native
-     (core/agent-runtime/tool-runner.ts) cũng vậy — object tới đây đã được
+     (đường client trong react/use-chat-orchestration.ts) cũng vậy — object tới đây đã được
      parse, trường bên dưới là hình dạng do fs-access.ts / use-chat-orchestration
      dựng ra. */
   if (name === 'fs_read') {
@@ -418,7 +418,7 @@ function extractToolBody(name: string, result: unknown): string {
 /**
  * Đường CLIENT không trả object — mọi tool client đều `JSON.stringify(data)`
  * trước khi trả (react/use-chat-orchestration.ts:1666 và
- * core/agent-runtime/tool-runner.ts:395), nên `result` tới đây thường là
+ * lib/shell-policy.ts), nên `result` tới đây thường là
  * CHUỖI JSON. Bóc lớp đó MỘT LẦN ở đầu thay vì mỗi nhánh tự parse.
  *
  * Không parse được (JSON hỏng, hoặc thân là chuỗi thô như nội dung file/diff)

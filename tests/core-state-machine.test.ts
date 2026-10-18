@@ -14,7 +14,7 @@ import {
   consumeApprovalToken,
   resetApprovalTokens,
 } from '../lib/approval-binding';
-import { validateShellAllowlist } from '../core/agent-runtime/tool-runner';
+import { validateShellAllowlist } from '@/lib/shell-policy';
 import { computeSha256 } from '../lib/staging';
 import { validateSafeRelativePath } from '../lib/path-utils';
 
