@@ -20,6 +20,6 @@ import type { ProviderRuntimeConfig } from './adapter';
  * gateway tự khai báo.
  */
 export function resolveOpenAIModel(cfg: ProviderRuntimeConfig): LanguageModel {
-  const openai = createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey });
+  const openai = createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey, fetch: cfg.fetch });
   return openai(cfg.model);
 }

@@ -17,6 +17,6 @@ import type { LanguageModel } from 'ai';
 import type { ProviderRuntimeConfig } from './adapter';
 
 export function resolveAnthropicModel(cfg: ProviderRuntimeConfig): LanguageModel {
-  const anthropic = createAnthropic({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey });
+  const anthropic = createAnthropic({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey, fetch: cfg.fetch });
   return anthropic(cfg.model);
 }

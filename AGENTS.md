@@ -16,13 +16,24 @@ npm run check        # check-supply-chain.cjs
 Lint chạy được ở **0 lỗi**. Warning là baseline của repo — đừng sửa chúng và đừng
 báo hồi quy khi số warning không tăng.
 
-**Ba test/flaky đã biết, không phải hồi quy:**
+**Bốn test/flaky đã biết, không phải hồi quy:**
 
 | File | Vì sao đỏ |
 |---|---|
-| `tests/secret-registry.test.ts` | Ngân sách thời gian ~500ms cho regex chống ReDoS; chậm khi chạy song song. Chạy riêng thì xanh. |
+| `tests/secret-registry.test.ts` | Ngân sách thời gian ~500ms cho regex chống ReDoS. **Đỏ cả khi chạy riêng** — đo 2026-10-18: 3/5 lần chạy đơn lẻ vẫn đỏ (1, 1, rồi 2 test đỏ). |
+| `tests/redteam-picker.test.ts` | Hai ngân sách thời gian (200ms cho query 10k ký tự, 500ms cho 200 model × 1000 lượn — lấy `best` của vài lần chạy). Đỏ khi máy đang tải. Đo 2026-10-18: 5/5 lần chạy riêng đều xanh. |
 | `tests/code-mode-escape.test.ts` | Timeout của worker thread. Chạy riêng thì xanh. |
 | `tests/launch-desktop.test.ts` | Đỏ nếu cổng 3000 đang bị giữ — launcher thấy server sẵn nên không rơi vào nhánh fallback. Tắt dev server rồi chạy lại. |
+
+> Cách phân biệt với hồi quy thật: **nhìn tên test đỏ**, đừng chỉ nhìn tên file.
+> `secret-registry` đỏ trong `describe('chi phí che phải TUYẾN TÍNH trên kết quả
+> tool dài (chốt chặn ReDoS)')` và đỏ **cả khi chạy riêng** — nên "chạy riêng thấy
+> xanh" KHÔNG phải tiêu chuẩn ở đây. Hai file đầu đều là ngân sách thời gian: đỏ
+> theo tải máy, không theo code.
+>
+> Riêng `secret-registry` còn **cố ý rộng**: budget 500ms nhưng thường chạy
+> 280-460ms (đã ghi trong file), và lỗi thật nó bắt là >5s. Nên đỏ ở đây là dấu
+> hiệu máy đang bận, **không** phải dấu hiệu rule regex đã chậm.
 
 ## 2. Test mới phải chứng minh đỏ trước khi sửa
 

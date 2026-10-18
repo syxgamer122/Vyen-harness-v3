@@ -188,13 +188,25 @@ describe('diagnoseUpstreamError', () => {
     expect(d.status).toBe(502);
   });
 
-  /* Review Focus #1: `userMessage` và `devLog` là HAI chuỗi khác nhau. Người dùng
-   * phải thấy thông báo sạch; chi tiết chỉ được nằm ở log. Gộp làm một là rò
-   * thông tin. */
-  it('userMessage không chứa API key, devLog thì có', () => {
-    const d = diagnoseUpstreamError(statusError(500), { ...ctx, keyLabel: 'sk-secret-abc' });
-    expect(d.userMessage).not.toContain('sk-secret-abc');
-    expect(d.devLog).toContain('sk-secret-abc');
+  /* Review Focus #1: `userMessage` và `devLog` là HAI chuỗi khác nhau, không
+   * phải một bản rút gọn của bản kia. Người dùng thấy thông báo sạch; logfile
+   * mới được phép mang dấu vết vận hành.
+   *
+   * Test cũ tên là "userMessage không chứa API key" nhưng truyền `statusError(500)`
+   * — mà nhánh 500 KHÔNG nội suy `keyLabel` vào `userMessage`, nên `not.toContain`
+   * xanh vì lý do sai: nó không hề có đường để rò. Ở đây dùng body upstream có
+   * chứa bí mật thật — đó mới là chỗ rò thực tế (gateway hay echo lại key). */
+  it('bí mật trong body upstream bị che ở CẢ HAI chuỗi', () => {
+    const d = diagnoseUpstreamError(apiError(500, 'gateway từ chối key sk-abcdefgh12345678'), ctx);
+    expect(d.userMessage).not.toContain('sk-abcdefgh12345678');
+    expect(d.devLog).not.toContain('sk-abcdefgh12345678');
+  });
+
+  it('devLog mang dấu vết vận hành mà userMessage không mang', () => {
+    const d = diagnoseUpstreamError(apiError(500, 'lỗi server'), ctx);
+    expect(d.devLog).toContain('req:req-1');
+    expect(d.devLog).toContain('model=gpt-4o');
+    expect(d.userMessage).not.toContain('req:req-1');
   });
 });
 

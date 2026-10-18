@@ -6,6 +6,13 @@ node_modules
 gui-test-screenshots
 .eslintcache
 
+# File do Next.js SINH RA lúc `next dev` / `next build`, và Next tự ghi lại nó
+# (đổi giữa `.next/types/` và `.next/dev/types/` theo lệnh vừa chạy). Commit nó
+# nghĩa là mỗi lần build đều bẩn cây, và người khác clone về có một con trỏ tới
+# đường dẫn chưa tồn tại. Next.js khuyến nghị không track file này.
+# Đã đo: `tsc --noEmit` exit 0 khi không có file (2026-10-18).
+next-env.d.ts
+
 .dev-log.txt
 .dev-err.txt
 

@@ -29,6 +29,18 @@ export interface ProviderRuntimeConfig {
   apiKey: string;
   /** id model theo quy ước của provider, ví dụ 'gpt-4o' hoặc 'claude-opus-5'. */
   model: string;
+  /**
+   * Ghi đè `fetch` của SDK. Bắt buộc cho mọi lần gọi **không** streaming:
+   * `generateText` không gửi trường `stream`, mà nhiều gateway bỏ qua trường đó
+   * và trả SSE — AI SDK ném "Invalid JSON response".
+   *
+   * Vì sao ở đây chứ không ở adapter: adapter chỉ dựng model, còn `fetch` là
+   * thuộc tính của *đường gọi*, đúng như `toolChoice`. Truyền qua cấu hình là
+   * cách duy nhất để một lần dựng model phục vụ được cả hai đường — xem
+   * `app/api/chat/route.ts` (instance thứ hai cho đường emulated) và
+   * `lib/non-streaming-fetch.ts`.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 /**
