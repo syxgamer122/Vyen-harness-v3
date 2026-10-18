@@ -65,7 +65,7 @@ export function renderInventory(scan: ScanHit[], core: Set<string>, bound: Set<s
     })
     .join('\n');
 
-  const boundRows = [...bound].sort();
+  const boundRows = [...bound].sort().map((file) => `- \`${file}\` — ${LY_DO[file] ?? '—'}`);
 
   return (
     '# Bảng kiểm kê di cư sang CLI\n\n' +
@@ -88,11 +88,14 @@ export function renderInventory(scan: ScanHit[], core: Set<string>, bound: Set<s
     rows +
     '\n\n## Kéo trình duyệt vào qua phụ thuộc xuyên\n\n' +
     (boundRows.length
-      ? boundRows.map((f) => `- \`${f}\``).join('\n') +
+      ? boundRows.join('\n') +
         `\n\n${boundRows.length} file **không tự chạm** API trình duyệt nào, nhưng kéo được\n` +
         'một module chạm, nên cũng không chạy được trên Node. Chúng không có mặt ở bảng\n' +
         'trên vì quét chỉ thấy phụ thuộc TRỰC TIẾP — `lib/tool-permissions.ts` là ví dụ:\n' +
         'không viết chữ `Dexie`, chỉ gọi `db.toolPermissions.put`.\n\n' +
+        '**Chưa phân loại giữ/xoá.** Cột nhãn của bảng trên chỉ áp cho file chạm trực\n' +
+        'tiếp; ở đây máy chỉ biết "không chạy được trên Node", còn việc lõi có còn cần\n' +
+        'chức năng này thì là phán đoán của người — đặt `FORCE_LABEL` trong `ly-do.ts`.\n\n' +
         'Test `GUỐ — lõi CLI không được kéo trình duyệt vào` trong\n' +
         '`tests/cli-migration-scan.test.ts` canh rằng **không file nào trong đồ thị lõi**\n' +
         'rơi vào danh sách này. Thêm `CORE_ENTRIES` mà kéo theo Dexie thì test đỏ.\n'

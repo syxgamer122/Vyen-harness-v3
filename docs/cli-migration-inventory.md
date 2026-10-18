@@ -39,30 +39,34 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 
 ## Kéo trình duyệt vào qua phụ thuộc xuyên
 
-- `lib/audit-log.ts`
-- `lib/auto-pilot.ts`
-- `lib/backup.ts`
-- `lib/chat-recall.ts`
-- `lib/chat-search.ts`
-- `lib/chat-tree-persistence.ts`
-- `lib/memory/agent-memory-client.ts`
-- `lib/memory/store.ts`
-- `lib/providers.ts`
-- `lib/recipes/store.ts`
-- `lib/skills/client-adapters.ts`
-- `lib/tool-permissions.ts`
-- `lib/tree-repair.ts`
-- `lib/tree-validation.ts`
-- `lib/use-cross-tab-chat-sync.ts`
-- `lib/workspace-checkpoints.ts`
-- `lib/zeromem/auto-ingest.ts`
-- `lib/zeromem/memory-block.ts`
-- `lib/zeromem/persistence.ts`
+- `lib/audit-log.ts` — Nhật ký hành động; subtle crypto chỉ dùng ở nhánh trình duyệt
+- `lib/auto-pilot.ts` — Đánh dấu lượt cho taint-tracking và ngân sách ở client
+- `lib/backup.ts` — Đọc/ghi file backup dạng base64
+- `lib/chat-recall.ts` — Tra cứu full-text toàn bộ lịch sử trò chuyện (P2-8)
+- `lib/chat-search.ts` — Tìm full-text trong lịch sử chat; bỏ là mất tìm kiếm hội thoại
+- `lib/chat-tree-persistence.ts` — Logic lưu cây hội thoại — hàm thuần, tách khỏi chat-interface
+- `lib/memory/agent-memory-client.ts` — Lấy workspaceKey bền (desktop hỏi bridge, web đọc cache)
+- `lib/memory/store.ts` — Chống trùng lặp digest cho memory của agent
+- `lib/providers.ts` — Cấu hình nhà cung cấp lưu trong Dexie; bỏ là mất provider đã cấu hình
+- `lib/recipes/store.ts` — Cập nhật bản ghi recipe hiện có
+- `lib/skills/client-adapters.ts` — Bọc khác biệt desktop bridge ↔ web FSA cho disk skills + hints
+- `lib/tool-permissions.ts` — Map tool sang 8 nhóm phân quyền
+- `lib/tree-repair.ts` — Sửa cây hội thoại hỏng — ưu tiên deepest leaf, sentinel __ROOT__
+- `lib/tree-validation.ts` — Kiểm tra chuỗi parent từ leaf lên root còn nguyên
+- `lib/use-cross-tab-chat-sync.ts` — Hook React đồng bộ chat giữa các tab
+- `lib/workspace-checkpoints.ts` — Trần số checkpoint mỗi lượt
+- `lib/zeromem/auto-ingest.ts` — Nạp trace vào memory khi hội thoại đóng
+- `lib/zeromem/memory-block.ts` — Dựng khối memory gửi kèm lượt
+- `lib/zeromem/persistence.ts` — Giới hạn số trace zeromem giữ lại
 
 19 file **không tự chạm** API trình duyệt nào, nhưng kéo được
 một module chạm, nên cũng không chạy được trên Node. Chúng không có mặt ở bảng
 trên vì quét chỉ thấy phụ thuộc TRỰC TIẾP — `lib/tool-permissions.ts` là ví dụ:
 không viết chữ `Dexie`, chỉ gọi `db.toolPermissions.put`.
+
+**Chưa phân loại giữ/xoá.** Cột nhãn của bảng trên chỉ áp cho file chạm trực
+tiếp; ở đây máy chỉ biết "không chạy được trên Node", còn việc lõi có còn cần
+chức năng này thì là phán đoán của người — đặt `FORCE_LABEL` trong `ly-do.ts`.
 
 Test `GUỐ — lõi CLI không được kéo trình duyệt vào` trong
 `tests/cli-migration-scan.test.ts` canh rằng **không file nào trong đồ thị lõi**
