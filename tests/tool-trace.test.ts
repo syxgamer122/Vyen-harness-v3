@@ -407,9 +407,15 @@ describe('buildTimeline — xen kẽ lời của model với chip tool', () => {
       ev({ id: 'dup2', at: 2 }),
     ]);
     expect(segments?.filter((s) => s.kind === 'tool')).toHaveLength(5);
+    /* Invariant trung tâm (cùng cách `textOf` ở redteam-timeline-hostile): nối
+       mọi mảnh text lại phải ra đúng content. KHÔNG assert hình dạng mảng — chip
+       ở `at: 2` cắt 'abc' thành 'ab' + 'c' là hành vi ĐÚNG, đã bị chốt bởi
+       redteam-timeline-hostile.test.ts:275 (`['text','tool','text']` khi `at: 3`
+       trên 'abc def'). Bản cũ `toEqual(['abc'])` đòi text là MỘT mảng, tức
+       đòi chip `at: 2` không nằm ở vị trí 2 — mâu thuẫn với chính các test đó. */
     expect(
-      segments?.filter((s) => s.kind === 'text').map((s) => (s as any).text),
-    ).toEqual(['abc']);
+      segments?.filter((s) => s.kind === 'text').map((s) => (s as any).text).join(''),
+    ).toBe('abc');
   });
 
   it('content rỗng vẫn trả timeline (toàn chip), không ném lỗi', () => {
