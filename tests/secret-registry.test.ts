@@ -27,7 +27,7 @@ import {
   redactSecretText,
   redactSecretsDeep,
 } from '@/lib/secret-registry';
-import { serializeToolResult } from '@/lib/tool-limits';
+import { serializeToolResult } from '@/lib/tool-result-server';
 import { buildAgentTools, type MemoryItem } from '@/lib/agent-tools-server';
 import { __clearAllToolCallBudgets } from '@/lib/tool-call-budget';
 import { SAST_RULES } from '@/lib/security-sast';

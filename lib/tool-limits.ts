@@ -23,8 +23,22 @@
  * Bằng đúng MAX_READ_CHARS của fs_read để một lần đọc file đầy trần không bị
  * cắt thêm lần nữa.
  */
-import { redactSecretText } from '@/lib/secret-registry';
-
+/**
+ * HẠN CHẾ CỦA FILE NÀY: phải chạy được trong bundle TRÌNH DUYỆT
+ * (`react/use-chat-orchestration.ts:57` import từ đây). Vì vậy KHÔNG import
+ * `lib/ipc.cjs` — nó kéo `child_process` + `net` và sẽ hỏng bản build trình
+ * duyệt.
+ *
+ * Bản 1 đã vi phạm chính điều này: `serializeToolResult` nằm ở đây và nạp
+ * `ipc.cjs` bằng `eval('require')` để lách bundler. Nó qua mọi gate — `tsc`,
+ * `lint`, `next build`, và cả full suite — nhưng trong sản phẩm
+ * `.next/server/chunks/` không có `ipc.cjs`, `require` ném `MODULE_NOT_FOUND`,
+ * `try/catch` nuốt, và spill im lặng không bao giờ chạy. Phần spill đã chuyển
+ * sang `lib/tool-result-server.ts` — cùng cách `lib/agent-tools-server.ts`
+ * tách phần native.
+ *
+ * Ở đây chỉ còn phép tính thuần, không I/O.
+ */
 export const TOOL_RESULT_MAX_CHARS = 24_000;
 
 /**
@@ -33,45 +47,6 @@ export const TOOL_RESULT_MAX_CHARS = 24_000;
  */
 export const TOOL_RESULT_HEAD_RATIO = 0.7;
 export const TOOL_RESULT_TAIL_RATIO = 0.25;
-
-/**
- * Hàm lưu phần kết quả tool bị cắt ra file app tự ghi, để `fs_read` đọc lại
- * được. Xem `docs/superpowers/specs/2026-10-18-tool-result-spill-design.md`.
- *
- * Chỉ có ở tiến trình Node. Ở trình duyệt trả `null` — hàm gọi phải coi như
- * không có spill và rơi về `truncateToolResult`.
- */
-export type SpillSaver = (content: string, suggestedName: string) =>
-  | { savedTo: string; bytes: number; notice: string }
-  | null;
-
-let spillSaverCache: SpillSaver | null | undefined;
-
-/**
- * Nạp `saveSpillText` từ `lib/ipc.cjs` — nơi đã làm đúng việc này cho
- * `shell_run`. KHÔNG import ở top-level: file này nằm trong bundle trình
- * duyệt (qua `react/use-chat-orchestration.ts:57`), import tĩnh sẽ kéo
- * `ipc.cjs` vào đó và làm hỏng `next build`. `eval('require')` để bundler
- * không phân tích tĩnh.
- */
-export function loadSpillSaver(): SpillSaver | null {
-  if (spillSaverCache !== undefined) return spillSaverCache;
-  // Chặn trước khi chạm require: trình duyệt không có Node. try/catch phía dưới
-  // vẫn đủ an toàn, nhưng chặn ở đây thì không phải eval trong bundle trình duyệt.
-  if (typeof window !== 'undefined') {
-    spillSaverCache = null;
-    return null;
-  }
-  try {
-    const req = eval('require') as (id: string) => unknown;
-    // Đường dẫn tương đối TỪ lib/tool-limits.ts — ipc.cjs nằm cùng thư mục.
-    const ipc = req('./ipc.cjs') as { saveSpillText?: SpillSaver };
-    spillSaverCache = typeof ipc?.saveSpillText === 'function' ? ipc.saveSpillText : null;
-  } catch {
-    spillSaverCache = null;
-  }
-  return spillSaverCache;
-}
 
 /**
  * Middle-truncate một kết quả tool đã serialize. Dùng chung cho native lẫn
@@ -85,49 +60,6 @@ export function truncateToolResult(
   const head = serialized.slice(0, Math.floor(maxChars * TOOL_RESULT_HEAD_RATIO));
   const tail = serialized.slice(-Math.floor(maxChars * TOOL_RESULT_TAIL_RATIO));
   return `${head}\n...[đã cắt bớt ${serialized.length - head.length - tail.length} ký tự ở giữa]...\n${tail}`;
-}
-
-/** Serialize + cắt trần trong một bước. Không bao giờ ném. */
-export function serializeToolResult(
-  result: unknown,
-  maxChars: number = TOOL_RESULT_MAX_CHARS,
-): string {
-  let raw: string;
-  try {
-    raw = JSON.stringify(result) ?? 'null';
-  } catch {
-    raw = '"[kết quả không serialize được]"';
-  }
-  /* Redact TRƯỚC mọi thứ — kể cả trước khi ghi spill xuống đĩa. Nếu cắt trước
-     rồi redact, một khoá nằm vắt qua ranh giới cắt sẽ chỉ còn nửa chuỗi và
-     không khớp rule nào nữa → lọt bí mật vào ngữ cảnh. Nếu spill bản thô thì
-     khoá ở phần GIỮA (phần hay chứa bí mật nhất) nằm hẳn trên đĩa.
-     Đây là chốt chặn cuối của đường emulated (mọi kết quả tool đều đi qua đây)
-     — xem lib/secret-registry.ts (SecretRegistry). */
-  const redacted = redactSecretText(raw);
-  if (redacted.length <= maxChars) return redacted;
-
-  /* Spill: lưu phần bị cắt ra file app tự ghi để fs_read đọc lại được.
-     Best-effort — lỗi lưu thì rơi về truncateToolResult y hệt cũ, KHÔNG ném:
-     lỗi lưu không được biến một tool call thành công thành isError. */
-  const saveSpillText = loadSpillSaver();
-  if (saveSpillText) {
-    const spilled = saveSpillText(redacted, 'tool-result.txt');
-    if (spilled) {
-      // Chừa sẵn chỗ cho marker và notice rồi mới chia phần còn lại cho đầu/đuôi,
-      // để TỔNG không bao giờ vượt maxChars — đó là hợp đồng của TOOL_RESULT_MAX_CHARS.
-      const markerLen = 64;
-      const room = Math.max(0, maxChars - markerLen - spilled.notice.length - 2);
-      const split = TOOL_RESULT_HEAD_RATIO / (TOOL_RESULT_HEAD_RATIO + TOOL_RESULT_TAIL_RATIO);
-      const headLen = Math.floor(room * split);
-      const tailLen = room - headLen;
-      const head = redacted.slice(0, headLen);
-      const tail = tailLen > 0 ? redacted.slice(-tailLen) : '';
-      const marker = `\n...[đã cắt bớt ${Math.max(0, redacted.length - headLen - tailLen)} ký tự ở giữa]...\n`;
-      return `${head}${marker}${tail}\n\n${spilled.notice}`;
-    }
-  }
-  return truncateToolResult(redacted, maxChars);
 }
 
 /* ------------------------------------------------------------------ */

@@ -131,3 +131,40 @@ Lần cắt đầu cắt giữa JSDoc → `/**` ở lại file cũ, thân `* ...
 Test ban đầu khẳng định `JSON.stringify(out) <= trần + 1000` và **ĐỎ: 45.425 > 25.000**. Nguyên nhân: `capToolResult` chỉ cắt trường `typeof === 'string'` ở cấp ngoài (đúng như docstring: "để shape kết quả không đổi"). `matches` của `memory_search` là **mảng** → đi thẳng qua. Hàm vẫn set `truncated: true` dù không cắt gì.
 - **Không sửa ở đây.** Sửa nghĩa là đổi ngữ nghĩa cap cho MỌI tool (`web_search results[]`, MCP results…) → cần RED test riêng, việc riêng. Gộp vào đây là chắt vá.
 - **Không xoá phát hiện**: test đã viết lại thành khẳng định điều spill **phải** bảo đảm (`spillNotice` ngắn, `truncated: true`), kèm comment giải thích vì sao **không** khẳng định trần. Xem mục này.
+
+### Task 2 commit: `8333b71` — tsc 0 loi, 13/14 file xanh, 2 do la spill-wiring (dung)
+
+## Task 3: BỎ — spill kết quả MCP là bất khả thi với kiến trúc hiện tại
+
+Plan (b5fa851) bảo chuyển `formatMcpResultForModel` sang `lib/mcp/tool-mapper-server.ts` và cho nó spill. **Điều tra cho thấy sai tiền đề.**
+
+Bằng chứng:
+1. `formatMcpResultForModel` được gọi ở `react/use-chat-orchestration.ts:1479` — module **trình duyệt**.
+2. `callMcpTool` cũng chỉ gọi ở `react/use-chat-orchestration.ts:1461`. MCP tool chạy ở trình duyệt qua `lib/desktop-bridge.ts`.
+3. Không tồn tại bất kỳ đường SERVER nào nào gọi `callMcpTool` hay `formatMcpResultForModel` (grep toàn repo: chỉ client + test).
+
+Hệ quả:
+- Trình duyệt không có hệ thống file → **không thể** spill kết quả MCP. Không phải lựa chọn kỹ thuật, là giới hạn kiến trúc.
+- Nếu làm theo plan: chuyển hàm vào module import `ipc.cjs` → `child_process` + `net` lọt vào bundle trình duyệt, và `tests/spill-wiring.test.ts` (Task 1) sẽ **ĐỎ** chặn lại.
+- **Test ranh giới runtime viết ở Task 1 giờ có tác dụng thật**: nó chặn được một task trong plan đưa code chạy sai runtime vào bundle trình duyệt.
+
+Nếu sau này muốn spill kết quả MCP, phải đổi kiến trúc: chuyển việc thực thi MCP tool sang server. Đó là việc riêng, không phải sửa gọn.
+
+### Test trong plan Task 3 cũng sai — không chép
+Plan viết `formatMcpResultForModel('x'.repeat(40_000))`:
+- Hàm nhận **hai** tham số `(result: McpCallResult, toolName: string)`, không phải một chuỗi.
+- Filler `'x'.repeat()` **không dấu cách**: dòng 379 gọi `redactSecretText`, rule `sk-` với class `[A-Za-z0-9_-]{8,}` sẽ nuốt cả 40k → không còn gì để cắt. Cùng bẫy filler như `tests/secret-registry.test.ts:265`.
+Sai hai lần, và cả hai đều im lặng.
+
+## Task 4: tách `serializeToolResult` ra module server — LÀM KHÁC PLAN
+
+Plan bảo **xoá hẳn** spill khỏi `serializeToolResult` (đường emulated mất spill, chỉ native giữ được). Không làm vì:
+- Sau khi bỏ Task 3, đường emulated là nơi DUY NHẤT còn có thể spill.
+- `serializeToolResult` chỉ dùng ở `lib/emulated-agent.ts` — **server thuần**, không nằm trong đồ thị trình duyệt.
+- Nên nó import tĩnh `lib/ipc.cjs` được y như Task 2, và giữ được spill thật cho đường emulated.
+
+Làm:
+- `lib/tool-result-server.ts` (mới): `serializeToolResult` + `import * as ipc from '@/lib/ipc.cjs'`.
+- `lib/tool-limits.ts`: xoá `SpillSaver`, `loadSpillSaver`, `spillSaverCache`, `serializeToolResult`, và import `redactSecretText` (chỉ `serializeToolResult` dùng nó). Chỉ còn phép tính thuần. Thêm comment ghi rõ **hạn chế**: file này phải chạy được trong bundle trình duyệt, nên KHÔNG được import Node — nêu đích danh bản 1 đã vi phạm và không ai thấy.
+- 4 test spill **chuyển** sang `tests/tool-result-server.test.ts` (không xoá — chúng khoá hành vi còn giữ). Thêm 2 test: hợp đồng trần ở nhiều ngưỡng, và ngưỡng mặc định lấy từ `TOOL_RESULT_MAX_CHARS`.
+- 3 test `loadSpillSaver` bị xoá: hàm không còn tồn tại. Rủi ro chúng canh giờ do `spill-wiring.test.ts` canh mạnh hơn — duyệt đồ thị import từ entry trình duyệt thật, thay vì đoán qua `typeof window`.

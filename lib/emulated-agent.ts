@@ -38,8 +38,10 @@ import {
   EMU_MAX_CALLS_PER_ROUND,
   EMU_MAX_ROUNDS,
   TOOL_RESULT_MAX_CHARS,
-  serializeToolResult,
 } from '@/lib/tool-limits';
+// Tách riêng: serializeToolResult ghi spill xuống đĩa nên cần lib/ipc.cjs,
+// còn tool-limits.ts nằm trong bundle trình duyệt và không được import Node.
+import { serializeToolResult } from '@/lib/tool-result-server';
 import { redactSecretText } from '@/lib/secret-registry';
 
 export { EMU_MAX_ROUNDS, EMU_MAX_CALLS_PER_ROUND };
