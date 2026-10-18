@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createNodeHost, buildIpcToolMap } from '@/lib/tools/ipc-node';
+import { createNodeHost, buildIpcToolMap, toIpcPayload } from '@/lib/tools/ipc-node';
 import { TOOL_CATALOG, TOOL_CATEGORY_MAP } from '@/lib/tool-catalog';
 
 function workspace() {
@@ -102,14 +102,25 @@ describe('buildIpcToolMap', () => {
     }
   });
 
-  it('fs_write không tự thêm hash — thiếu hash thì ipc.cjs phải chặn', async () => {
+  /* Tên cũ là "fs_write không tự thêm hash — thiếu hash thì ipc.cjs phải chặn"
+   * nhưng THÂN lại khẳng định là KHÔNG chặn — tên ngược thân, là bẫy cho
+   * người sau. Tên đúng: lớp ánh xạ không tự bịa hash; việc bắt buộc hash thuộc
+   * `ipc.cjs` và chỉ khi caller tự gửi `hasDiff`.
+   *
+   * Gọi thẳng channel nên phải mở `allowChannel` — `call` mặc định chặn channel
+   * nguy hiểm (xem `tests/ipc-node-host.test.ts`). */
+  it('lớp ánh xạ KHÔNG tự thêm hash — caller gửi gì thì ipc.cjs nhận nấy', async () => {
     const { ws, userData } = workspace();
-    const host = createNodeHost({ workspaceRoot: ws, userDataDir: userData });
+    const host = createNodeHost({
+      workspaceRoot: ws,
+      userDataDir: userData,
+      allowChannel: () => true,
+    });
     try {
       const map = buildIpcToolMap(host);
       const payload = toIpcPayload('fs_write', { path: 'a.txt', content: 'de' });
-      // Không có `hasDiff`/`expectedBaseHash` → ipc.cjs KHÔNG chặn (đó là chính
-      // sách của nó). Test này khoá đúng hành vi đó, để đổi ở đây là thấy ngay.
+      expect(payload).not.toHaveProperty('hasDiff');
+      expect(payload).not.toHaveProperty('expectedBaseHash');
       await host.call(map.fs_write, payload);
       expect(readFileSync(path.join(ws, 'a.txt'), 'utf8')).toBe('de');
     } finally {
@@ -120,10 +131,23 @@ describe('buildIpcToolMap', () => {
   });
 });
 
-// Những tool có channel thật trong ipc.cjs.
-import { toIpcPayload } from '@/lib/tools/ipc-node';
-
-// nhắc lại cho người đọc: mọi tool trong map đều phải có mặt ở TOOL_CATALOG
-it('mọi tool ánh xạ đều được phân quyền', () => {
-  expect(Object.keys(TOOL_CATEGORY_MAP).length).toBeGreaterThan(0);
+/* Bản cũ tên là "mọi tool ánh xạ đều được phân quyền" nhưng thân chỉ assert
+ * `TOOL_CATEGORY_MAP` khác rỗng — tức không kiểm tra gì liên quan tới tool nào
+ * cả. Đổi thành kiểm thật: tool nào trong map phải có nhóm quyền, vì tool thiếu
+ * nhóm là tool **thoát lưới phân quyền**. */
+describe('phân quyền của các tool ánh xạ', () => {
+  it('mọi tool trong map đều có nhóm quyền trong TOOL_CATEGORY_MAP', () => {
+    const { ws, userData } = workspace();
+    const host = createNodeHost({ workspaceRoot: ws, userDataDir: userData });
+    try {
+      const khongNhom = Object.keys(buildIpcToolMap(host)).filter(
+        (t) => !TOOL_CATEGORY_MAP[t],
+      );
+      expect(khongNhom, `tool khong co nhom quyen: ${khongNhom.join(', ')}`).toEqual([]);
+    } finally {
+      host.dispose();
+      rmSync(ws, { recursive: true, force: true });
+      rmSync(userData, { recursive: true, force: true });
+    }
+  });
 });

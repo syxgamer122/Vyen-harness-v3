@@ -73,10 +73,17 @@ describe('createNodeHost', () => {
   });
 
   /* Ghi có TOCTOU: hash nội dung lúc đọc phải khớp lúc ghi. Nếu không có cái
-   * này, diff người dùng duyệt sẽ ghi đè lên file đã bị ai đó sửa. */
+   * này, diff người dùng duyệt sẽ ghi đè lên file đã bị ai đó sửa.
+   *
+   * Gọi thẳng channel vì test này kiểm hành vi CỦA `ipc.cjs`, không phải của cổng
+   * duyệt — nên mở `allowChannel`. */
   it('CHẶN ghi khi hash nội dung không khớp (TOCTOU)', async () => {
     const { ws, userData } = makeWorkspace();
-    const host = createNodeHost({ workspaceRoot: ws, userDataDir: userData });
+    const host = createNodeHost({
+      workspaceRoot: ws,
+      userDataDir: userData,
+      allowChannel: () => true,
+    });
     try {
       await expect(
         host.call('vyen:fs-write', {
@@ -95,10 +102,46 @@ describe('createNodeHost', () => {
 
   it('ghi file mới khi không cần hash (file chưa tồn tại)', async () => {
     const { ws, userData } = makeWorkspace();
-    const host = createNodeHost({ workspaceRoot: ws, userDataDir: userData });
+    const host = createNodeHost({
+      workspaceRoot: ws,
+      userDataDir: userData,
+      allowChannel: () => true,
+    });
     try {
       await host.call('vyen:fs-write', { relPath: 'b.txt', content: 'xinh chao' });
       expect(existsSync(path.join(ws, 'b.txt'))).toBe(true);
+    } finally {
+      host.dispose();
+      rmSync(ws, { recursive: true, force: true });
+      rmSync(userData, { recursive: true, force: true });
+    }
+  });
+
+  /* I2 — `call` mặc định TỪ CHỐI channel nguy hiểm. Đây là lớp phòng thủ dưới
+   * cổng duyệt của tầng tool: nếu chỉ có cổng ở `buildIpcTools` thì bất kỳ tầng
+   * nào sau cầm `host` là đi thẳng qua. */
+  it('MẶC ĐỊNH chặn gọi thẳng channel nguy hiểm', async () => {
+    const { ws, userData } = makeWorkspace();
+    const host = createNodeHost({ workspaceRoot: ws, userDataDir: userData });
+    try {
+      await expect(
+        host.call('vyen:fs-write', { relPath: 'c.txt', content: 'x' }),
+      ).rejects.toThrow(/bi chan mac dinh/i);
+      // Chặn thật, không phải chặn giả: file KHÔNG được tạo.
+      expect(existsSync(path.join(ws, 'c.txt'))).toBe(false);
+    } finally {
+      host.dispose();
+      rmSync(ws, { recursive: true, force: true });
+      rmSync(userData, { recursive: true, force: true });
+    }
+  });
+
+  it('channel CHỈ ĐỌC thì vẫn gọi thẳng được, không cần mở cổng', async () => {
+    const { ws, userData } = makeWorkspace();
+    const host = createNodeHost({ workspaceRoot: ws, userDataDir: userData });
+    try {
+      const r = (await host.call<{ content: string }>('vyen:fs-read', { relPath: 'a.txt' }))!;
+      expect(r.content).toBe('dong 1\ndong 2\ndong 3\n');
     } finally {
       host.dispose();
       rmSync(ws, { recursive: true, force: true });
@@ -120,7 +163,10 @@ describe('createNodeHost', () => {
     }
   });
 
-  it('ghi lại audit log', async () => {
+  /* Audit log: `ipc.cjs` gọi `opts.audit` cho mọi workspace change và mọi lỗi.
+   * Không chỉ "có nhận callback" — phải THẬT SỰ có dòng được ghi. Bản cũ assert
+   * `Array.isArray(lines)` tức luôn đúng vì `lines` là `[]` — một test rỗng. */
+  it('ghi lại audit log khi workspace bị từ chối', async () => {
     const { ws, userData } = makeWorkspace();
     const lines: string[] = [];
     const host = createNodeHost({
@@ -129,8 +175,8 @@ describe('createNodeHost', () => {
       audit: (l) => lines.push(l),
     });
     try {
-      await host.call('vyen:fs-read', { relPath: 'khong-ton-tai.txt' }).catch(() => {});
-      expect(Array.isArray(lines)).toBe(true);
+      await host.call('vyen:fs-read', { relPath: path.join(ws, '..', 'tho.txt') }).catch(() => {});
+      expect(lines.length, 'khong duoc ghi dong audit nao').toBeGreaterThan(0);
     } finally {
       host.dispose();
       rmSync(ws, { recursive: true, force: true });

@@ -471,3 +471,66 @@ khi gọi `fs-write`. Việc đó chưa làm. **Không ai được tưởng là 
 - **Chi phí nếu bỏ sót:** model thấy mô tả `fs_edit` trong prompt nhưng gọi lên thì
   không có channel → lỗi khó hiểu. Hoặc tệ hơn: ai đó thêm nó vào map sau này mà
   không nghĩ tới chuyện duyệt.
+
+# Lượt 4 (2026-10-18) — review độc lập. Reviewer bác 5 phát hiện của tôi.
+
+## Bốn lỗi nghiêm trọng, tôi tự tái lập trước khi sửa
+
+| | Reviewer nói | Tôi đo được |
+|---|---|---|
+| **C2** | workspaceRoot sai → lùi im lặng về phiên trước | ✅ **xác nhận** — `/typo/...` lùi về `C:\Users\Admin` |
+| **C3** `start_line` | zod strip → model đọc lại chunk cũ, lặp tới hết token | ✅ **xác nhận** — dòng 10, nhận `d1` |
+| **C3** `git_add` | `paths` ≠ `relPaths` | ✅ **xác nhận** |
+| **C3** `shell_run` | luôn `approval_required` | ✅ **xác nhận** |
+| **C1** | "path-guard biến thành vô hiệu" | ⚠ **CHƯA ĐÚNG NHƯ MÔ TẢ** — với root = home thì `C:\Windows\win.ini` **vẫn bị chặn**. Lỗi thật chỉ là `workspaceBlockReason` **không chạy** trên đường `workspaceOverride`, nên root gốc ổ đĩa lọt vào |
+
+- **Sửa C1**: export `workspaceBlockReason` từ `ipc.cjs` rồi dùng lại — **không** viết
+  lại blocklist (hai nguồn sự thật).
+- **Sửa C3**: bảng `ARG_RENAMES` đầy đủ + `applyReadWindow` cắt cửa sổ dòng và
+  trần 24.000 ký tự, vì `FsReadPayload` của `ipc.cjs` chỉ có `relPath` — phần phân
+  trang thuộc tầng client ở bản web.
+
+## Lỗi tinh vi nhất: HAI INSTANCE CỦA CÙNG MỘT MODULE
+
+`shell_run` sửa xong vẫn chết với `approval_unknown`. Nguyên nhân: token nằm trong
+`Map` cấp module, mà `import` đi qua tầng chuyển đổi của bundler còn `require` của
+`ipc.cjs` đi qua loader CJS của Node — **hai instance, hai Map tách rời**.
+
+Đo thật: mint bằng `import` → consume bằng `require` = `approval_unknown`; mint bằng
+`require` → consume bằng `require` = `ok`.
+
+- **Sửa**: `createRequire` neo tại chính `ipc.cjs`.
+- **Nếu không sửa**: cổng duyệt báo *"đã duyệt"* trong khi lệnh vẫn không chạy —
+  kiểu lỗi khó đoán nhất có thể.
+
+## I2 — cổng mặc định từ chối, và đường thô KHÔNG lộ ra ngoài
+
+`host.call` chặn mặc định mọi channel nguy hiểm. `buildIpcTools` cần gọi thẳng sau
+khi duyệt, nên nó lấy đường thô qua `WeakMap` **trong cùng module** — không expose
+lên object, vì nếu để thành method thì mọi tầng sau cầm `host` đều lách được và
+cổng chỉ còn là hình thức.
+
+## Ba test rỗng — phần tệ hơn lỗi chức năng
+
+- `expect(Array.isArray(lines))` — luôn đúng vì `lines` là `[]`. Nay đòi **có dòng
+  audit thật**.
+- Test tên *"thiếu hash thì ipc.cjs phải chặn"* nhưng thân lại khẳng định **không**
+  chặn. Tên ngược thân là bẫy cho người sau; đã đổi tên và đổi thân.
+- Test cũ gọi thẳng `host.call('vyen:fs-write')` — sau I2 thì đúng là phải mở
+  `allowChannel`. Không phải test sai, mà **hợp đồng đã đổi**.
+
+## 5 mutation, 5 lần bị bắt
+
+C1 bỏ blocklist → 2 đỏ · C2 bỏ kiểm tra tồn tại → 1 đỏ · C3 bỏ cửa sổ dòng → 2 đỏ
+· I3 bỏ git khỏi cổng duyệt → 1 đỏ · I2 vô hiệu cổng mặc định → 1 đỏ.
+
+## NỢ CÒN LẠI
+
+- **I5 — `audit` mặc định là hàm rỗng**, nên CLI mất vết ghi ngay từ mặc định.
+  **Tôi không sửa**: đổi mặc định thành "ghi ra đĩa" là quyết định về dữ liệu người
+  dùng, không phải kỹ thuật, cần chủ repo chọn.
+- **I1 còn nửa vụ** — `fs_write` ghi đè file tồn tại vẫn không bắt buộc
+  `expectedBaseHash`, tức chống TOCTOU của `ipc.cjs` không tự bật. Sửa đúng là phải
+  nhớ hash lúc đọc và truyền lại; cần một kho nhớ theo phiên, tức chưa làm được
+  khi chưa có `lib/session/`.
+- **`fs_edit`** vẫn chưa làm (xem lượt 3).

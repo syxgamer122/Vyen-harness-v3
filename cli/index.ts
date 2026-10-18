@@ -8,23 +8,31 @@
  * chưa có gì trong repo từng gọi **một model thật**. Câu hỏi "tầng provider có
  * chạy không ngoài giấy vẽ" vẫn chưa có câu trả lời.
  *
- * Làm đủ cả `lib/session/` + `lib/tools/fs-node.ts` + REPL + duyệt tool thì mất
- * nhiều ngày mà vẫn chưa chạy được một lần. File này trả lời câu hỏi đó trong
- * vài phút: dựng model từ adapter có sẵn, gọi `streamText`, in ra console.
+ * Làm đủ cả `lib/session/` + vòng lặp tool + REPL thì mất nhiều ngày mà vẫn
+ * chưa chạy được một lần. File này trả lời câu hỏi đó trong vài phút: dựng model
+ * từ adapter có sẵn, gọi `streamText`, in ra console.
  *
- * ============ CỐ Ý KHÔNG CÓ ============
+ * ============ CỐ Ý KHÔNG CÓ (trạng thái 2026-10-18) ============
  *
- * - Lịch sử hội thoại        → cần `lib/session/` (thay `db.ts`)
- * - Đọc/ghi file, shell      → cần `lib/tools/fs-node.ts`
- * - Duyệt tool nguy hiểm     → cần `emulated-agent` + `tool-permissions`
- * - `upstream-diagnosis`      → xem "VẤN ĐỀ ĐÃ GẶP" bên dưới
+ * - Lịch sử hội thoại      → cần `lib/session/` (thay `db.ts`)
+ * - Vòng lặp gọi tool      → CHƯA có. `lib/tools/ipc-node.ts` đã dựng sẵn bộ
+ *   tool thật (gọi `lib/ipc.cjs`: đọc/ghi file, shell, git, có path-guard và
+ *   chống TOCTOU), nhưng chưa nối vào `streamText` ở đây. Nên model hiện chỉ
+ *   trả lời bằng chữ, không tự gọi được tool.
+ * - `fs_edit`               → `ipc.cjs` không có channel riêng; parser khối
+ *   SEARCH/REPLACE đã có ở `lib/edit-blocks.ts` (thuần Node) nhưng chưa ghép
+ *   vào `fs-write`. CHƯA làm — đừng tưởng là xong.
+ * - Duyệt tool nguy hiểm    → cổng đã có trong `lib/tools/ipc-node.ts`
+ *   (`NEEDS_APPROVAL`), nhưng CLI này chưa truyền hàm `approve`, nên **chưa có
+ *   gì hỏi người dùng**. Chỉ nối bộ tool vào thì mới cần.
+ * - `upstream-diagnosis`    → ĐÃ nối, dùng ở nhánh lỗi bên dưới.
  *
  * ============ CÁCH CHẠY ============
  *
  *   # PowerShell
  *   $env:VYEN_API_KEY = "sk-..."
  *   $env:VYEN_MODEL   = "gpt-4o-mini"
- *   node cli/index.ts "xin chào"
+ *   npm run cli -- "xin chào"
  *
  *   # Anthropic-native
  *   $env:VYEN_API_KEY = "sk-ant-..."
@@ -62,13 +70,17 @@
  *   VYEN_DEBUG     đặt `1` để in thêm `devLog` (req id, host, body upstream).
  *                  Mặc định KHÔNG in — người dùng chỉ cần thông báo sạch.
  *
- * ============ VẤN ĐỀ ĐÃ GẶP, CHƯA GIẢI ============
+ * ============ VẤN ĐỀ ĐÃ GẶP ============
  *
- * `lib/provider/upstream-diagnosis.ts` import bằng alias `@/lib/...`. Node chạy
- * file `.ts` thẳng KHÔNG đọc `paths` trong `tsconfig.json`, nên alias đó không
- * resolve được — đây là lý do file này chưa dùng tầng chẩn đoán, dù nó chạy
- * được và đã có test. Cần quyết định cách chạy CLI thật (loader nào, hay đổi
- * alias) trước khi làm bước kế tiếp. Ghi lại ở đây để không mất.
+ * VẤN ĐỀ ĐÃ GIẢI — alias `@/lib/...`: Node chạy file `.ts` thẳng KHÔNG đọc
+ * `paths` trong `tsconfig.json`, nên `lib/provider/upstream-diagnosis.ts` không
+ * import được. Đã giải bằng `tsx` (devDependency) — `npm run cli` đi qua nó.
+ * Vì vậy **phải** dùng `npm run cli`, không `node cli/index.ts`.
+ *
+ * VẤN ĐỀ CÒN LẠI — cửa sổ dòng của `fs_read`: `ipc.cjs` có trần 2 MB và không
+ * cắt theo `start_line`. Lớp cầu `lib/tools/ipc-node.ts` đã tự cắt (24.000 ký
+ * tự), nhưng khi nối bộ tool vào đây thì phải nhớ điều đó — nếu gọi thẳng
+ * `vyen:fs-read` thì 2 MB sẽ đổ thẳng vào context của model.
  */
 
 import { randomUUID } from 'node:crypto';
