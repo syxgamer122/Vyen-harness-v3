@@ -49,6 +49,11 @@ export const CORE_ENTRIES = [
   'lib/context-budget.ts',
   'lib/secret-registry.ts',
   'lib/mcp/tool-mapper.ts',
+  // Lớp provider (plan 2026-10-18-provider-layer). KHÔNG chạm API trình duyệt —
+  // đây là tầng gọi model, chạy được trên Node.
+  'lib/provider/adapter.ts',
+  'lib/provider/openai-adapter.ts',
+  'lib/provider/anthropic-adapter.ts',
 ];
 
 

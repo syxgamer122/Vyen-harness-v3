@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { generateText } from 'ai';
 import { resolveAdapterKind } from '@/lib/provider/adapter';
 import { resolveOpenAIModel } from '@/lib/provider/openai-adapter';
+import { resolveAnthropicModel } from '@/lib/provider/anthropic-adapter';
 
 /**
  * Server giả nói đúng protocol OpenAI-compatible, ghi lại request để assert.
@@ -84,5 +85,51 @@ describe('resolveOpenAIModel', () => {
     expect(out.text).toBe('xin chào');
     expect(captured.auth).toBe('Bearer sk-test-123');
     expect(captured.path).toBe('/v1/chat/completions');
+  });
+});
+
+describe('resolveAnthropicModel', () => {
+  it('anthropic: trả model gọi đúng endpoint messages', async () => {
+    /* Server giả trả payload của Anthropic Messages API, KHÁC hẳn OpenAI:
+     * `type: 'message'`, content là mảng block, key gửi đi là `x-api-key`.
+     * Test này chứng minh nhánh Anthropic KHÔNG đi qua endpoint
+     * OpenAI-compatible — đó là điều Review Focus #5 canh. */
+    const captured: Captured = { path: '', auth: undefined };
+    let apiKeyHeader: string | undefined;
+    const server = createServer((req, res) => {
+      captured.path = req.url ?? '';
+      captured.auth = req.headers.authorization;
+      apiKeyHeader = req.headers['x-api-key'] as string | undefined;
+      req.on('data', () => {});
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            id: 'msg_test',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-test',
+            content: [{ type: 'text', text: 'xin chào' }],
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    servers.push(server);
+    const { port } = server.address() as AddressInfo;
+
+    const model = resolveAnthropicModel({
+      kind: 'anthropic',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      apiKey: 'sk-ant-test',
+      model: 'claude-test',
+    });
+    const out = await generateText({ model, prompt: 'hi' });
+    expect(out.text).toBe('xin chào');
+    expect(captured.path).toMatch(/\/v1\/messages$/);
+    expect(apiKeyHeader).toBe('sk-ant-test');
   });
 });

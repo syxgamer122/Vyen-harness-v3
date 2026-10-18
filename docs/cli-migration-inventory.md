@@ -26,6 +26,9 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/context-budget.ts`
 - `lib/secret-registry.ts`
 - `lib/mcp/tool-mapper.ts`
+- `lib/provider/adapter.ts`
+- `lib/provider/openai-adapter.ts`
+- `lib/provider/anthropic-adapter.ts`
 
 ## Bằng chứng dòng
 
