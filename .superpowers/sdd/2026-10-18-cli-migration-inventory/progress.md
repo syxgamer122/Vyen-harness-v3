@@ -179,3 +179,36 @@ thấy phụ thuộc xuyên**.
   không xuất hiện trong bảng. Ghi lại để không ai tưởng nó đang bảo vệ gì.
 - **Chi phí nếu sai:** bảng bỏ sót file lõi cần viết lại nhưng chỉ gọi tới Dexie
   gián tiếp. Người đọc bảng phải kiểm chéo với spec, không được tin bảng một mình.
+
+## Bàn giao & nợ chưa trả (2026-10-18, cuối phiên)
+
+Plan kế tiếp đã viết: `docs/superpowers/plans/2026-10-18-provider-layer.md` (4 task).
+Tự review bắt được 2 lỗi của chính plan, đã sửa trước khi commit:
+- `npm install @ai-sdk/anthropic@^2` → **ghim `1.2.12`**. Đã kiểm npm: bản mới nhất
+  là `4.0.82` (thế hệ AI SDK khác, không khớp `ai@4.3.19`).
+  `@ai-sdk/openai@1.3.24` và `@ai-sdk/anthropic@1.2.12` đều phụ thuộc
+  `@ai-sdk/provider@1.1.3` — khớp nhau.
+- "chuyển code khoảng dòng 292–660" → sai (292 là `hostOf`, 660 là `devLog`).
+  Bỏ toàn bộ số dòng khỏi plan, thay bằng **tên 8 hằng/hàm**, đã xác nhận cả 8 tồn tại
+  trong `route.ts`. Số dòng nhanh lỗi hơn tên hàm; tôi đã sai một lần.
+
+### Ba nợ đã trả trong lượt này (không cần build)
+
+1. **Test bảng stale chỉ so SỐ ĐẾM** → thêm `bảng liệt kê ĐÚNG tập file quét sống tìm
+   thấy`, so tập tên file. Số đếm vẫn khớp khi xoá một file dính API rồi thêm file
+   mới dính API; so tập thì bắt được.
+2. **7/10 tên trong `BROWSER_APIS` không khớp gì ở `lib/`** → thêm `MỌI tên trong
+   BROWSER_APIS đều khớp được bằng bộ dò hiện tại`. Gõ sai một tên thì test đỏ
+   thay vì bảng vẫn ra đúng số dòng.
+3. **NGUY HIỂM NHẤT — `FORCE_LABEL` xung đột với đồ thị lõi** → thêm `KHÔNG file nào bị
+   FORCE_LABEL mà lại nằm trong đồ thị lõi`. Nếu file bị người đè nhãn mà lõi thật
+   sự dùng thì nhãn sai theo định nghĩa. Test này xanh ngay (chưa có xung đột) —
+   đó là lý do **phải mutation mới chứng minh nó không rỗng**.
+
+### Nợ CÒN LẠI — đều cần build, để lượt sau
+
+| Nợ | Cần gì | Rủi ro nếu bỏ |
+|---|---|---|
+| Mutation `eval('require')` của spill chưa chứng minh đỏ | 2 lần build | không rõ test canh được cái gì |
+| `next build` thật với `allowImportingTsExtensions` | 1 lần build | có thể hỏng build sau này mà không biết |
+| Truy vết phụ thuộc xuyên (`tool-permissions.ts`) | plan riêng | bảng bỏ sót file lõi cần viết lại |

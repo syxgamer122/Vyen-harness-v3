@@ -16,9 +16,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
-import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached } from '@/scripts/cli-migration/import-graph';
+import { BROWSER_APIS, scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
 import { countTsFiles } from '@/scripts/cli-migration/build-inventory';
+import { FORCE_LABEL } from '@/scripts/cli-migration/ly-do';
+import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached } from '@/scripts/cli-migration/import-graph';
 
 describe('scanFile', () => {
   it('dò đúng API trình duyệt và trả về số dòng', () => {
@@ -188,6 +189,43 @@ describe('bảng kiểm kê', () => {
     );
   });
 
+  /* Nợ còn treu sau Giai đoạn 0: test cũ chỉ so SỐ ĐẾM. Xoá một file dính API
+   * rồi thêm file mới dính API mà không chạy lại generator thì số đếm vẫn khớp,
+   * bảng vẫn xanh — nhưng bảng liệt kê file không tồn tại và bỏ sót file mới.
+   * So TẬP thì bắt được: tên file phải khớp từng cái. */
+  it('bảng liệt kê ĐÚNG tập file quét sống tìm thấy', () => {
+    const md = readFileSync(MD, 'utf8');
+    const rows = md.split('\n').filter((l) => l.startsWith('| `lib/'));
+    // `filter(Boolean)` KHÔNG narrowing kiểu trong TS — phải dùng type guard,
+// nếu không `stale` thành Set<string | undefined> và `live.has(f)` lỗi type.
+const listed = new Set(
+      rows.map((r) => r.match(/`([^`]+)`/)?.[1]).filter((f): f is string => typeof f === 'string'),
+    );
+    const live = new Set(scanBrowserApis('lib').map((h) => h.file));
+    const stale = [...listed].filter((f) => !live.has(f));
+    const missing = [...live].filter((f) => !listed.has(f));
+    expect({ stale, missing }, 'bảng lệch với quét sống — chạy lại generator').toEqual({
+      stale: [],
+      missing: [],
+    });
+  });
+
+  /* Nợ: 7/10 tên trong BROWSER_APIS không khớp gì ở lib/, nên gõ sai một tên
+   * thì bảng vẫn ra đúng số dòng và test vẫn xanh — sai im lặng. Test này bắt
+   * đúng việc đó: MỌI tên khai trong danh sách phải khớp được bằng chính bộ
+   * dò hiện tại. Đổi một tên thành sai chính tả thì test đỏ. */
+  it('MỌI tên trong BROWSER_APIS đều khớp được bằng bộ dò hiện tại', () => {
+    for (const name of BROWSER_APIS) {
+      const src = name.includes('.')
+        ? `const v = ${name};`
+        : `import ${name} from 'x';\nconst v = new ${name}();`;
+      expect(
+        scanFile(src, 'lib/probe.ts').map((h) => h.api),
+        `tên "${name}" không khớp được — nhiều khả năng gõ sai`,
+      ).toContain(name);
+    }
+  });
+
   it('bảng không được vượt quá số file .ts thật trong lib', () => {
     const md = readFileSync(MD, 'utf8');
     const rows = md.split('\n').filter((l) => l.startsWith('| `lib/'));
@@ -203,5 +241,21 @@ describe('bảng kiểm kê', () => {
         /\| (GHIU|VIET-LAI|XOA|THAY-THE) \|/,
       );
     }
+  });
+
+  /* Nợ NGUY HIỂM NHẤT còn lại. `FORCE_LABEL` trong ly-do.ts cho phép người đè nhãn
+   * của máy — đó là cửa thoát cần thiết khi máy không đủ thông tin. Nhưng nếu một
+   * file bị đè nhãn lại ĐANG nằm trong đồ thị lõi, thì nhãn đó sai theo định
+   * nghĩa: lõi đã dùng nó, không phải "thuộc web, bỏ được".
+   *
+   * Test này bắt đúng chỗ đó. Hiện chưa file nào xung đột, nên test xanh ngay —
+   * đó là lý do cần mutation để chứng minh nó không rỗng. */
+  it('KHÔNG file nào bị FORCE_LABEL mà lại nằm trong đồ thị lõi', () => {
+    const core = reachableFrom();
+    const conflict = Object.keys(FORCE_LABEL).filter((f) => core.has(f));
+    expect(
+      conflict,
+      `file bị đè nhãn nhưng lõi thật sự dùng — nhãn đó sai, phải rà lại: ${conflict.join(', ')}`,
+    ).toEqual([]);
   });
 });
