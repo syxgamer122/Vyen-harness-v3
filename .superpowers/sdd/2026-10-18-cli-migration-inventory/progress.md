@@ -212,3 +212,60 @@ Tự review bắt được 2 lỗi của chính plan, đã sửa trước khi co
 | Mutation `eval('require')` của spill chưa chứng minh đỏ | 2 lần build | không rõ test canh được cái gì |
 | `next build` thật với `allowImportingTsExtensions` | 1 lần build | có thể hỏng build sau này mà không biết |
 | Truy vết phụ thuộc xuyên (`tool-permissions.ts`) | plan riêng | bảng bỏ sót file lõi cần viết lại |
+
+## Lượt 2026-10-18 (sau đó) — ba nợ trên đã trả, commit `0a5dc74`
+
+### Trả nợ: `next build` thật với `allowImportingTsExtensions`
+`npm run build` **exit 0**. Cờ đó an toàn với SWC như plan dự đoán.
+
+**Phát hiện phụ, chưa xử lý:** `next build` tự sinh lại `next-env.d.ts` (file ĐƯỢC
+track) và trỏ `.next/dev/types/` ↔ `.next/types/` tuỳ lệnh chạy. Cứ `dev` rồi
+`build` là file đổi, working tree bẩn. Ai `commit -a` sau build là cuốn nhầm.
+Cần chủ repo chọn: bỏ track / thêm `.gitignore` / chấp nhận.
+
+### Trả nợ: mutation `eval('require')` của spill
+Đặt `eval('require')('./ipc.cjs')` **trong hàm** `truncateToolResult` (hàm chắc
+chắn không bị tree-shaking), build lại → **2 test đỏ**:
+`not to contain 'eval("require")'` và `not to contain './ipc.cjs'`.
+
+Giả thuyết cũ trong ledger ("minifier xử lý hai hình thức khác nhau") **đã kiểm
+và sai**. Khác biệt không phải top-level với trong-hàm — mà là đặt trong hàm
+**được dùng** thì bundler mới giữ lại, đặt top-level thì không. Minifier đổi
+`eval('require')` thành `eval("require")`; test bắt được vì kiểm CẢ HAI kiểu
+nháy.
+
+### Trả nợ: truy vết phụ thuộc xuyên
+
+**Đo lại trước khi sửa — và kết quả làm nhẹ mức độ nghiêm trọng.** `importsOf`
+cũ khớp bằng regex nên coi `import type` là cạnh, tức đo thừa:
+
+| Đo | Kết quả |
+|---|---|
+| Đồ thị lõi (regex, cũ) | 38 file |
+| Đồ thị lõi (cạnh runtime, AST) | **36** — rơi đúng 2 file types-only |
+| File kéo Dexie (regex thô) | 27 — **thừa 7**, toàn bộ là `import type` |
+| File kéo Dexie (cạnh runtime) | **19** |
+| Trong đó nằm trong đồ thị lõi | **0** |
+
+Tức lõi CLI hiện **sạch Dexie**, và nợ này không phải "13 file nguy hiểm" như đo
+sơ bộ — nó là **một lời khẳng định sai** trong bảng sinh ra: *"File không chạm
+thì không cần phân loại — chúng dùng được nguyên vẹn cho lõi Node"*. Sai theo
+hướng nguy hiểm nhất: 19 file đó **không** chạy được trên Node.
+
+Đã sửa: `runtimeImportSpecs` (AST) thay regex — **một cơ chế duy nhất**,
+`browserBoundIn` dựng đồ thị ngược, `listTsFiles` tách ra làm lister dùng chung
+(`countTsFiles` gọi nó, không còn vòng duyệt FS thứ hai).
+
+**Mutation chứng minh không rỗng:**
+- Bỏ `isTypeOnly` → 3 test đỏ (gồm test chống đếm thừa `date-groups.ts`).
+- Thêm `lib/tool-permissions.ts` vào `CORE_ENTRIES` → 2 test đỏ: GUỐ mới **và**
+  guard `FORCE_LABEL` sẵn có. Trước thay đổi này, kịch bản đó đi thẳng vào bảng
+  mà không ai thấy.
+
+### Nợ MỚI, chưa trả
+
+**19 file trong mục "Kéo trình duyệt vào qua phụ thuộc xuyên" chưa được phân
+loại.** Máy đo đã biết chúng không chạy được trên Node; còn lại là phán đoán
+giữ/xoá — chỗ của người, nằm ở `ly-do.ts`. **Không được đoán bằng máy.**
+Bắt đầu từ `lib/tool-permissions.ts`: spec §7 nói duyệt tool nguy hiểm là thứ
+người dùng tin CLI nhất, nên nó nhiều khả năng phải **viết lại**, không phải xoá.
