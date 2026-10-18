@@ -38,7 +38,20 @@ const CONTRACT_DOCS = [
    docs/agent-memory-port-report.md — lịch sử nằm trong git, không mô tả
    code đang chạy nên gỡ khỏi cả danh sách lẫn repo (checker báo "doc không
    tồn tại" nếu còn tên mà file đã mất). */
-const RECORD_DOCS = ['docs/MCP_INTEGRATION_DESIGN.md'];
+const RECORD_DOCS = [
+  'docs/MCP_INTEGRATION_DESIGN.md',
+  /*
+   * Bản `DESIGN.md` 1410 dòng, lưu trữ 2026-10-18.
+   *
+   * Nằm ở RECORD_DOCS chứ không phải im lặng: checker báo "doc không tồn tại" nếu
+   * còn tên mà file đã mất, nên đăng ký ở đây là để `docs:check` BIẾT nó tồn tại
+   * và cố ý không tham gia kiểm hợp đồng. File này viết ở thì mệnh lệnh nhưng
+   * không mệnh lệnh nào được test bảo vệ — xoá hẳn nó thì
+   * `tests/design-system.test.ts` vẫn 47/47 xanh. Đó là lý do nó bị chuyển sang
+   * lưu trữ thay vì để làm nguồn chỉ đạo.
+   */
+  'docs/DESIGN-2026-10-06.md',
+];
 
 const DOCS = [...CONTRACT_DOCS, ...RECORD_DOCS];
 const CODE_EXT = /\.(ts|tsx|cjs|mjs|js|json)$/;
