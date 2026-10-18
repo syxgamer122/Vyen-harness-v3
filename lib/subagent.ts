@@ -299,16 +299,28 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
       maxTokens: opts.maxTokens,
       abortSignal: controller.signal,
       maxRounds: maxTurns,
+      /*
+       * `runId` + `agentName` đi kèm MỌI progress, không riêng `start`/`done`.
+       * Annotation là NHẬT KÝ SỰ KIỆN: một lượt subagent ghi ra start + N progress
+       * + done. Trước đây progress không mang runId nên UI không gom được — nó
+       * render mỗi annotation như một subagent riêng, và các bản ghi progress cũ
+       * đứng chết ở "đang chạy" với con quay sau khi lượt đã xong.
+       */
       onTextDelta: (delta) => {
         textParts.push(delta);
-        opts.onProgress?.('progress', { type: 'text', length: delta.length });
+        opts.onProgress?.('progress', { type: 'text', length: delta.length, runId, agentName });
       },
       onReasoningLine: (line) => {
-        opts.onProgress?.('progress', { type: 'reasoning', preview: line.slice(0, 100) });
+        opts.onProgress?.('progress', {
+          type: 'reasoning',
+          preview: line.slice(0, 100),
+          runId,
+          agentName,
+        });
       },
       onAnnotation: (payload) => {
         lastAnnotation = payload;
-        opts.onProgress?.('progress', { type: 'tool', annotation: payload });
+        opts.onProgress?.('progress', { type: 'tool', annotation: payload, runId, agentName });
       },
     };
 
@@ -319,6 +331,17 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
     const resultText = textParts.join('').trim();
 
     if (controller.signal.aborted && opts.abortSignal?.aborted) {
+      // PHẢI phát `done` ở cả nhánh dừng. Bỏ qua nó thì thẻ subagent đứng ở
+      // `phase: 'progress'` mãi mãi — `runSubagent` chỉ nhận `done`/`error` là
+      // tín hiệu kết thúc, và người dùng vừa bấm Dừng lại thấy con quay vẫn
+      // chạy, không phân biệt được với lượt đang treo.
+      opts.onProgress?.('done', {
+        runId,
+        agentName,
+        error: 'Bị dừng bởi lượt cha',
+        turnsUsed: loopResult.roundsUsed,
+        toolCalls: loopResult.totalCalls,
+      });
       return finish({
         result: resultText || '(subagent aborted by parent)',
         turnsUsed: loopResult.roundsUsed,
@@ -363,6 +386,15 @@ export async function runSubagent(opts: SubagentOptions): Promise<SubagentResult
     clearTimeout(timeoutId);
 
     if (controller.signal.aborted) {
+      // Timeout hoặc huỷ từ bên trong — cũng phải kết thúc thẻ, lý do như nhánh
+      // dừng bởi lượt cha ở trên.
+      opts.onProgress?.('done', {
+        runId,
+        agentName,
+        error: 'Hết thời gian chờ hoặc bị huỷ',
+        turnsUsed: 0,
+        toolCalls: 0,
+      });
       return finish({
         result: textParts.join('').trim() || '(subagent timed out or aborted)',
         turnsUsed: 0,

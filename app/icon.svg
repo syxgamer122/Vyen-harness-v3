@@ -1,26 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 34 34" fill="none">
+  <rect width="34" height="34" rx="7" fill="#FFFFFF"/>
   <defs>
-    <linearGradient id="vyen-icon-grad" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#81EE61" />
-      <stop offset="100%" stop-color="#0B7A53" />
-    </linearGradient>
+    <linearGradient id="t-ring" gradientUnits="userSpaceOnUse" x1="3.87" y1="5.56" x2="30.130000000000003" y2="29.83"><stop offset="0" stop-color="#1B7455"/><stop offset="1" stop-color="#0D6A4B"/></linearGradient>
+    <linearGradient id="t-green" gradientUnits="userSpaceOnUse" x1="3.87" y1="5.56" x2="30.130000000000003" y2="29.83"><stop offset="0" stop-color="#82E767"/><stop offset="1" stop-color="#2F9462"/></linearGradient>
+    <linearGradient id="t-mint" gradientUnits="userSpaceOnUse" x1="3.87" y1="5.56" x2="30.130000000000003" y2="29.83"><stop offset="0" stop-color="#D8FCDC"/><stop offset="1" stop-color="#C3E9D2"/></linearGradient>
+    <linearGradient id="t-face" gradientUnits="userSpaceOnUse" x1="3.87" y1="5.56" x2="30.130000000000003" y2="29.83"><stop offset="0" stop-color="#1A8261"/><stop offset="1" stop-color="#0F5C46"/></linearGradient>
+    <linearGradient id="t-linkL" gradientUnits="userSpaceOnUse" x1="12.063" y1="14.394" x2="15.818" y2="14.394"><stop offset="0" stop-color="#3EA260"/><stop offset="1" stop-color="#7ED078"/></linearGradient>
+    <linearGradient id="t-linkR" gradientUnits="userSpaceOnUse" x1="21.937" y1="14.394" x2="18.182" y2="14.394"><stop offset="0" stop-color="#3EA260"/><stop offset="1" stop-color="#7ED078"/></linearGradient>
   </defs>
-  <rect width="32" height="32" rx="8" fill="#FFFFFF" />
-  <rect width="32" height="32" rx="8" stroke="#E5E5E5" stroke-width="1" />
-  <path
-    d="M 16 6.4 C 18.2 5 20 4.4 22.2 4.4 C 25.6 4.4 28.5 7.4 28.5 11.8 C 28.5 14.5 27.2 16.5 26.2 17.5 C 25.2 18.2 25.2 18.8 26.2 19.5 C 27.2 20.5 28 22.2 27 24.2 C 25.8 26.5 23.5 27.5 20.5 27.5 C 18.5 27.5 17.2 26.8 16 25.6 C 14.8 26.8 13.5 27.5 11.5 27.5 C 8.5 27.5 6.2 26.5 5 24.2 C 4 22.2 4.8 20.5 5.8 19.5 C 6.8 18.8 6.8 18.2 5.8 17.5 C 4.8 16.5 3.5 14.5 3.5 11.8 C 3.5 7.4 6.4 4.4 9.8 4.4 C 12 4.4 13.8 5 16 6.4 Z"
-    stroke="url(#vyen-icon-grad)"
-    stroke-width="2.2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <!-- Circuit Eyes -->
-  <line x1="11.5" y1="13.5" x2="14.6" y2="13.5" stroke="#0B7A53" stroke-width="1.7" stroke-linecap="round" />
-  <circle cx="11.5" cy="13.5" r="1.5" fill="#0B7A53" />
-  <line x1="17.4" y1="13.5" x2="20.5" y2="13.5" stroke="#0B7A53" stroke-width="1.7" stroke-linecap="round" />
-  <circle cx="20.5" cy="13.5" r="1.5" fill="#0B7A53" />
-  <!-- Circuit Mouth -->
-  <line x1="12.5" y1="19.5" x2="19.5" y2="19.5" stroke="#0B7A53" stroke-width="1.7" stroke-linecap="round" />
-  <circle cx="12.5" cy="19.5" r="1.5" fill="#0B7A53" />
-  <circle cx="19.5" cy="19.5" r="1.5" fill="#0B7A53" />
+  <path d="M 17 7.19 C 19.31 6.2 21.2 5.56 23.51 5.56 C 27.09 5.56 30.13 8.72 30.13 13.34 C 30.13 16.18 28.77 18.28 27.72 19.33 C 26.67 20.06 26.67 20.69 27.72 21.43 C 28.77 22.48 29.61 24.26 28.56 26.37 C 27.3 28.78 24.88 29.83 21.73 29.83 C 19.63 29.83 18.26 29.1 17 27.84 C 15.74 29.1 14.37 29.83 12.27 29.83 C 9.12 29.83 6.7 28.78 5.44 26.37 C 4.39 24.26 5.23 22.48 6.28 21.43 C 7.33 20.69 7.33 20.06 6.28 19.33 C 5.23 18.28 3.87 16.18 3.87 13.34 C 3.87 8.72 6.91 5.56 10.49 5.56 C 12.8 5.56 14.69 6.2 17 7.67 Z" transform="translate(17 17) scale(1) translate(-17 -17)" fill="url(#t-ring)"/>
+    <path d="M 17 7.19 C 19.31 6.2 21.2 5.56 23.51 5.56 C 27.09 5.56 30.13 8.72 30.13 13.34 C 30.13 16.18 28.77 18.28 27.72 19.33 C 26.67 20.06 26.67 20.69 27.72 21.43 C 28.77 22.48 29.61 24.26 28.56 26.37 C 27.3 28.78 24.88 29.83 21.73 29.83 C 19.63 29.83 18.26 29.1 17 27.84 C 15.74 29.1 14.37 29.83 12.27 29.83 C 9.12 29.83 6.7 28.78 5.44 26.37 C 4.39 24.26 5.23 22.48 6.28 21.43 C 7.33 20.69 7.33 20.06 6.28 19.33 C 5.23 18.28 3.87 16.18 3.87 13.34 C 3.87 8.72 6.91 5.56 10.49 5.56 C 12.8 5.56 14.69 6.2 17 7.67 Z" transform="translate(17 17) scale(0.9725) translate(-17 -17)" fill="url(#t-green)"/>
+    <path d="M 17 7.19 C 19.31 6.2 21.2 5.56 23.51 5.56 C 27.09 5.56 30.13 8.72 30.13 13.34 C 30.13 16.18 28.77 18.28 27.72 19.33 C 26.67 20.06 26.67 20.69 27.72 21.43 C 28.77 22.48 29.61 24.26 28.56 26.37 C 27.3 28.78 24.88 29.83 21.73 29.83 C 19.63 29.83 18.26 29.1 17 27.84 C 15.74 29.1 14.37 29.83 12.27 29.83 C 9.12 29.83 6.7 28.78 5.44 26.37 C 4.39 24.26 5.23 22.48 6.28 21.43 C 7.33 20.69 7.33 20.06 6.28 19.33 C 5.23 18.28 3.87 16.18 3.87 13.34 C 3.87 8.72 6.91 5.56 10.49 5.56 C 12.8 5.56 14.69 6.2 17 7.67 Z" transform="translate(17 17) scale(0.8673) translate(-17 -17)" fill="url(#t-mint)"/>
+    <path d="M 17 7.19 C 19.31 6.2 21.2 5.56 23.51 5.56 C 27.09 5.56 30.13 8.72 30.13 13.34 C 30.13 16.18 28.77 18.28 27.72 19.33 C 26.67 20.06 26.67 20.69 27.72 21.43 C 28.77 22.48 29.61 24.26 28.56 26.37 C 27.3 28.78 24.88 29.83 21.73 29.83 C 19.63 29.83 18.26 29.1 17 27.84 C 15.74 29.1 14.37 29.83 12.27 29.83 C 9.12 29.83 6.7 28.78 5.44 26.37 C 4.39 24.26 5.23 22.48 6.28 21.43 C 7.33 20.69 7.33 20.06 6.28 19.33 C 5.23 18.28 3.87 16.18 3.87 13.34 C 3.87 8.72 6.91 5.56 10.49 5.56 C 12.8 5.56 14.69 6.2 17 7.67 Z" transform="translate(17 17) scale(0.7233) translate(-17 -17)" fill="url(#t-green)"/>
+    <path d="M 17 7.19 C 19.31 6.2 21.2 5.56 23.51 5.56 C 27.09 5.56 30.13 8.72 30.13 13.34 C 30.13 16.18 28.77 18.28 27.72 19.33 C 26.67 20.06 26.67 20.69 27.72 21.43 C 28.77 22.48 29.61 24.26 28.56 26.37 C 27.3 28.78 24.88 29.83 21.73 29.83 C 19.63 29.83 18.26 29.1 17 27.84 C 15.74 29.1 14.37 29.83 12.27 29.83 C 9.12 29.83 6.7 28.78 5.44 26.37 C 4.39 24.26 5.23 22.48 6.28 21.43 C 7.33 20.69 7.33 20.06 6.28 19.33 C 5.23 18.28 3.87 16.18 3.87 13.34 C 3.87 8.72 6.91 5.56 10.49 5.56 C 12.8 5.56 14.69 6.2 17 7.67 Z" transform="translate(17 17) scale(0.6181) translate(-17 -17)" fill="#FFFFFF"/>
+  
+    <path d="M 12.063 14.394 H 15.818" stroke="url(#t-linkL)" stroke-width="0.92" stroke-linecap="round" fill="none"/>
+    <path d="M 21.937 14.394 H 18.182" stroke="url(#t-linkR)" stroke-width="0.92" stroke-linecap="round" fill="none"/>
+    <circle cx="12.063" cy="14.394" r="1.16" fill="url(#t-face)"/>
+    <circle cx="21.937" cy="14.394" r="1.16" fill="url(#t-face)"/>
+    <path d="M 12.667 20.51 H 21.333" stroke="#158360" stroke-width="0.74" stroke-linecap="round" fill="none"/>
+    <circle cx="12.667" cy="20.51" r="0.94" fill="#158360"/>
+    <circle cx="21.333" cy="20.51" r="0.94" fill="#158360"/>
+
 </svg>

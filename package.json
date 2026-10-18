@@ -11,6 +11,7 @@
     "lint": "eslint . --cache",
     "typecheck": "tsc --noEmit",
     "check": "node scripts/check-supply-chain.cjs",
+    "icons:build": "node scripts/build-icons.cjs",
     "docs:check": "node scripts/check-docs-sync.cjs",
     "test": "vitest run",
     "verify:security": "node tests/phase1-security-verification.cjs && node tests/sprint-s1-verification.cjs && node tests/sprint-s2-verification.cjs"
@@ -50,6 +51,7 @@
     "eslint-config-next": "16.3.1",
     "eslint-plugin-react-hooks": "7.1.1",
     "postcss": "8.5.26",
+    "sharp": "0.35.3",
     "tailwindcss": "3.4.19",
     "typescript": "5.9.3",
     "vitest": "4.1.11"

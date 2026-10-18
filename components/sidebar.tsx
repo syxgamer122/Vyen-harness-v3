@@ -14,7 +14,7 @@ import type { SnippetSegment } from '@/lib/search-utils';
 import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 import { MD_QUERY, useMediaQuery } from '@/lib/hooks/use-media-query';
 import { BackupReminder } from '@/components/backup-reminder';
-import { VyenLogo } from '@/components/vyen-logo';
+import { VyenLogo, VyenMark } from '@/components/vyen-logo';
 import { Z_CLASS } from '@/lib/ui-z';
 import {
   Plus, Pin, Trash2, Search, Settings as SettingsIcon,
@@ -631,6 +631,12 @@ export function Sidebar() {
           className="hidden w-14 flex-col items-center border-r border-subtle bg-sunken pt-[env(safe-area-inset-top)] transition-colors duration-200 md:static md:flex md:w-14 md:flex-shrink-0"
         >
           <div className="flex flex-col items-center gap-1 py-2">
+            {/*
+             * LOGO Ở RAIL THU GỌN — trước đây chỗ này chỉ có nút, nên thu gọn
+             * sidebar là thương hiệu biến mất khỏi cửa sổ dù cột vẫn còn đó.
+             * 24px là cỡ nhỏ nhất mà hình vẫn đọc được (xem `brand/README.md`).
+             */}
+            <VyenMark size={24} className="mb-1" />
             <button
               type="button"
               aria-label="Mở rộng thanh bên"

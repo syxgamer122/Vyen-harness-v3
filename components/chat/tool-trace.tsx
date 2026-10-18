@@ -1126,21 +1126,28 @@ export const ToolTrace = memo(function ToolTrace({
   return (
     <>
       {/*
-       * Cột THẲNG với chữ trả lời. Từ đợt P1 (§15.1 điểm 2), trợ lý KHÔNG còn
-       * khung và avatar chỉ hiện ở tin mở khối, nên cột chữ bắt đầu ngay sau
-       * `avatar 26px + gap-2 (8px)` = **34px**; đệm 16px của hộp cũ đã bị gỡ cùng
-       * hộp. Trước đây trace là mảnh rời không vỏ nên mọi đoạn xen kẽ bắt đầu ở
-       * 0 và nhãn chip ở ~8px — một lượt có câu mở đầu lệch vài chữ, câu sau
-       * thẳng cột, đọc như lỗi căn chỉnh chứ không phải lựa chọn bố cục.
-       * Đổi bố cục câu trả lời thì phải đổi ĐÚNG con số này.
+       * KHÔNG CÒN THỤT LỀ 34px — quyết định sản phẩm 2026-10-18.
        *
-       * Thẻ subagent nằm TRONG cột này, không phải ngoài nó: trước đây nó vẽ
-       * ở cấp cao nhất nên phá vỡ đúng thụt lề mà phần còn lại của trace giữ
-       * cẩn thận — một lượt có subagent lệch hẳn so với lượt không có.
+       * Con số này từng là `avatar 26px + gap-2 (8px)`. Khi avatar trợ lý bị gỡ khỏi
+       * `message-item.tsx` thì nó mất hết nghĩa: mọi dòng của lượt — câu trả lời,
+       * bảng kê công việc, dòng usage, bằng chứng, banner lỗi — nằm chung lề 0,
+       * đúng như mọi tin nhắn khác trong transcript.
+       *
+       * Trước đây 34px chỉ có ở câu trả lời và trace, còn các dòng còn lại nằm ở
+       * 0px — mép trái cột hội thoại răng cưa. Bỏ avatar sửa luôn chỗ lệch đó.
+       *
+       * Thẻ subagent vẫn nằm trong cùng khối này như trước: nó là một phần của
+       * bảng kê, không phải một khối cấp cao hơn.
        */}
-      <div className="pl-[34px]">
+      <div>
         {subagentAnns.map((ann, i) => (
-          <SubagentCard key={i} annotation={ann} />
+          /*
+           * Key theo `runId`, không theo index. Index làm key khiến React tái
+           * dùng đúng instance cho vị trí đó: danh sách thay đổi (lượt trước đóng
+           * lại, lượt mới thêm) thì trạng thái mở/đóng của thẻ dính sang thẻ khác.
+           * `|| i` chỉ để lượt ghi trước 2026-10-18 — annotation cũ không có runId.
+           */
+          <SubagentCard key={ann.subagent.runId || i} annotation={ann} />
         ))}
 
         {owned

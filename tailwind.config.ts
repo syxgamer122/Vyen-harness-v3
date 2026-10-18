@@ -61,16 +61,25 @@ const hex = {
   accent: '#0B7A53',
 
   /*
-   * MÀU THƯƠNG HIỆU — đo từ pixel ảnh logo, KHÁC hệ màu giao diện ở trên.
-   * `brand-lime` chỉ 1.9:1 nên TUYỆT ĐỐI không làm chữ hay viền; `brand` 3.4:1
-   * và `brand-deep` 5.4:1 đạt ngưỡng 3:1 cho vật thể đồ hoạ.
-   * Khối `LIME/MID/DARK/FACE` trong `components/vyen-logo.tsx` dùng đúng 4 giá
-   * trị này — sửa một bên thì phải sửa cả bên kia.
+   * MÀU THƯƠNG HIỆU — đo từ pixel `brand/logo-source.png` (2048²), KHÁC hệ màu
+   * giao diện ở trên. Đợt 2026-10-18 đo lại toàn bộ: bản cũ lấy từ ảnh logo
+   * thế hệ trước, nên cả bốn giá trị đều lệch so với hình đang render.
+   *
+   *   `brand-lime` 1.55:1 → TUYỆT ĐỐI không làm chữ hay viền (chỉ nấc gradient)
+   *   `brand-mid`  3.79:1 → đạt ngưỡng 3:1 cho vật thể đồ hoạ
+   *   `brand`      5.71:1 → đạt AA
+   *   `brand-deep` 4.72:1 → đạt AA (sát ngưỡng, dùng cho mắt/miệng)
+   *
+   * Hình và màu logo nằm ở `brand/mark.json` — KHÔNG phải ở `vyen-logo.tsx`.
+   * `components/vyen-logo.tsx` và `scripts/build-icons.cjs` đều đọc file đó,
+   * nên bốn giá trị ở đây là BẢN SAO để `globals.css` map được, và chỉ được
+   * đổi cùng lúc với `app/globals.css` + `tests/design-system.test.ts`.
+   * Sửa hình thì sửa `mark.json` rồi chạy `npm run icons:build`.
    */
-  'brand-lime': '#7CE652',
-  'brand-mid': '#5ABF5A',
-  'brand': '#126644',
-  'brand-deep': '#114F36',
+  'brand-lime': '#82E767',
+  'brand-mid': '#2F9462',
+  'brand': '#1B7455',
+  'brand-deep': '#158360',
   /*
    * `accent-dim` là vật thể ĐỒ HOẠ (cột biểu đồ, chấm trạng thái), không phải
    * nền chữ — nên nó chịu ngưỡng 3:1 của WCAG 1.4.11 chứ không phải 4.5:1.

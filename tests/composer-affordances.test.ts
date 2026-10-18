@@ -20,7 +20,6 @@ import path from 'node:path';
 import {
   partitionSlashMatches,
   hiddenSlashLine,
-  approvalPillLabel,
   approvalShortLabel,
   approvalHint,
   resolveApprovalPolicy,
@@ -40,6 +39,17 @@ const source = fs
 
 /** Bỏ comment để assert chỉ soi CODE, không soi chữ trong giải thích. */
 const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+/**
+ * Số lần helper được GỌI trong JSX — bỏ dòng khai báo hàm đi trước.
+ *
+ * Vì sao cần: `expect(code).toMatch(/approvalPillLabel\(/)` khớp luôn dòng
+ * `export function approvalPillLabel(` — nên khi call site bị gỡ, assertion vẫn
+ * xanh và test thành RỖNG. Đây đúng cái lỗ hổng `DESIGN.md §11` đã ghi tên:
+ * "một helper đúng mà không ai gọi thì lỗi vẫn sống".
+ */
+const callSites = (fn: string) =>
+  code.replace(/export function \w+\([\s\S]*?\n\}/g, '').match(new RegExp(`\\b${fn}\\(`, 'g'))?.length ?? 0;
 
 describe('L22 — palette "/" in đúng mô tả từng lệnh, và /cost không bị cắt', () => {
   describe('mô tả lệnh', () => {
@@ -343,67 +353,101 @@ describe('L23 — dòng gợi ý phím nói đúng phím nào THỰC SỰ gửi 
 });
 
 
-describe('L10 — pill phê duyệt không nói ngược hành vi', () => {
+const POLICIES4 = ['always', 'smart', 'never', 'chat_only'] as const;
+
+/** Hai bản nhãn CÒN được render: chip trên dải công cụ + tooltip của nó. */
+const LIVE = (p: (typeof POLICIES4)[number], auto?: boolean) => [
+  approvalShortLabel(p, auto),
+  approvalHint(p, auto),
+] as const;
+
+describe('L10 — nhãn chế độ phê duyệt không nói ngược hành vi', () => {
   it('"Autonomous Tools Active" không còn trong composer', () => {
     // smart là chế độ HỎI trước khi ghi. In "Autonomous" cho nó là nói dối.
     expect(code).not.toContain('Autonomous Tools Active');
   });
 
   it('nhãn của từng policy nói đúng việc chế độ đó làm', () => {
-    expect(approvalPillLabel('never', undefined)).toBe('Tự chạy tool, không hỏi');
-    expect(approvalPillLabel('smart', undefined)).toBe('Tự chạy lệnh đọc, hỏi trước khi ghi');
-    expect(approvalPillLabel('always', undefined)).toBe('Hỏi trước mọi tool');
-    expect(approvalPillLabel('chat_only', undefined)).toBe('Không dùng tool');
+    expect(approvalShortLabel('never', undefined)).toBe('Tự chạy');
+    expect(approvalHint('smart', undefined)).toMatch(/hỏi trước khi ghi/i);
+    expect(approvalHint('always', undefined)).toMatch(/trước khi chạy bất kỳ tool/i);
+    expect(approvalHint('chat_only', undefined)).toMatch(/vô hiệu hoàn toàn tool/i);
   });
 
   it('chế độ smart (mặc định) không bao giờ bị gọi là tự chạy', () => {
     // Đây là lỗi cốt lõi: nhãn của `smart` khác nhãn của `never`. Nếu chúng bị
     // gộp lại, người dùng tưởng agent ghi đĩa tự do rồi mới thấy nó dừng hỏi.
-    expect(approvalPillLabel('smart', undefined)).not.toBe(approvalPillLabel('never', undefined));
-    expect(approvalPillLabel('smart', undefined)).not.toMatch(/không hỏi$/);
-    expect(approvalPillLabel('smart', undefined)).toMatch(/hỏi/i);
+    expect(approvalShortLabel('smart', undefined)).not.toBe(approvalShortLabel('never', undefined));
+    expect(approvalHint('smart', undefined)).toMatch(/hỏi trước khi ghi/i);
+    expect(approvalHint('smart', undefined)).not.toMatch(/tự duyệt mọi tool/i);
   });
 
-  it('bốn policy cho bốn nhãn khác nhau, không nhãn nào rỗng', () => {
-    const labels = (['always', 'smart', 'never', 'chat_only'] as const).map((p) =>
-      approvalPillLabel(p, undefined),
-    );
-    expect(labels.every((l) => l.trim().length > 0)).toBe(true);
-    expect(new Set(labels).size).toBe(4);
+  it('bốn policy cho tám nhãn khác nhau, không nhãn nào rỗng', () => {
+    const all = POLICIES4.flatMap((p) => [...LIVE(p)]);
+    expect(all.every((l) => l.trim().length > 0)).toBe(true);
+    expect(new Set(POLICIES4.map((p) => approvalShortLabel(p, undefined))).size).toBe(4);
   });
 
   it('policy undefined + autoPilot rơi về cùng nhãn với policy tương ứng', () => {
     // Đường cũ `autoPilot` phải suy ra đúng như menu "Tác vụ", nếu không
-    // composer nói một đằng, menu nói một nẻo.
-    expect(approvalPillLabel(undefined, true)).toBe(approvalPillLabel('smart', undefined));
-    expect(approvalPillLabel(undefined, false)).toBe(approvalPillLabel('always', undefined));
-    expect(approvalPillLabel(undefined, undefined)).toBe(approvalPillLabel('always', undefined));
-  });
-
-  it('không nhãn nào chứa em dash, tiếng Anh vay mượn, hay chữ ngợi bơ', () => {
-    for (const p of ['always', 'smart', 'never', 'chat_only'] as const) {
-      const label = approvalPillLabel(p, undefined);
-      expect(label, `nhãn ${p} chứa em dash`).not.toMatch(/—/);
-      expect(label, `nhãn ${p} để lộ tiếng Anh`).not.toMatch(/\b(active|autonomous|smart|manual)\b/i);
-      expect(label, `nhãn ${p} chứa chữ ngợi bơ`).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+    // chip nói một đằng, menu nói một nẻo.
+    for (const [auto, target] of [[true, 'smart'], [false, 'always'], [undefined, 'always']] as const) {
+      expect(approvalShortLabel(undefined, auto)).toBe(approvalShortLabel(target, undefined));
+      expect(approvalHint(undefined, auto)).toBe(approvalHint(target, undefined));
     }
   });
 
-  it('composer gọi `approvalPillLabel` thay vì in chuỗi', () => {
+  it('không nhãn nào chứa em dash, tiếng Anh vay mượn, hay chữ ngợi bơ', () => {
+    for (const p of POLICIES4) {
+      for (const [field, label] of [
+        ['short', approvalShortLabel(p, undefined)],
+        ['hint', approvalHint(p, undefined)],
+      ] as const) {
+        expect(label, `${field}/${p} chứa em dash`).not.toMatch(/—/);
+        expect(label, `${field}/${p} để lộ tiếng Anh`).not.toMatch(
+          /\b(active|autonomous|manual)\b/i,
+        );
+        expect(label, `${field}/${p} chứa chữ ngợi bơ`).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+      }
+    }
+  });
+
+  it('composer gọi `approvalShortLabel` và `approvalHint` trong JSX thay vì in chuỗi', () => {
     // Nhãn nằm ở helper để test được; JSX chỉ được gọi, không được chép lại.
-    expect(code).toMatch(/approvalPillLabel\(/);
+    expect(callSites('approvalShortLabel')).toBeGreaterThan(0);
+    expect(callSites('approvalHint')).toBeGreaterThan(0);
+  });
+
+  it('`approvalPillLabel` đã bị xoá hẳn khỏi hệ thống', () => {
+    /*
+     * Đợt 2026-10-18 gỡ pill chế độ phê duyệt ở HÀNG CHÂN composer: nó là
+     * `<span>` không bấm được, giống đến từng class chip ở dải công cụ, và in
+     * `goalLoopInfo` ("3/10") bên dưới icon `Zap` — tức tiến độ lượt lặp bị đội
+     * nhãn "chế độ phê duyệt". Xoá nó làm `approvalPillLabel` mất call site
+     * CUỐI CÙNG, nên bản `long` trong `APPROVAL_COPY` cũng chết theo và cả hai
+     * đã bị xoá. Assertion này canh đúng sự thật đó.
+     */
+    expect(code).not.toMatch(/approvalPillLabel/);
+    /* Chỉ `APPROVAL_COPY` — `keyHints` có trường `long` RIÊNG và vẫn đang sống
+       (tooltip dòng phím tắt dưới composer). Quét cả file sẽ khớp nhầm nó. */
+    const copyBlock = code.slice(code.indexOf('const APPROVAL_COPY'), code.indexOf('};', code.indexOf('const APPROVAL_COPY')));
+    expect(copyBlock, 'APPROVAL_COPY không còn trường `long` chết').not.toMatch(/\blong:/);
   });
 });
 
 /*
- * MỘT trạng thái, MỘT nhãn — cả ba chỗ hiển thị.
+ * MỘT trạng thái, MỘT nhãn — cả hai chỗ hiển thị.
  *
- * Lỗi: cùng một chế độ được in ba lần trên cùng một màn hình bằng ba câu
- * khác nhau và HAI ngôn ngữ — pill tiếng Việt ("Tự chạy tool, không hỏi"),
- * menu "Tác vụ" tiếng Anh ("Autonomous"), nút đổi chế độ lại một bản sao tiếng
- * Anh. Người dùng phải tự dò xem ba nhãn đó có nói cùng một điều không.
+ * Lỗi gốc: cùng một chế độ được in ba lần trên cùng một màn hình bằng ba câu
+ * khác nhau và HAI ngôn ngữ — pill tiếng Việt, menu "Tác vụ" tiếng Anh, nút đổi
+ * chế độ lại một bản sao tiếng Anh.
+ *
+ * Đợt 2026-10-18 còn sửa nốt: hai chip (dải công cụ + hàng chân) là CÙNG một
+ * `<span>`, giống nhau đến từng class và đều không bấm được — trông như hai nút
+ * giữa bốn nút thật. Hàng chân đã bị gỡ, nên nay chỉ còn HAI bản nhãn thật:
+ * `short` (trên chip) và `hint` (tooltip của chip).
  */
-describe('L10b — ba chỗ hiển thị phải lấy nhãn từ MỘT nguồn', () => {
+describe('L10b — hai chỗ hiển thị phải lấy nhãn từ MỘT nguồn', () => {
   const POLICIES = ['always', 'smart', 'never', 'chat_only'] as const;
 
   it('bốn chế độ có bốn nhãn ngắn khác nhau, không rỗng', () => {
@@ -414,7 +458,6 @@ describe('L10b — ba chỗ hiển thị phải lấy nhãn từ MỘT nguồn',
 
   it('nhãn ngắn vừa ô chật: dải công cụ và hàng menu không bị tràn', () => {
     /*
-     * Nhãn dài ("Tự chạy lệnh đọc, hỏi trước khi ghi") để ở pill, nơi có chỗ.
      * Bản ngắn đi vào dải công cụ — nơi mọi thứ nằm trong một hàng cuộn ngang
      * chung với ô chọn model — và vào hàng menu 288px. Dài hơn ~14 ký tự là
      * chen vào dải công cụ và đẩy nút khỏi tầm nhìn trên màn hẹp.
@@ -424,11 +467,10 @@ describe('L10b — ba chỗ hiển thị phải lấy nhãn từ MỘT nguồn',
     }
   });
 
-  it('cả ba bản — ngắn, dài, giải thích — đều tiếng Việt và không có em dash', () => {
+  it('cả hai bản còn sống — ngắn, giải thích — đều tiếng Việt, không em dash', () => {
     for (const p of POLICIES) {
       for (const [field, label] of [
         ['short', approvalShortLabel(p, undefined)],
-        ['long', approvalPillLabel(p, undefined)],
         ['hint', approvalHint(p, undefined)],
       ] as const) {
         expect(label, `${field} của ${p} chứa em dash`).not.toMatch(/—/);
@@ -471,10 +513,9 @@ describe('L10b — ba chỗ hiển thị phải lấy nhãn từ MỘT nguồn',
     for (const english of ['Autonomous', 'Chat Only', "'Manual'", "'Smart'"]) {
       expect(code, `JSX còn in "${english}" — nhãn phải đến từ một nguồn chung`).not.toContain(english);
     }
-    /* Cả ba chỗ đều gọi helper, không chỗ nào tự dựng. */
-    expect(code).toMatch(/approvalPillLabel\(/);
-    expect(code).toMatch(/approvalShortLabel\(/);
-    expect(code).toMatch(/approvalHint\(/);
+    /* Cả chỗ còn hiển thị đều gọi helper, không chỗ nào tự dựng. */
+    expect(callSites('approvalShortLabel')).toBeGreaterThan(0);
+    expect(callSites('approvalHint')).toBeGreaterThan(0);
   });
 });
 

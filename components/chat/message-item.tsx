@@ -6,7 +6,6 @@ import { MarkdownRenderer } from '@/components/markdown-renderer';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { BranchSwitcher } from '@/components/branch-switcher';
 import { MessageStatusBadge } from '@/components/message-status-badge';
-import { VyenMark } from '@/components/vyen-logo';
 import { sanitizeContent, getFinishInfo } from '@/lib/chat-tree-persistence';
 import { stripEmulatedToolMarkup } from '@/lib/text-tool-guard';
 import { ToolTrace, buildToolTrace, displayText, type TimelineSegment } from '@/components/chat/tool-trace';
@@ -588,12 +587,21 @@ export const MessageItem = memo(
            * hộp viền làm mọi khối trông cùng độ nổi, nên mắt phải tự đi tìm chỗ
            * quan trọng — đúng thứ điểm 1 cấm.
            *
-           * Dấu hiệu CHỈ hiện ở tin mở khối (`runPosition === 'start'`), và
-           * là dấu thương hiệu Vyen chứ không phải mặt vẽ tay: một hệ phải có
-           * MỘT nét, mọi bộ phận cùng bút — đây là lý do gỡ hẳn avatar chibi.
-           * Tin thứ hai trở đi giữ nguyên cột bằng một ô đệm cùng kích thước
-           * (26px) chứ không bỏ hẳn: bỏ đệm thì chữ thụt sang trái 34px so với
-           * tin đầu khối, tức cùng một đoạn văn mà hai lề tuỳ vị trí.
+           * KHÔNG CÒN AVATAR — quyết định sản phẩm 2026-10-18.
+           *
+           * Trước đây khối này mở đầu bằng `<VyenMark size={26}>` và tin thứ hai
+           * trở đi giữ cột bằng một ô đệm cùng kích thước. Cả hai đã bị gỡ, và
+           * điều đó sửa luôn một lỗi cũ: ô đệm 26px + `gap-2` tạo ra lề 34px mà
+           * CHỈ câu trả lời và ToolTrace có, còn dòng usage, bằng chứng, banner lỗi
+           * và khối suy luận nằm ở 0px — mép trái cột hội thoại bị răng cưa, người
+           * đọc phải dò ngược để biết dòng nào thuộc câu nào. Không avatar thì
+           * MỌI dòng nằm cùng một lề 0, và `tool-trace.tsx` bỏ `pl-[34px]` theo.
+           *
+           * Lý do bỏ không phải vì chỗ hẹp: OpenCode, Cursor và Claude đều không
+           * đặt logo trong từng tin. Người dùng đọc transcript cả buổi — một dấu
+           * hiệu lặp mỗi tin là tiếng ồn, không phải thông tin. Vai "ai đã nói"
+           * do nền tin người dùng và sự đối xứng trái–phải đảm nhiệm; `sr-only
+           * "Trợ lý:"` vẫn còn cho trình đọc màn hình.
            *
            * Khi timeline bật (`timeline !== null`), model đã xen lẫn lời với
            * tool, nên ở đây chỉ lấy ĐOẠN LỜI ĐẦU TIÊN. Các đoạn lời sau tool do
@@ -602,15 +610,9 @@ export const MessageItem = memo(
            * không vẽ khối rỗng, chỉ mở màn hình bằng chip tool.
            */}
           {showBubble && (
-          <div className="flex items-start gap-2">
-            {runPosition === 'start' ? (
-              <VyenMark size={26} className="mt-1 flex-shrink-0" />
-            ) : (
-              <span aria-hidden="true" className="mt-1 h-[26px] w-[26px] flex-shrink-0" />
-            )}
           <div
             data-testid="reply-text"
-            className={`min-w-0 flex-1 claude-prose text-primary ${isStreaming ? 'streaming-caret' : ''}`}
+            className={`min-w-0 claude-prose text-primary ${isStreaming ? 'streaming-caret' : ''}`}
             aria-busy={isStreaming}
           >
             <ErrorBoundary resetKey={`${m.id}:${m.content.length}`}>
@@ -620,7 +622,6 @@ export const MessageItem = memo(
                 throttleMs={throttleMs}
               />
             </ErrorBoundary>
-          </div>
           </div>
           )}
 

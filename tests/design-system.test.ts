@@ -45,13 +45,15 @@ describe('DESIGN.md — Vyen design-system contract', () => {
      */
     '#949494',
     /*
-     * MÀU LOGO — đo từ pixel ảnh thương hiệu, không phải màu giao diện. Chỉ
-     * `vyen-logo.tsx` và các file SVG thương hiệu dùng tới. `lime` 1.9:1 nên
-     * TUYỆT ĐỐI không làm chữ hay viền; `dark` 3.4:1 và `face` 5.4:1 đạt ngưỡng
-     * 3:1 cho vật thể đồ hoạ. Sửa ở đây thì sửa luôn khối `LIME/MID/DARK/FACE`
-     * trong `components/vyen-logo.tsx`.
+     * MÀU LOGO — đo từ pixel `brand/logo-source.png`, không phải màu giao diện.
+     * Chỉ `vyen-logo.tsx` và các file SVG thương hiệu dùng tới. Đợt 2026-10-18
+     * đo lại từ ảnh mới: `lime` 1.55:1 nên TUYỆT ĐỐI không làm chữ hay viền;
+     * `mid` 3.79:1 đạt 3:1 vật thể đồ hoạ; `brand` 5.71:1 và `deep` 4.72:1 đạt AA.
+     * Sửa ở đây thì sửa luôn `app/globals.css` + `tailwind.config.ts` (ba nơi
+     * phải đi cùng lúc). Hình và các nấc chuyển màu thì nằm ở `brand/mark.json`
+     * — không khai lại ở `vyen-logo.tsx`.
      */
-    '#7ce652', '#5abf5a', '#126644', '#114f36',
+    '#82e767', '#2f9462', '#1b7455', '#158360',
     /*
      * Nhấn & trạng thái. `accent` `#0b7a53` (họ xanh logo mới) đo 5.35:1 trên
      * trắng, 5.00:1 trên `#f7f7f7`. `accent-dim` `#449879` là VẬT THỂ ĐỒ HOẠ

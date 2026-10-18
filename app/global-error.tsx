@@ -11,6 +11,7 @@
  * Sau khi import, Next gắn đúng stylesheet đó vào trang global-error.
  */
 import './globals.css';
+import { VyenMark } from '@/components/vyen-logo';
 
 export default function GlobalError({
   error,
@@ -36,6 +37,16 @@ export default function GlobalError({
         style={{ backgroundColor: '#f7f7f7', color: '#18181b' }}
       >
         <div className="w-full max-w-md lift-lg rounded-xl border border-subtle bg-surface p-6 text-center shadow-lift-lg">
+          {/*
+            * Logo ở màn hình lỗi — trước đây cả `error.tsx` lẫn `global-error.tsx`
+            * đều không có gì nhận diện Vyen. Đây là hai màn hình TOÀN MÀN HÌNH duy
+            * nhất lúc app hỏng, tức đúng lúc người dùng cần biết mình đang ở đâu.
+            * `error.tsx` còn tự vẽ tam giác cảnh báo bằng `<svg>` tay, trái luật
+            * "icon là lucide" của §9.2.
+            */}
+          <div className="mb-4 flex justify-center">
+            <VyenMark size={40} />
+          </div>
           <h1 className="mb-1 text-base font-semibold text-primary">
             Sự cố ứng dụng ngoài dự kiến
           </h1>

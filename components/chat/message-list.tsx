@@ -197,6 +197,14 @@ export function parseErrorIssues(raw?: string): ErrorIssue[] {
  * Tông màu theo độ chờ (mượn ý UI): <10s bình thường, 10-30s chờ
  * dài (vàng), >30s đỏ kèm chú thích. Model suy luận nặng từng đo TTFT tới
  * 60s nên đỏ không có nghĩa là lỗi, chỉ là "còn chờ hơi lâu".
+ *
+ * KHÔNG mở đầu bằng ký tự `$` (gỡ 2026-10-18). Sáu panel khác vẫn dùng `$`
+ * làm nhãn mở đầu theo motif terminal (xem `tools-panel.tsx`,
+ * `plan-panel.tsx`…), nhưng hàng này nằm trong `role="status"` — trình đọc
+ * màn hình đọc thành *"dollar, đang soạn câu trả lời"*. Đó là văn bản KHÔNG
+ * mang nghĩa lọt vào phần người dùng nghe bằng mắt: ký tự trang trí đứng
+ * trong vùng được công bố. Số giây đã đủ để chứng minh "còn sống", thêm dấu
+ * nhắc terminal chỉ làm rối.
  */
 function ThinkingIndicator() {
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -221,7 +229,6 @@ function ThinkingIndicator() {
   return (
     <div className="mx-auto flex max-w-thread items-start gap-3 py-3">
       <p className="flex min-w-0 items-baseline gap-2 py-1 font-sans text-xs" role="status">
-        <span className="text-text-muted">$</span>
         <span className="text-text-primary">đang soạn câu trả lời</span>
         <span className={`tabular-nums ${tone}`}>{elapsedSec >= 1 ? `${elapsedSec.toFixed(1)}s` : ''}</span>
         {slowTone && (
@@ -816,18 +823,31 @@ export const MessageList = memo(function MessageList({
                 </div>
               )}
 
-              <div className="mt-8 flex w-full max-w-lg flex-col gap-3">
-                {suggestions.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => onSelectSuggestion(prompt)}
-                    className="rounded-xl border border-subtle bg-surface px-4 py-3.5 text-left font-sans text-read text-text-primary transition-colors duration-150 hover:bg-raised"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
+              {/*
+               * Thẻ gợi ý chỉ hiện khi app GỬI ĐƯỢC.
+               *
+               * Bấm thẻ gọi `onSelectSuggestion(prompt)` — hành động đó chỉ điền
+               * chữ vào ô nhập, không gửi. Mà ô nhập không gửi được khi chưa có
+               * model, đúng như chính thẻ "Thêm nhà cung cấp" ngay trên nói:
+               * *"Chưa có model thì chưa gửi được tin nhắn nào."* Trước đây khối
+               * này nằm NGOÀI nhánh `!hasModels` nên vẫn hiện — hai thẻ mời bấm
+               * vào mà không làm được gì, ở đúng màn hình mà người dùng mới
+               * nhìn lâu nhất.
+               */}
+              {hasModels && (
+                <div className="mt-8 flex w-full max-w-lg flex-col gap-3">
+                  {suggestions.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => onSelectSuggestion(prompt)}
+                      className="rounded-xl border border-subtle bg-surface px-4 py-3.5 text-left font-sans text-read text-text-primary transition-colors duration-150 hover:bg-raised"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <>

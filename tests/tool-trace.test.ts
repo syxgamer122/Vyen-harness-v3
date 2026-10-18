@@ -986,23 +986,35 @@ it('đoạn lời đi qua displayText, không in thẳng `seg.text`', () => {
    * như lỗi căn chỉnh.
    *
    * Đệm KHÔNG phải một số cố định đúng vĩnh viễn: nó là PHÉP CỘNG của bố cục
-   * câu trả lời (`avatar 26px + gap-2 8px`), nên đợt P1 gỡ hộp 16px của trợ lý
-   * (DESIGN.md §15.1 điểm 2) là số này phải từ 50 xuống 34. Assertion đọc chính
-   * message-item thay vì chép số, để đổi bên nào mà quên bên kia là ĐỎ.
+   * câu trả lời. Lịch sử phép cộng đó:
+   *
+   *   50px = hộp trợ lý 16px + avatar 26px + gap 8px   (đợt P1, §15.1 điểm 2)
+   *   34px = avatar 26px + gap 8px                     (gỡ hộp)
+   *    0px = không avatar, không gap                    (2026-10-18)
+   *
+   * Đợt 2026-10-18 gỡ avatar trợ lý khỏi tin nhắn — cùng lý do OpenCode / Cursor
+   * / Claude không đặt logo trong từng tin. Không avatar thì PHÉP CỘNG bằng 0,
+   * nên cả câu trả lời lẫn bảng kê công việc nằm ở lề 0.
+   *
+   * Trước đây chỉ hai dòng này có lề 34px còn dòng usage, bằng chứng và banner
+   * lỗi nằm ở 0 — mép trái cột hội thoại răng cưa. Bỏ avatar sửa luôn chỗ đó,
+   * nên test mới canh: không còn vỏ `flex items-start gap-2`, không còn ô đệm
+   * 26px, và trace không có đệm ngang nào.
    */
-  it('timeline nằm trong cột thẳng với chữ trả lời', () => {
-    const item = fs.readFileSync(
-      path.resolve(__dirname, '../components/chat/message-item.tsx'),
-      'utf8',
-    );
-    expect(item, 'khối trả lời phải là flex items-start gap-2').toMatch(
+  it('timeline nằm cùng lề 0 với chữ trả lời — không avatar thì không đệm', () => {
+    const item = fs
+      .readFileSync(path.resolve(__dirname, '../components/chat/message-item.tsx'), 'utf8')
+      .replace(/\r\n/g, '\n');
+
+    expect(item, 'không còn vỏ flex items-start gap-2 quanh câu trả lời').not.toMatch(
       /className="flex items-start gap-2"/,
     );
-    expect(item, 'avatar/ô đệm phải rộng 26px để cột chữ không dịch').toMatch(
+    expect(item, 'không còn ô đệm 26px từng giữ chỗ cho avatar').not.toMatch(
       /h-\[26px\] w-\[26px\]/,
     );
-    /* 26 (avatar) + 8 (gap-2) = 34. Chữ trả lời KHÔNG còn đệm ngang riêng. */
-    expect(body).toMatch(/<div className="pl-\[34px\]">/);
+    expect(body, 'bảng kê công việc không được thụt lề theo avatar đã không còn').not.toMatch(
+      /pl-\[34px\]/,
+    );
   });
 });
 

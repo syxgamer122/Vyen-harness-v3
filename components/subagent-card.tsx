@@ -141,17 +141,69 @@ export function SubagentCard({ annotation }: SubagentCardProps) {
 }
 
 /**
- * Extract subagent annotations from a message's annotations array.
+ * Gom annotation subagent thành TRẠNG THÁI HIỆN TẠI của từng lượt.
+ *
+ * Annotation là nhật ký sự kiện, không phải ảnh chụp: một lượt subagent ghi ra
+ * `start` + N `progress` + `done`, tất cả nằm chung một mảng. Hàm này trả về
+ * MỘT thẻ cho mỗi `runId`, mang pha của sự kiện CUỐI CÙNG.
+ *
+ * Vì sao phải gom: nếu render thẳng từng annotation, một subagent sinh ra 1+N
+ * dòng, và các dòng `progress` cũ đứng chết ở "đang chạy" với con quay — vì
+ * `phase` của chúng đã đóng băng tại lúc ghi. Người dùng thấy subagent đã xong
+ * mà vẫn còn hai dòng quay, và tưởng app kẹt.
+ *
+ * `progress` ghi trước 2026-10-18 không mang `runId`; mọi dòng không có `runId`
+ * được quy cho lượt `runId` gần nhất đứng trước nó — tin cũ trong IndexedDB vẫn
+ * hiển thị đúng.
  */
 export function getSubagentAnnotations(
   annotations: unknown[] | undefined,
 ): SubagentAnnotation[] {
   if (!annotations) return [];
-  return annotations.filter(
-    (ann): ann is SubagentAnnotation =>
-      typeof ann === "object" &&
-      ann !== null &&
-      "subagent" in ann &&
-      typeof (ann as Record<string, unknown>).subagent === "object",
-  );
+
+  const isSubagent = (ann: unknown): ann is SubagentAnnotation =>
+    typeof ann === "object" &&
+    ann !== null &&
+    "subagent" in ann &&
+    typeof (ann as Record<string, unknown>).subagent === "object";
+
+  const byRun = new Map<string, SubagentAnnotation>();
+  const order: string[] = [];
+  /** Lượt đang chạy mà progress không mang runId sẽ quy về đây. */
+  let openRun = "vô-danh";
+
+  for (const ann of annotations) {
+    if (!isSubagent(ann)) continue;
+    const runId = ann.subagent.runId;
+    const key = typeof runId === "string" && runId ? runId : openRun;
+    if (key !== openRun) openRun = key;
+
+    const prev = byRun.get(key);
+    /*
+     * `progress` về sau KHÔNG được hạ một lượt đã kết thúc.
+     *
+     * `lib/subagent.ts` phát `progress` ở một nhánh chạy TRƯỚC `runSubagent`
+     * (`executeDelegate`, cảnh báo agent khai báo tool không tồn tại) — nhánh đó
+     * chưa có `runId`, nên nó rơi vào lượt đang mở và ghi đè `phase` theo spread.
+     * Lượt A đã `done` mà nhận `progress` của lượt B sẽ quay lại "đang chạy" vĩnh
+     * viễn — đúng triệu chứng đã báo. Ở đây `phase` là trạng thái KẾT THÚC, không
+     * phải trạng thái cuối theo thứ tự thời gian.
+     */
+    if (
+      prev &&
+      (prev.subagent.phase === "done" || prev.subagent.phase === "error") &&
+      ann.subagent.phase === "progress"
+    ) {
+      continue;
+    }
+
+    // Sự kiện sau ghi đè trường của sự kiện trước; `phase` luôn lấy của sự
+    // kiện mới nhất, còn trường chỉ xuất hiện ở sự kiện cũ (`task`, `maxTurns`)
+    // được giữ lại.
+    const merged = prev ? { subagent: { ...prev.subagent, ...ann.subagent } } : ann;
+    if (!byRun.has(key)) order.push(key);
+    byRun.set(key, merged);
+  }
+
+  return order.map((key) => byRun.get(key)!);
 }

@@ -123,7 +123,7 @@ export function hiddenSlashLine(hidden: number): string | null {
  * MỘT nguồn cho cả bốn chế độ phê duyệt, cả ba chỗ hiển thị.
  *
  * Trước đây cùng một trạng thái có tới ba nhãn: pill in tiếng Việt ("Tự chạy
- * tool, không hời"), menu "Tác vụ" in tiếng Anh ("Autonomous"), nút đổi chế độ
+ * tool, không hỏi"), menu "Tác vụ" in tiếng Anh ("Autonomous"), nút đổi chế độ
  * lại in một bản sao của tiếng Anh đó. Ba nhãn cho bốn trạng thái, hai ngôn
  * ngữ, ba cách viết — người dùng phải tự dò xem chúng có nói cùng một điều
  * không, và không có cách nào kiểm bằng mắt trên một màn hình.
@@ -136,25 +136,21 @@ export function hiddenSlashLine(hidden: number): string | null {
  * tiếng Anh của chế độ, không phải tên tiếng Việt, và dải công cụ là nơi người
  * dùng đọc nhanh nhất nên nó phải đọc được bằng tiếng của giao diện.
  */
-const APPROVAL_COPY: Record<ApprovalPolicy, { short: string; long: string; hint: string }> = {
+const APPROVAL_COPY: Record<ApprovalPolicy, { short: string; hint: string }> = {
   always: {
     short: 'Luôn hỏi',
-    long: 'Hỏi trước mọi tool',
     hint: 'Hỏi xác nhận trước khi chạy bất kỳ tool nào',
   },
   smart: {
     short: 'Hỏi khi ghi',
-    long: 'Tự chạy lệnh đọc, hỏi trước khi ghi',
-    hint: 'Tự duyệt lệnh đọc, hời trước khi ghi hoặc xoá',
+    hint: 'Tự duyệt lệnh đọc, hỏi trước khi ghi hoặc xoá',
   },
   never: {
     short: 'Tự chạy',
-    long: 'Tự chạy tool, không hỏi',
     hint: 'Tự duyệt mọi tool an toàn, trừ lệnh phá hoại',
   },
   chat_only: {
     short: 'Không tool',
-    long: 'Không dùng tool',
     hint: 'Vô hiệu hoàn toàn tool, dùng cho phân tích và viết',
   },
 };
@@ -170,15 +166,7 @@ export function resolveApprovalPolicy(
   return policy ?? (autoPilot ? 'smart' : 'always');
 }
 
-/** Nhãn pill chế độ phê duyệt — câu đầy đủ, nói rõ chế độ đó làm gì. */
-export function approvalPillLabel(
-  policy: ApprovalPolicy | undefined,
-  autoPilot: boolean | undefined,
-): string {
-  return APPROVAL_COPY[resolveApprovalPolicy(policy, autoPilot)].long;
-}
-
-/** Nhãn gọn cho ô chật: hàng menu "Tác vụ" và nút đổi chế độ trên dải. */
+/** Nhãn gọn cho ô chật: hàng menu "Tác vụ" và chip trên dải công cụ. */
 export function approvalShortLabel(
   policy: ApprovalPolicy | undefined,
   autoPilot: boolean | undefined,
@@ -1270,6 +1258,33 @@ export const Composer = memo(function Composer({
                * `tests/composer-affordances.test.ts:810` canh nó trong dải
                * công cụ.
                */}
+              {/*
+               * CHIP CHẾ ĐỘ PHÊ DUYỆT — nơi DUY NHẤT hiện nhãn này.
+               *
+               * Lịch sử (2026-10-18): trước đây có HAI chip, ở dải công cụ này và
+               * ở hàng chân dưới. Chúng giống nhau đến từng class — cùng `h-8`,
+               * cùng bo góc, cùng nền `bg-raised`, cùng icon `Zap` màu accent — và
+               * CẢ HAI đều là `<span>` nên không bấm được. Không có tín hiệu nào
+               * phân biệt "đọc" với "bấm", trong khi nó nằm xen giữa ô chọn model,
+               * chip phạm vi, nút đính kèm và nút gửi — tất cả đều là `<button>`
+               * thật.
+               *
+               * Chip hàng chân còn tệ hơn: nó in `goalLoopInfo` (ví dụ "3/10" = số
+               * lượt lặp) bên dưới icon `Zap` — vốn là icon "chế độ phê duyệt" ở mọi
+               * nơi app. Người dùng đọc `⚡ 3/10` và không biết agent có hỏi trước
+               * khi ghi file hay không, tức mất đúng thông tin quyết định nhất.
+               *
+               * Giữ chỗ này vì hai lý do đo được: (1) nó luôn hiện, không bị
+               * `overflow-x-auto` của dải cắt mất ở viewport hẹp, trong khi bản
+               * hàng chân là `hidden lg:flex` — biến mất hoàn toàn dưới 1024px;
+               * (2) tiến độ goal loop vẫn còn ở menu "Tác vụ".
+               *
+               * Cỡ chữ `text-ui` (14px), không phải `micro`/`meta`: §15.4 điểm 12
+               * cấm để thông tin quyết định nằm ở bậc nhỏ. Đây cũng là cỡ của ô
+               * chọn model ngay bên cạnh. Nhãn để `text-tertiary` chứ không phải
+               * màu cảnh báo — màu cảnh báo đã dành cho băng lỗi file và chip chờ
+               * duyệt, ở đây nó chỉ là trang trí.
+               */}
               <span
                 title={`${approvalHint(approvalPolicy, autoPilot)} — đổi ở Cài đặt › Quyền & An toàn.`}
                 className="inline-flex h-8 flex-shrink-0 items-center gap-1 rounded-lg bg-raised px-3 text-ui text-tertiary"
@@ -1602,58 +1617,6 @@ export const Composer = memo(function Composer({
                 className="rounded-lg hover:bg-raised"
                 onClick={() => fileInputRef.current?.click()}
               />
-            </div>
-
-            {/*
-             * Pill chế độ phê duyệt. Trước đây mọi policy khác `always` in
-             * "Autonomous Tools Active" — nhưng `smart` (mặc định) là chế độ
-             * HỎI trước khi ghi file, nên tên nói ngược hành vi: người dùng
-             * tưởng agent tự do ghi đĩa rồi mới phát hiện nó dừng hỏi.
-             * Nay nhãn nói đúng việc chế độ đó làm.
-             *
-             * Cỡ chữ: `text-meta` (12px) → `text-ui` (14px). Nhãn này nói chế
-             * độ phê duyệt — thứ người dùng phải đọc để quyết định agent có
-             * được ghi đĩa hay không — mà §15.4 điểm 12 cấm để thông tin quyết
-             * định nằm ở `micro`/`meta`. Đây cũng là cỡ của ô chọn model vừa
-             * chuyển xuống cùng hàng, nên hàng chân đọc như một khối.
-             *
-             * Icon `Zap` đổi sang `text-accent`: nó là dấu "chế độ này đang bật",
-             * không phải dấu "có cảnh báo" — cảnh báo thật đã có ở chip file
-             * chờ duyệt. Nhãn để `text-tertiary` chứ không phải màu cảnh báo:
-             * màu cảnh báo đã dành cho băng lỗi file và chip chờ duyệt, và ở
-             * đây nó chỉ là trang trí — không đáng để lấy mất sự thống nhất của
-             * hàng chân.
-             */}
-            {/*
-             * `md` → `lg`. Từ `md` (768px) sidebar đã chiếm 288px, nên cột hội
-             * thoại chỉ còn 414px: pill này (nhãn dài, 266px) ép cụm trái còn
-             * 76px, và ô chọn model co xuống 26px rồi tràn sang chip phạm vi —
-             * đo được bằng `elementFromPoint`: điểm giữa của ô chọn model trúng
-             * chip, tức control không bấm được nữa.
-             *
-             * Thông tin không mất khi pill ẩn: nút đổi chế độ ở dải công cụ vẫn
-             * hiện nhãn ngắn ("Hỏi khi ghi"), và menu "Tác vụ" có câu giải thích
-             * đầy đủ. Pill chỉ là bản nhắc lại, nên nó xuất hiện khi có chỗ.
-             */}
-            <div className="hidden lg:flex items-center gap-2">
-              {/*
-               * BO GÓC `rounded-lg` 10px — cùng hệ với chip phạm vi, ô chọn
-               * model và nút đính kèm ngay bên trái (DESIGN.md §4.1: control
-               * chính là `lg`). Trước đây là pill `rounded-full` `py-0.5`, tức
-               * vừa bo tròn vừa THẤP hơn hàng ~7px — pill là dạng viên thuốc
-               * cho chấm trạng thái, còn đây là ô ghi trạng thái có chữ, phải
-               * đọc như một control của hàng.
-               *
-               * `h-8` thay cho `py-0.5`: cao đúng bằng ô chọn model và chip
-               * phạm vi, nên mép trên của cả hàng thẳng hàng. `px-2.5` giữ
-               * nguyên (viền 1px + px đều nhau), chỉ đổi chiều cao.
-               */}
-              {(approvalPolicy === 'never' || approvalPolicy === 'smart' || autoPilot) && (
-                <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-subtle bg-raised px-2.5 font-sans text-ui text-tertiary">
-                  <Zap size={11} aria-hidden="true" className="text-accent" />
-                  <span>{goalLoopInfo || approvalPillLabel(approvalPolicy, autoPilot)}</span>
-                </span>
-              )}
             </div>
 
             {/* Cụm PHẢI: Gửi */}

@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "NGUỒN DUY NHẤT cho hình + màu logo Vyen. Đọc bởi:",
+    "  components/vyen-logo.tsx  (render trong app)",
+    "  scripts/build-icons.cjs   (sinh app/icon.svg + PNG PWA + favicon.ico)",
+    "Sửa ở đây thì cả hai cùng đổi. Mọi số đều ĐO từ brand/logo-source.png",
+    "(2048x2048; logo chiếm 1516x1331 px). Cách đo: brand/README.md"
+  ],
+  "viewBox": 34,
+  "cloud": "M 17 7.19 C 19.31 6.2 21.2 5.56 23.51 5.56 C 27.09 5.56 30.13 8.72 30.13 13.34 C 30.13 16.18 28.77 18.28 27.72 19.33 C 26.67 20.06 26.67 20.69 27.72 21.43 C 28.77 22.48 29.61 24.26 28.56 26.37 C 27.3 28.78 24.88 29.83 21.73 29.83 C 19.63 29.83 18.26 29.1 17 27.84 C 15.74 29.1 14.37 29.83 12.27 29.83 C 9.12 29.83 6.7 28.78 5.44 26.37 C 4.39 24.26 5.23 22.48 6.28 21.43 C 7.33 20.69 7.33 20.06 6.28 19.33 C 5.23 18.28 3.87 16.18 3.87 13.34 C 3.87 8.72 6.91 5.56 10.49 5.56 C 12.8 5.56 14.69 6.2 17 7.67 Z",
+  "logoBox": { "x": 3.87, "y": 5.56, "w": 26.26, "h": 24.27 },
+  "bands": [1, 0.9725, 0.8673, 0.7233, 0.6181],
+  "bandFills": ["ring", "green", "mint", "green", "white"],
+  "face": {
+    "eyeY": 14.394,
+    "eyeR": 1.16,
+    "leftEyeX": 12.063,
+    "rightEyeX": 21.937,
+    "leftLinkEndX": 15.818,
+    "rightLinkEndX": 18.182,
+    "linkWidth": 0.92,
+    "mouthY": 20.51,
+    "mouthLeftX": 12.667,
+    "mouthRightX": 21.333,
+    "mouthWidth": 0.74,
+    "mouthDotR": 0.94
+  },
+  "palette": {
+    "ringTop": "#1B7455",
+    "ringBot": "#0D6A4B",
+    "greenTop": "#82E767",
+    "greenBot": "#2F9462",
+    "mintTop": "#D8FCDC",
+    "mintBot": "#C3E9D2",
+    "faceTop": "#1A8261",
+    "faceBot": "#0F5C46",
+    "linkEye": "#3EA260",
+    "linkIn": "#7ED078",
+    "mouth": "#158360"
+  }
+}

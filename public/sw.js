@@ -1,14 +1,6 @@
 /*
  * Service worker cho Vyen — AI Innovations.
  * Chiến lược bảo toàn:
- *  - /api/*            → không can thiệp (stream phải đi thẳng mạng)
- *  - /_next/static/*   → cache-first (asset có hash, bất biến)
- *  - navigation        → network-first, fallback cache rồi /offline.html
- *  - asset tĩnh khác   → stale-while-revalidate
- */
-/*
- * Service worker cho Vyen — AI Innovations.
- * Chiến lược bảo toàn:
  *  - dev (no-store)    → không can thiệp, thẳng ra mạng
  *  - /api/*            → không can thiệp (stream phải đi thẳng mạng)
  *  - /_next/static/*   → cache-first (asset có hash, bất biến)
@@ -18,7 +10,12 @@
  * NÂNG `VERSION` sau khi đổi chiến lược cache: `activate` xoá mọi cache không
  * mang version này, nên người dùng không bị mắc lại chunk cũ.
  */
-const VERSION = 'v5';
+/*
+ * Đợt 2026-10-18: nâng v5 → v6 vì `public/icons/*.png` và `favicon.ico` được sinh
+ * lại từ logo mới. Không nâng thì SW còn trả icon cũ màu `#11835F` cho tab và
+ * màn hình cài app — đúng thứ đợt này sửa.
+ */
+const VERSION = 'v6';
 const STATIC_CACHE = `aichat-static-${VERSION}`;
 const PAGES_CACHE = `aichat-pages-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
