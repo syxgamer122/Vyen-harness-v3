@@ -57,6 +57,9 @@ export const CORE_ENTRIES = [
   // Task 4 tạo thêm file thứ tư trong `lib/provider/` — plan viết trước nên
   // Global Constraint của plan yêu cầu mọi plan lõi khai entry mới ở đây.
   'lib/provider/upstream-diagnosis.ts',
+  // Lớp cầu nối ipc.cjs ra khỏi Electron. Thay cho `lib/tools/fs-node.ts` mà
+  // spec §5 dự kiến — đo cho thấy ipc.cjs đã có đủ backend và máy an toàn.
+  'lib/tools/ipc-node.ts',
 ];
 
 

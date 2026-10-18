@@ -30,6 +30,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/provider/openai-adapter.ts`
 - `lib/provider/anthropic-adapter.ts`
 - `lib/provider/upstream-diagnosis.ts`
+- `lib/tools/ipc-node.ts`
 
 ## Bằng chứng dòng
 
