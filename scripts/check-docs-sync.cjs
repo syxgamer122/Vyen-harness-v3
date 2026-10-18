@@ -96,8 +96,18 @@ try {
 }
 const trackedSet = new Set(tracked);
 const scripts = Object.keys(require(path.join(ROOT, 'package.json')).scripts);
+/*
+ * Chỉ đọc những file CÒN trên đĩa.
+ *
+ * `tracked` lấy từ `git ls-files`, tức **index** — còn index có thể vẫn giữ một
+ * file đã bị xoá trên đĩa (khi ai đó `git restore --staged` một lần xoá, hoặc xoá
+ * xong chưa kịp `git add`). Trước đây dòng này `readFileSync` thẳng mọi file
+ * trong index nên ném ENOENT và **làm hỏng cả `npm run docs:check`** thay vì báo
+ * lệch. Lệnh này vốn để kiểm tra doc, không phải để phát hiện việc dở dang.
+ */
 const codeText = tracked
   .filter((p) => CODE_EXT.test(p) && !p.startsWith('package-lock'))
+  .filter((p) => fs.existsSync(path.join(ROOT, p)))
   .map((p) => fs.readFileSync(path.join(ROOT, p), 'utf8'))
   .join('\n');
 
