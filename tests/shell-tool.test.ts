@@ -246,4 +246,32 @@ describe('saveSpillText', () => {
     expect(fs.readFileSync(a!.savedTo, 'utf8')).toBe('nội dung A');
     expect(fs.readFileSync(b!.savedTo, 'utf8')).toBe('nội dung B');
   });
+
+  /* Review Focus #2 — nguy hiểm nhất của tính năng này.
+   *
+   * Model được báo "đã lưu ở <path>". Nếu phiên tích tụ đủ kết quả lớn mà
+   * registry đẩy file spill đi, model đi tìm thì không có gì — và không có
+   * dấu hiệu gì là nó đã mất. Shell output đọc ngay trong lượt nên chết sớm
+   * được; spill sinh ra để đọc LÂU HƠN nên phải sống lâu hơn. */
+  it('registry đầy: shell bị đẩy trước, spill còn nguyên trên đĩa', () => {
+    const spill = saveSpillText('giữ lại cho sau', 'can-giu.txt');
+    tempFiles.push(spill!.savedTo);
+
+    for (let i = 0; i < SAVED_OUTPUT_REGISTRY_MAX + 5; i += 1) {
+      // 2.100 dòng > SHELL_OUTPUT_LIMIT_LINES (2.000) nên phải spill shell.
+      const o = truncateShellOutput('x\n'.repeat(2_100), 'stdout');
+      expect(o.savedTo).toBeTruthy();
+      if (o.savedTo) tempFiles.push(o.savedTo);
+    }
+
+    expect(isSavedShellOutput(spill!.savedTo)).toBe(true);
+    expect(fs.existsSync(spill!.savedTo)).toBe(true);
+    expect(fs.readFileSync(spill!.savedTo, 'utf8')).toBe('giữ lại cho sau');
+  });
+
+  it('đường dẫn spill đọc được qua whitelist fs_read', () => {
+    const spill = saveSpillText('nội dung', 'doc-voi-fs-read.txt');
+    tempFiles.push(spill!.savedTo);
+    expect(isSavedShellOutput(spill!.savedTo)).toBe(true);
+  });
 });
