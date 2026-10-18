@@ -43,6 +43,9 @@
  *                  chỉ nối phần endpoint. Thiếu `/v1` sẽ ra `/messages` thay vì
  *                  `/v1/messages`.
  *   VYEN_KIND      `anthropic` (SDK native) hoặc `openai-compatible` (mặc định).
+ *   VYEN_MAX_TOKENS trần token đầu ra, mặc định 2048. **Đừng bỏ trống** — xem
+ *                  ghi chú cạnh chỗ dùng: gateway tính credit sẽ từ chối vì
+ *                  trần mặc định của provider quá lớn.
  *
  * ============ VẤN ĐỀ ĐÃ GẶP, CHƯA GIẢI ============
  *
@@ -100,6 +103,18 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  // Trần số token đầu ra. KHÔNG để mặc định của provider: OpenRouter từ chối
+  // bằng lỗi kiểu "you requested up to 16384 tokens but can only afford 13228"
+  // — đo thật 2026-10-18. Với gateway tính tiền theo credit, để provider tự
+  // chọn trần nghĩa là một câu hỏi ngắn cũng có thể bị từ chối vì lý do không
+  // liên quan gì tới nội dung.
+  const rawMax = process.env.VYEN_MAX_TOKENS ?? '2048';
+  const maxTokens = Number(rawMax);
+  if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
+    console.error(`VYEN_MAX_TOKENS khong hop le: ${rawMax} (can la so nguyen duong)`);
+    process.exit(2);
+  }
+
   const cfg = {
     kind,
     apiKey,
@@ -108,6 +123,7 @@ async function main(): Promise<void> {
   };
 
   console.error(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
+  console.error(`> toi da ${maxTokens} token`);
   console.error('> (ket qua se do la day)\n');
 
   try {
@@ -128,6 +144,7 @@ async function main(): Promise<void> {
     const result = streamText({
       model: lm,
       prompt,
+      maxTokens,
       onError: ({ error }) => {
         streamError ??= error;
       },
