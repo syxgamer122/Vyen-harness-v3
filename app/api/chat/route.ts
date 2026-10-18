@@ -1969,7 +1969,13 @@ export async function POST(req: Request) {
                     native qua server-tool execute. Plan mode đã loại nó khỏi
                     clientToolNames ngay từ đầu (chống subagent ghi file lậu). */
                  const delegateAvailable =
-                   allowAgentTools && agentMode !== 'plan' && !recipeDeny.has('delegate');
+                   allowAgentTools &&
+                   agentMode !== 'plan' &&
+                   !recipeDeny.has('delegate') &&
+                   // `recipeAllow` cũng phải ràng buộc `delegate`: một recipe khai
+                   // `toolAllow: [fs_read]` không nên sinh ra subagent — subagent
+                   // là công cụ, không phải ngoại lệ.
+                   (!recipeAllow || recipeAllow.has('delegate'));
                  /* Router có thể loại tool mà recipe đã ghi tên tường minh vào
                     allow-list (BM25 chỉ nhìn câu hỏi, không đọc ý tác giả
                     recipe). Ý viết tay rõ ràng hơn heuristic nên bộ lọc router
@@ -2305,7 +2311,7 @@ export async function POST(req: Request) {
                         model: openaiNonStreaming(targetModel),
                         systemBase: composedSystem,
                         serverTools: serverTools as ReturnType<typeof buildAgentTools>,
-                        clientToolNames: CLIENT_TOOL_NAMES,
+                        clientToolNames,
                         registry: agentRegistry,
                         abortSignal: link.signal,
                         ...(modelConfig.supportsTemperature === false
@@ -2369,7 +2375,7 @@ export async function POST(req: Request) {
                               model: openaiNonStreaming(targetModel),
                               systemBase: composedSystem,
                               serverTools: serverTools as ReturnType<typeof buildAgentTools>,
-                              clientToolNames: CLIENT_TOOL_NAMES,
+                              clientToolNames,
                               registry: agentRegistry,
                               abortSignal: link.signal,
                               ...(modelConfig.supportsTemperature === false

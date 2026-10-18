@@ -130,7 +130,12 @@ describe('meta-tools router sống sót qua bộ lọc `tools:`', () => {
 describe('meta-tools có mô tả + chữ ký args trên đường emulated', () => {
   it('runEmulatedLoop nhận routerMetaTools qua extraToolDocs', () => {
     expect(routeSource).toMatch(
-      /extraToolDocs: \{ \.\.\.mcpTools\.defs, \.\.\.routerMetaTools \},/,
+      /extraToolDocs: \{\s*\n\s*\.\.\.mcpTools\.defs,\s*\n\s*\.\.\.routerMetaTools,/,
+    );
+    // `delegate` cũng phải vào extraToolDocs: nó không nằm trong registry tĩnh
+    // của agent-tools, thiếu thì model đường emulated không thấy sub-agent nào.
+    expect(routeSource).toMatch(
+      /\.\.\.\(delegateAvailable \? \{ delegate: buildDelegateTool\(agentRegistry\) \} : \{\}\),/,
     );
   });
 
@@ -317,8 +322,18 @@ describe('bộ lọc cũ không bị bỏ rơi khi thêm bộ lọc router', () 
     );
     // delegate do route tự chạy nên vẫn phải còn mặt ở cả hai đường.
     expect(routeSource).toMatch(
-      /const delegateAvailable =\s*\n\s*allowAgentTools && agentMode !== 'plan' && !recipeDeny\.has\('delegate'\);/,
+      /const delegateAvailable =\s*\n\s*allowAgentTools &&\s*\n\s*agentMode !== 'plan' &&\s*\n\s*!recipeDeny\.has\('delegate'\) &&/,
     );
+    // `recipeAllow` cũng phải ràng buộc delegate — nếu không, một recipe khai
+    // `toolAllow: [fs_read]` vẫn sinh ra subagent có toàn bộ tool.
+    expect(routeSource).toMatch(
+      /\(!recipeAllow \|\| recipeAllow\.has\('delegate'\)\);/,
+    );
+    // Subagent phải kế thừa bộ tool ĐÃ LỌC của lượt này, không phải toàn bộ
+    // catalog — nếu không, `recipeDeny` không còn ràng buộc được con.
+    const delegateDeps = routeSource.match(/clientToolNames,\s*\n\s*registry: agentRegistry,/g);
+    expect(delegateDeps?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(routeSource).not.toMatch(/clientToolNames: CLIENT_TOOL_NAMES,\s*\n\s*registry: agentRegistry,/);
   });
 });
 

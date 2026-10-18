@@ -1,21 +1,29 @@
 /**
- * Subagent Delegation — Lightweight subagent as emulated loop fork.
+ * Subagent Delegation — subagent là một vòng lặp emulated fork, điều khiển
+ * bằng một FILE ĐỊNH NGHĨA trong `.vyen/agents/`.
  *
- * Design principles:
- * 1. Context isolation: subagent gets FRESH message array (no parent history) —
+ * Nguyên tắc thiết kế:
+ * 1. Cách ly ngữ cảnh: con nhận message array MỚI (không thấy lịch sử chat) —
  *    hoặc context 'brief' nhận một khối tóm tắt tất định của phiên cha
  *    (deps.getParentBrief, dựng bởi buildSubagentParentBrief) chứ không phải
  *    transcript nguyên bản.
- * 2. No recursive spawning: subagent CANNOT call delegate (enforced by excluding
- *    'delegate' from its tool set)
- * 3. Bounded execution: max_turns cap (default 10, max 25)
- * 4. Same safety layers: guarded(), doom-loop detection, path-guard all apply
- * 5. Result extraction: last assistant text = subagent's answer
+ * 2. Không đệ quy: `delegate` KHÔNG nằm trong bộ tool của con — chặn ở tầng
+ *    schema (xem `lib/agents/agent-tool-scope.ts`), không phải bằng lời dạy
+ *    trong prompt. Cơ chế này fail-closed: con không THẤY tool thì không gọi
+ *    được, dù có muốn.
+ * 3. Bộ tool là GIAO của bộ tool cha (đã lọc theo policy của lượt) và `tools`
+ *    khai báo trong file agent. Agent không thể tự nâng quyền chỉ bằng cách tạo
+ *    file.
+ * 4. Chặn ghi theo ĐƯỜNG DẪN (CapBAC `writePatterns`) đã bị xoá: file agent là
+ *    bề mặt quyền do người dùng viết và nhìn thấy được, còn cổng duyệt thật vẫn
+ *    là `shouldAutoApprove` trong `lib/auto-pilot.ts` — subagent đi qua relay
+ *    nên đi qua đúng executor, đúng hàng đợi duyệt với mọi tool thường.
+ * 5. Trần vòng đến từ `steps` trong file agent (mặc định 10, max 25).
+ * 6. Các lớp an toàn khác vẫn áp: guarded(), chặn doom-loop, path-guard.
+ * 7. Kết quả: text assistant cuối = câu trả lời của con.
  *
- * Fan-out song song (tương tự runs.all của subagent): args.tasks chạy 1-4
- * subagent CÙNG LÚC qua runPool (cap SUBAGENT_PARALLEL_CONCURRENCY), kết quả
- * giữ đúng thứ tự đầu vào. Mode 'scout' là denylist tool ghi, KHÔNG phải
- * sandbox: git_add/git_commit vẫn gọi được.
+ * KHÔNG còn fan-out `tasks[]` (nhiều task chạy song song một lượt) — sẽ làm
+ * lại ở phase sau, khi spawn tách rời thay thế lời gọi block.
  *
  * Execution model: Fork runEmulatedLoop() with isolated messages + reduced tools.
  * Runs SERVER-side inside the chat route (needs LLM access). Client tools
