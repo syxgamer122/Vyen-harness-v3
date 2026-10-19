@@ -47,6 +47,11 @@ export const CORE_ENTRIES = [
   'lib/emulated-agent.ts',
   'lib/tool-limits.ts',
   'lib/context-budget.ts',
+  // Cơ chế compaction dùng chung cho web và CLI (plan 2026-10-19-cli-compaction):
+  // marker, state tích lũy, tóm tắt tất định, và prompt tóm tắt dùng chung.
+  // Không chạm API trình duyệt — `import type { Message } from 'ai/react'` là
+  // type-only nên bị `runtimeImportSpecs` bỏ qua.
+  'lib/context-compaction.ts',
   'lib/secret-registry.ts',
   'lib/mcp/tool-mapper.ts',
   // Lớp provider (plan 2026-10-18-provider-layer). KHÔNG chạm API trình duyệt —

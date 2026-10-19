@@ -24,6 +24,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/emulated-agent.ts`
 - `lib/tool-limits.ts`
 - `lib/context-budget.ts`
+- `lib/context-compaction.ts`
 - `lib/secret-registry.ts`
 - `lib/mcp/tool-mapper.ts`
 - `lib/provider/adapter.ts`

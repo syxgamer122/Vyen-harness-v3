@@ -23,9 +23,12 @@ import {
   emptyCompactionState,
   COMPACTION_STATE_LIMITS,
   COMPACT_SUMMARY_MAX_CHARS,
+  COMPACT_SUMMARY_SYSTEM,
+  buildCompactPrompt,
   READ_REMINDER_LIMITS,
 } from '@/lib/context-compaction';
 import { estimateContextTokens } from '@/lib/context-budget';
+import { readFileSync } from 'node:fs';
 
 function row(extra: Partial<StoredMessage> = {}): StoredMessage {
   return {
@@ -521,5 +524,42 @@ describe('readReminderBudget — summary + separator + reminder không vượt t
       const total = budget > 0 ? len + 2 + budget : len;
       expect(total).toBeLessThanOrEqual(COMPACT_SUMMARY_MAX_CHARS);
     }
+  });
+});
+
+/* ================================================================== */
+/* Prompt tóm tắt dùng chung cho web và CLI                          */
+/* ================================================================== */
+
+describe('prompt tóm tắt — MỘT nguồn sự thật cho web và CLI', () => {
+  it('SUMMARY_SYSTEM nằm trong lib/context-compaction, KHÔNG nằm trong route', () => {
+    const route = readFileSync('app/api/compact/route.ts', 'utf8');
+    expect(route).not.toMatch(/const SUMMARY_SYSTEM\s*=/);
+    expect(route).toMatch(/COMPACT_SUMMARY_SYSTEM/);
+  });
+
+  it('system prompt có câu HỢP NHẤT — lần nén sau phải giữ thông tin lần nén trước', () => {
+    expect(COMPACT_SUMMARY_SYSTEM).toMatch(/hợp nhất/i);
+  });
+
+  it('system prompt có câu chống prompt-injection', () => {
+    expect(COMPACT_SUMMARY_SYSTEM).toMatch(/KHÔNG tin cậy/);
+  });
+
+  it('buildCompactPrompt chứa transcript và bản tóm tắt trước', () => {
+    const p = buildCompactPrompt({
+      transcript: 'Người dùng: them file test',
+      previousSummary: 'Đã sửa lib/a.ts',
+    });
+    expect(p).toContain('Đã sửa lib/a.ts');
+    expect(p).toContain('them file test');
+  });
+
+  it('buildCompactPrompt đưa khối ngữ cảnh có cấu trúc vào trước transcript', () => {
+    const p = buildCompactPrompt({
+      transcript: 'TRANSCRIPT',
+      context: '[Dữ kiện] file da sua',
+    });
+    expect(p.indexOf('file da sua')).toBeLessThan(p.indexOf('TRANSCRIPT'));
   });
 });
