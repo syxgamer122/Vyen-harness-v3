@@ -312,3 +312,40 @@ dài ⇒ nén **tự động** đã chạy trước lượt ⇒ `session.compact
 - **Task 7: complete (commits b7012b6..c443335, tests: npx vitest run tests/cli-*.test.ts → 91/91 pass)**
 
 ## Task 8: CORE_ENTRIES + sinh lại bảng kiểm kê
+
+**Ruling: các entry `CORE_ENTRIES` đã được khai NGAY trong task tạo file (Task 1, 3, 5),
+không dồn tới Task 8 như plan.** Lý do: `tests/repo-hygiene.test.ts:85` bắt buộc
+**mọi** file trong `cli/` phải có trong `CORE_ENTRIES` ⇒ task tạo file mà chưa khai là
+để lại repo đỏ. Task 8 vì thế chỉ còn: xác minh + sinh lại bảng + gate.
+
+**Ruling: GIỮ ledger trong git thay vì xoá workspace.** Skill `executing-plans` bảo xoá
+workspace khi review sạch ("git history là bản ghi"). Nhưng repo này đang **track** 3
+ledger cũ (`.superpowers/sdd/2026-10-18-*/progress.md`) — đó là quy ước của chủ repo,
+và các `Ruling:` trong ledger là thứ diff KHÔNG giữ lại. Chi phí nếu sai: một file
+markdown thừa trong repo.
+
+- Bảng kiểm kê sinh lại: **không có diff** ⇒ đã khớp `CORE_ENTRIES`. Đồ thị lõi:
+  52 → **56** file.
+- `cli-migration-scan` + `repo-hygiene` ⇒ 34/34 xanh.
+- `npm run build` ⇒ **exit 0** (bảng route đầy đủ) — build thật chứ không chỉ `tsc`.
+- `npm run docs:check` ⇒ OK (10 tài liệu, 589 file).
+- **Full suite:** 229/230 file, **3637 pass**, 3 fail — **toàn bộ** trong
+  `tests/secret-registry.test.ts` (ngân sách thời gian 500ms, đo được 610ms). Đây là
+  flaky đã ghi ở `AGENTS.md` §1 ("Đỏ cả khi chạy riêng"). `lib/secret-registry.ts`
+  **không** bị sửa trong toàn bộ plan, và test đó gọi thẳng registry chứ không gọi
+  code mới ⇒ không phải hồi quy.
+  - Một lần chạy trước đó có **2** file đỏ ⇒ file thứ hai là flaky worker-thread
+    (`code-mode-escape`) hoặc `launch-desktop` (cổng 3000). Chạy riêng cả hai ⇒
+    **83/83 xanh** ⇒ xác nhận là flaky tải máy, không phải hồi quy.
+- **Task 8: complete (commits c443335..d187eb1, tests: npm run test → 229/230 file, 3637/3641 pass; 3 fail đều là flaky `secret-registry` đã ghi ở AGENTS.md §1)**
+
+## Gate cuối toàn plan
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm run typecheck` | 0 lỗi |
+| `npm run lint` | 0 lỗi / 8 warning (baseline repo) |
+| `npm run test` | 229/230 file, 3637 pass; 3 fail = flaky `secret-registry` (AGENTS.md §1) |
+| `npm run build` | exit 0 |
+| `npm run docs:check` | OK — 10 tài liệu, 589 file |
+| BOM | 0 file nguồn có BOM (`tests/repo-hygiene.test.ts` canh) |
