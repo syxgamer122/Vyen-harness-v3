@@ -26,27 +26,12 @@ import { capHits, fetchReadablePage, searchWeb } from '@/lib/web-backend';
 import { WEB_LIMITS } from '@/lib/web-context';
 import { judgeInjection } from '@/lib/injection-guard';
 import { getToolCallBudget, checkDoomLoop } from '@/lib/tool-call-budget';
-import { TOOL_RESULT_MAX_CHARS, TOOL_PREVIEW_MAX_CHARS } from '@/lib/tool-limits';
+import { TOOL_PREVIEW_MAX_CHARS } from '@/lib/tool-limits';
 import { redactSecretText, redactSecretsDeep } from '@/lib/secret-registry';
 import { isMcpToolKey } from '@/lib/mcp/tool-mapper';
 import { TOOL_CATALOG } from '@/lib/tool-catalog';
 import { CLIENT_TOOL_DEFS, DELEGATE_PARAMETERS } from '@/lib/agent-tools';
-import * as ipc from '@/lib/ipc.cjs';
-
-/**
- * Ghi phần kết quả tool bị cắt ra file app tự ghi để `fs_read` đọc lại được.
- *
- * Best-effort: ghi lỗi trả `null` — caller rơi về cắt trần như cũ, KHÔNG ném.
- * Lỗi lưu không được biến một tool call thành công thành `isError`
- * (docs/subsystems/spill.md:92 của deepseek-harness).
- *
- * `content` PHẢI là bản đã redact — `capToolResult` nhận đã redact từ `guarded`.
- * Bí mật hay nằm ở phần giữa, tức phần bị lược khỏi ngữ cảnh, nên đây là ranh giới
- * redact thứ hai sau "trước khi cắt".
- */
-const saveSpillText = (ipc as unknown as {
-  saveSpillText?: (content: string, name: string) => { savedTo: string; bytes: number; notice: string } | null;
-}).saveSpillText;
+import { capToolResult } from '@/lib/tool-result-server';
 
 export type AgentToolSet = ReturnType<typeof buildAgentTools>;
 
@@ -111,47 +96,17 @@ function hostOf(url: string): string | null {
 }
 
 /**
- * Áp trần kích thước cho kết quả tool ở ĐƯỜNG NATIVE. Trước đây chỉ đường
- * emulated cắt (6k) còn native để nguyên — một web_fetch trang dài có thể
- * đẩy cả chục nghìn token vào context mà ContextMeter không kịp phản ánh.
+ * Ghi chú về `capToolResult` — hàm này **đã chuyển** sang
+ * `lib/tool-result-server.ts` và được import từ đó.
  *
- * Cắt trên TỪNG trường string dài thay vì stringify cả object, để shape kết
- * quả (results[], content, note...) không đổi — model vẫn đọc được cấu trúc.
+ * Lý do: đường CLI (`lib/tools/ipc-node.ts`) cần đúng cách cắt này, và viết bản thứ
+ * hai là "hai nguồn sự thật" (`AGENTS.md` §6). Hành vi giữ nguyên: cắt trên từng trường
+ * string dài, spill trước khi cắt, thêm `truncated` + `spillNotice`.
  *
- * PHẦN BỊ CẮT KHÔNG BỊ VĂN: ghi ra file app tự ghi trước khi cắt, để model
- * đọc lại bằng `fs_read` thay vì phải đoán. Đây là `shell_run` đã làm sẵn từ
- * trước (`saveShellOutput` trong lib/ipc.cjs); ở đây dùng chung `saveSpillText`.
- *
- * `result` tới đây ĐÃ được redact (xem `guarded`) — thứ ghi đĩa là thứ đã che.
+ * Khác duy nhất: bản ở `lib/tool-result-server.ts` redact thêm lần nữa trước khi ghi
+ * đĩa — ở đường server thì nội dung đã redact sẵn (xem `guarded`) nên không có gì để
+ * che, còn ở đường CLI thì đây là chốt chặn duy nhất.
  */
-function capToolResult(result: Record<string, unknown>): Record<string, unknown> {
-  let raw: string;
-  try {
-    raw = JSON.stringify(result) ?? '';
-  } catch {
-    return { note: 'Kết quả công cụ không đọc được.' };
-  }
-  if (raw.length <= TOOL_RESULT_MAX_CHARS) return result;
-
-  /* Ghi đĩa TRƯỚC khi cắt. Best-effort: hỏng thì rơi về cắt trần như cũ,
-     KHÔNG ném — lỗi lưu không được biến tool call thành lỗi (ipc.cjs:736). */
-  const spilled = saveSpillText?.(raw, 'tool-result') ?? null;
-
-  const out: Record<string, unknown> = {};
-  let remaining = TOOL_RESULT_MAX_CHARS;
-  for (const [key, value] of Object.entries(result)) {
-    if (typeof value === 'string' && value.length > remaining) {
-      out[key] = `${value.slice(0, Math.max(0, remaining))}\n…[đã cắt bớt vì quá dài]`;
-      remaining = 0;
-    } else {
-      out[key] = value;
-      if (typeof value === 'string') remaining -= value.length;
-    }
-  }
-  out.truncated = true;
-  if (spilled) out.spillNotice = spilled.notice;
-  return out;
-}
 
 function stableKey(name: string, args: unknown): string {
   let raw: string;

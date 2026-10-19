@@ -1,5 +1,11 @@
 /**
- * Serialize + cắt trần kết quả tool cho ĐƯỜNG EMULATED — chỉ chạy ở server.
+ * Serialize + cắt trần kết quả tool — dùng chung cho **hai** đường:
+ *
+ *   - **đường emulated ở server**: `serializeToolResult` (trả về chuỗi).
+ *   - **đường CLI** (`lib/tools/ipc-node.ts`): `capToolValue` / `capToolResult` — cắt
+ *     trần kết quả tool **trước khi** nó vào ngữ cảnh.
+ *
+ * ============ VÌ SAO TÁCH THEO RUNTIME ============
  *
  * Tách khỏi `lib/tool-limits.ts` theo RUNTIME (cùng nguyên tắc với
  * `lib/agent-tools-server.ts`). Lý do: file này ghi spill xuống đĩa nên cần
@@ -35,6 +41,44 @@ const saveSpillText = (ipc as unknown as {
     name: string,
   ) => { savedTo: string; bytes: number; notice: string } | null;
 }).saveSpillText;
+
+/**
+ * Hàm ghi phần bị cắt ra file.
+ *
+ * `null` = ghi không được ⇒ caller rơi về cắt trần, KHÔNG ném.
+ */
+export type SpillSaver = (
+  content: string,
+  name: string,
+) => { savedTo: string; bytes: number; notice: string } | null;
+
+/**
+ * Spill an toàn: **nội dung ghi xuống đĩa phải ĐÃ che bí mật**.
+ *
+ * Vì sao: đường server redact trước khi gọi `capToolResult` (xem `guarded`), nhưng
+ * đường CLI thì **không** — CLI chỉ che lúc ghi transcript, còn lúc chạy thì model
+ * cần đọc được khoá nó vừa đọc. Nếu spill nguyên văn thì một `.env` đọc được sẽ nằm
+ * trọn trong file tạm, ngoài transcript mà đã che.
+ *
+ * `redactSecretText` trên **chuỗi đã serialize** — cùng cách `serializeToolResult`
+ * làm (`redactSecretText(raw)`), nên bí mật nằm trong mọi field đều bị che.
+ */
+function spillRedacted(raw: string, name: string, saver?: SpillSaver): ReturnType<SpillSaver> {
+  const ghi = saver ?? saveSpillText;
+  return ghi?.(redactSecretText(raw), name) ?? null;
+}
+
+/** Độ dài JSON của một giá trị — dùng để cắt mảng mà không phá hình dạng. */
+function jsonLengthOf(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'string') return value.length;
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 
 /** Serialize + cắt trần trong một bước. Không bao giờ ném. */
 export function serializeToolResult(
@@ -75,4 +119,125 @@ export function serializeToolResult(
     return `${head}${marker}${tail}\n\n${spilled.notice}`;
   }
   return truncateToolResult(redacted, maxChars);
+}
+
+/* ------------------------------------------------------------------ */
+/* Cắt trần kết quả tool — dùng chung cho server và CLI                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cắt trần kết quả tool dạng **object**.
+ *
+ * Chuyển từ `lib/agent-tools-server.ts` (ở đó nó là hàm riêng, không export) — để
+ * đường CLI dùng **cùng một** cách cắt thay vì viết bản thứ hai (`AGENTS.md` §6).
+ *
+ * Hợp đồng:
+ * - `JSON.stringify(result)` ≤ `TOOL_RESULT_MAX_CHARS` ⇒ trả **nguyên** `result`.
+ * - Lớn hơn ⇒ spill trước, cắt các field chuỗi dài, thêm `truncated: true` và
+ *   `spillNotice` (khi spill thành công).
+ *
+ * `saver` là tham số chứ không phải import bên trong: `lib/ipc.cjs` phải là **MỘT
+ * instance**. `lib/tools/ipc-node.ts` nạp nó bằng `'../ipc.cjs'`, còn file này nạp bằng
+ * `'@/lib/ipc.cjs'` — hai specifier khác nhau. Nếu mỗi bên tự import, một bên có thể
+ * giữ instance khác ⇒ spill ghi vào registry của instance này còn `fs_read` đọc
+ * registry của instance kia ⇒ **file spill không đọc được**. Truyền tay hàm của chính
+ * instance đang dùng ⇒ không thể lệch.
+ */
+export function capToolResult(
+  result: Record<string, unknown>,
+  saver?: SpillSaver,
+): Record<string, unknown> {
+  let raw: string;
+  try {
+    raw = JSON.stringify(result) ?? '';
+  } catch {
+    return { note: 'Kết quả công cụ không đọc được.' };
+  }
+  if (raw.length <= TOOL_RESULT_MAX_CHARS) return result;
+
+  /* Ghi đĩa TRƯỚC khi cắt. Best-effort: hỏng thì rơi về cắt trần như cũ,
+     KHÔNG ném — lỗi lưu không được biến tool call thành lỗi (ipc.cjs:736). */
+  const spilled = spillRedacted(raw, 'tool-result', saver);
+
+  const out: Record<string, unknown> = {};
+  let remaining = TOOL_RESULT_MAX_CHARS;
+  for (const [key, value] of Object.entries(result)) {
+    if (typeof value === 'string' && value.length > remaining) {
+      out[key] = `${value.slice(0, Math.max(0, remaining))}\n…[đã cắt bớt vì quá dài]`;
+      remaining = 0;
+    } else {
+      out[key] = value;
+      if (typeof value === 'string') remaining -= value.length;
+    }
+  }
+  out.truncated = true;
+  if (spilled) out.spillNotice = spilled.notice;
+  return out;
+}
+
+/**
+ * Cắt trần kết quả tool bất kỳ — **giữ nguyên hình dạng**.
+ *
+ * Tool của CLI trả ba kiểu khác nhau: `fs_list`/`fs_search` trả **mảng**, `fs_read`/
+ * `fs_write` trả **object**, `git_diff`/`git_log` trả **chuỗi thô**. Đổi mảng thành
+ * object thì model nhìn thấy thứ khác với lúc nó gọi tool — nên cắt theo từng kiểu:
+ *
+ * - **chuỗi** ⇒ cắt trần + chèn notice (vẫn là chuỗi).
+ * - **mảng** ⇒ bỏ các mục cuối cho tới khi vừa ngân sách, rồi thêm MỘT mục đánh
+ *   dấu đã cắt (vẫn là mảng).
+ * - **object** ⇒ `capToolResult`.
+ *
+ * Vì sao cần: đo 2026-10-19, `git_diff` trả tới 400.000 ký tự (`lib/ipc.cjs:1041`)
+ * — **không spill, không cắt** ⇒ ~100.000 token trong MỘT lần gọi tool, trong khi
+ * phép ước lượng chỉ thấy 6.000 (cap 24.000) ⇒ thiếu 17× ⇒ compaction không kích
+ * hoạt đúng lúc.
+ */
+export function capToolValue(value: unknown, saver?: SpillSaver): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === 'string') {
+    if (value.length <= TOOL_RESULT_MAX_CHARS) return value;
+    const spilled = spillRedacted(value, 'tool-result.txt', saver);
+    const cut = truncateToolResult(value, TOOL_RESULT_MAX_CHARS);
+    return spilled ? `${cut}\n\n${spilled.notice}` : cut;
+  }
+
+  if (Array.isArray(value)) {
+    if (serializedLength(value) <= TOOL_RESULT_MAX_CHARS) return value;
+    const spilled = spillRedacted(JSON.stringify(value) ?? '', 'tool-result.txt', saver);
+    /* Chừa chỗ cho dấu phẩy, ngoặc vuông và mục đánh dấu. */
+    const room = Math.max(0, TOOL_RESULT_MAX_CHARS - 2_000);
+    const out: unknown[] = [];
+    let used = 0;
+    for (const item of value) {
+      const len = serializedLength(item);
+      if (used + len > room) break;
+      out.push(item);
+      used += len;
+    }
+    const daCat = value.length - out.length;
+    out.push({
+      truncated: true,
+      ...(spilled ? { spillNotice: spilled.notice } : {}),
+      note: `Đã cắt bớt ${daCat} mục.`,
+    });
+    return out;
+  }
+
+  if (typeof value === 'object') {
+    return capToolResult(value as Record<string, unknown>, saver);
+  }
+
+  return value;
+}
+
+/** Độ dài JSON của một giá trị — dùng để cắt mảng mà không phá hình dạng. */
+function serializedLength(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'string') return value.length;
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
 }

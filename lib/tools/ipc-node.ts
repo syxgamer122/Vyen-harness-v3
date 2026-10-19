@@ -37,6 +37,7 @@ import path from 'node:path';
 import ipc from '../ipc.cjs';
 import { parseEditBlocks, replaceMostSimilarChunk } from '../edit-blocks';
 import { CLIENT_TOOL_DEFS } from '../agent-tools';
+import { capToolValue } from '../tool-result-server';
 
 /**
  * `approval-binding.cjs` phải nạp bằng `require` neo tại chính `ipc.cjs`, KHÔNG
@@ -758,6 +759,29 @@ export function buildIpcTools(
           const payload = toIpcPayload(toolName, a);
           const r = await rawFor(host)(channel, payload);
 
+          /* Kết quả trả về cho model — cắt trần TRƯỚC khi nó vào ngữ cảnh.
+           *
+           * Vì sao: `git_diff` trả thẳng stdout của git, cap ở
+           * `SHELL_OUTPUT_MAX_CHARS = 400_000` (`lib/ipc.cjs:1041`) — KHÔNG spill,
+           * KHÔNG cắt. Một lần `git_diff` vậy là ~100.000 token trong ngữ cảnh, trong
+           * khi phép ước lượng (`lib/context-budget.ts`) chỉ thấy 6.000 (cap
+           * `TOOL_RESULT_ESTIMATE_CHARS = 24.000`) ⇒ thiếu 17× ⇒ compaction không
+           * kích hoạt đúng lúc và provider vẫn từ chối.
+           *
+           * `shell_run` thì ĐÃ an toàn (`truncateShellOutput` ở `lib/ipc.cjs:654-699`
+           * spill full output rồi trả preview ≤ 10.000 byte + `savedTo`). Cái thiếu là
+           * **tầng generic cho mọi tool** — giống opencode
+           * (`packages/core/src/tool-output.ts`).
+           *
+           * Truyền `ipc.saveSpillText` của CHÍNH instance `ipc` mà file này đang dùng:
+           * `lib/tool-result-server.ts` nạp `ipc.cjs` bằng specifier khác
+           * (`'@/lib/ipc.cjs'`), nên nếu để mặc định bên trong module thì hai bên có
+           * thể giữ **hai instance** ⇒ spill ghi vào registry này còn `fs_read` đọc
+           * registry kia ⇒ file spill không đọc được. */
+          const spillSaver = ipc.saveSpillText as
+            | ((content: string, name: string) => { savedTo: string; bytes: number; notice: string } | null)
+            | undefined;
+
           // `fs_read`: cửa sổ dòng và trần ký tự phải làm ở đây — schema
           // `FsReadPayload` của `ipc.cjs` chỉ có `relPath`, còn `start_line` và
           // `line_count` thuộc tầng client ở bản web. Không cắt thì model đọc
@@ -772,7 +796,10 @@ export function buildIpcTools(
               a.start_line as number,
               a.line_count as number,
             );
-            return { ...(r as object), content, truncated };
+            return capToolValue({ ...(r as object), content, truncated }, spillSaver) as Record<
+              string,
+              unknown
+            >;
           }
           // Ghi xong thì hash cũ hết ý nghĩa — file đã là nội dung mới.
           if ((toolName === 'fs_write' || toolName === 'fs_edit') && a.path) {
@@ -792,7 +819,7 @@ export function buildIpcTools(
              */
             host.audit(`fs: ${toolName} ${a.path as string}`);
           }
-          return r;
+          return capToolValue(r, spillSaver);
         } catch (e) {
           // Bọc lại để lỗi nêu đúng TÊN TOOL, không chỉ câu chữ của ipc.cjs —
           // khi model nhận lỗi, nó cần biết tool nào hỏng để thử cách khác.
