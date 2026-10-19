@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Cầu nối `lib/ipc.cjs` ra khỏi Electron.
  *
  * ============ VÌ SAO FILE NÀY TỒN TẠI ============
@@ -567,6 +567,15 @@ export function buildIpcTools(
               content?: string;
             };
             let whole = full?.content ?? '';
+            /* GHI NHỚ HASH của lần đọc NÀY.
+             *
+             * `fs_edit` ghi đè TOÀN BỘ file, nên nó cần chống TOCTOU y hệt `fs_write`:
+             * đọc → có người sửa file ngoài → ta ghi đè là mất thay đổi của họ. Bản
+             * đầu chỉ nhớ hash ở `fs_read`, nên `fs_edit` không bao giờ gửi
+             * `expectedBaseHash` ⇒ máy chống TOCTOU của `ipc.cjs` **không bao giờ
+             * chạy** cho tool này.
+             */
+            hashes.set(a.path as string, sha256(whole));
             for (const b of parsed.blocks) {
               const applied = replaceMostSimilarChunk(whole, b.search, b.replace);
               if (!applied.ok) {
@@ -587,7 +596,7 @@ export function buildIpcTools(
            *
            * File CHƯA từng đọc thì không có hash để đối chiếu, nên không gửi
            * `hasDiff` — `ipc.cjs` cho qua, và đó là đúng: không có gì để so. */
-          if (toolName === 'fs_write' && hashes.has(a.path as string)) {
+          if ((toolName === 'fs_write' || toolName === 'fs_edit') && hashes.has(a.path as string)) {
             a.hasDiff = true;
             a.expectedBaseHash = hashes.get(a.path as string);
           }
