@@ -90,7 +90,7 @@ export interface NodeHostOptions {
  * thủ thứ hai bên dưới `NEEDS_APPROVAL`, và nó phải độc lập với bảng kia —
  * nếu lấy từ cùng một nguồn thì hỏng một chỗ là hỏng cả hai.
  */
-const DANGEROUS_CHANNELS: ReadonlySet<string> = new Set([
+export const DANGEROUS_CHANNELS: ReadonlySet<string> = new Set([
   'vyen:fs-write',
   'vyen:fs-append',
   'vyen:fs-delete',
@@ -102,6 +102,56 @@ const DANGEROUS_CHANNELS: ReadonlySet<string> = new Set([
   'vyen:secure-set',
   'vyen:secure-delete',
   'vyen:home-memory-write',
+  /* ---- Bổ sung 2026-10-19 (review độc lập) ----
+   *
+   * Bốn channel dưới đây thay đổi trạng thái hoặc chạy lệnh, và **không** có mặt
+   * trong bảng cũ. Đáng chú ý nhất là `workspace-set`: nó **đổi gốc workspace**,
+   * nên sau đó một đường dẫn tương đối mà người dùng duyệt sẽ nằm ở cây khác
+   * hẳn — `path-guard` chấp nhận vì gốc bây giờ chính là cây đó.
+   *
+   * Đo 2026-10-19: `host.call('vyen:workspace-set', {path: <thư mục khác>})` KHÔNG bị
+   * chặn, rồi `fs_write` ghi ra ngoài cây cũ mà người dùng tưởng là trong dự án.
+   *
+   * Hiện chưa tới được từ CLI (nó không gọi `host.call` trên channel biến đổi),
+   * nhưng đây là lớp phòng thủ cuối — hở ở đây thì mọi tầng sau cũng hở.
+   */
+  'vyen:workspace-set',
+  'vyen:workspace-clear',
+  'vyen:workspace-select',
+  'vyen:shell-kill-by-chat',
+  'vyen:llm-fetch',
+]);
+
+/**
+ * Channel **chỉ đọc** — được phép gọi thẳng qua `host.call`.
+ *
+ * ============ VÌ SAO CẦN BẢNG NÀY ============
+ *
+ * `DANGEROUS_CHANNELS` là danh sách **phủ định**: mọi channel không có trong đó
+ * thì bị chặn. Nghe an toàn, nhưng nó **không bắt được channel mới** — thêm một
+ * channel đọc mới vào `ipc.cjs` thì nó bị chặn nhầm (lỗi nhỏ), còn thêm một
+ * channel GHI mới thì cũng bị chặn (được). Vấn đề là người sau sẽ thêm channel
+ * ghi vào danh sách "đọc" để cho chạy, và không ai thấy.
+ *
+ * Nên có **hai** bảng, và một test bắt buộc mọi channel của `ipc.cjs` phải rơi
+ * vào đúng một bảng. Channel mới xuất hiện ⇒ test đỏ ⇒ buộc phải phân loại.
+ */
+export const READ_ONLY_CHANNELS: ReadonlySet<string> = new Set([
+  'vyen:fs-list',
+  'vyen:fs-read',
+  'vyen:fs-read-image',
+  'vyen:fs-search',
+  'vyen:fs-stat',
+  'vyen:git-diff',
+  'vyen:git-log',
+  'vyen:git-status',
+  'vyen:home-memory-read',
+  'vyen:home-skills-list',
+  'vyen:home-skills-read',
+  'vyen:secure-available',
+  'vyen:secure-get',
+  'vyen:workspace-get',
+  'vyen:bg-status',
 ]);
 
 type Handler = (event: unknown, payload: unknown) => unknown;
@@ -118,6 +168,20 @@ export interface NodeHost {
   call<T = unknown>(channel: string, payload?: unknown): Promise<T>;
   /** Danh sách channel đã đăng ký. */
   channels(): string[];
+  /**
+   * Ghi một dòng vào nhật ký audit.
+   *
+   * ============ VÌ SAO CẦN CÔNG KHAI RA NGOÀI ============
+   *
+   * `ipc.cjs` chỉ audit **lỗi, shell, git, bg-run** — không audit `fsWrite` /
+   * `fsDelete` / `fsAppend` (grep 2026-10-19: 12 chỗ gọi `auditLog`, không chỗ nào
+   * trong ba hàm đó). Nên lời hứa "vết của mọi lệnh ghi/xoá" là **SAI**.
+   *
+   * Sửa ở tầng tool chứ không sửa trong `ipc.cjs`: `ipc.cjs` là mã dùng chung với
+   * web, còn CLI cần vết theo đúng những gì **agent** làm. Sửa ở đây không đụng
+   * hành vi web, và vết thu được đúng phạm vi người dùng quan tâm.
+   */
+  audit(line: string): void;
   /** Dọn tiến trình nền còn sót. Gọi khi CLI kết thúc. */
   dispose(): void;
 }
@@ -244,6 +308,7 @@ export function createNodeHost(opts: NodeHostOptions): NodeHost {
     },
 
     channels: () => [...handlers.keys()].sort(),
+    audit,
 
     dispose: () => {
       ipc.killAllRunning?.();
@@ -383,24 +448,27 @@ export function toIpcPayload(
   for (const [k, v] of Object.entries(args)) {
     out[ARG_RENAMES[k] ?? k] = v;
   }
-  /* ĐƠN VỊ KHÁC NHAU ⇒ PHẢI NHÂN, KHÔNG ĐỔI TÊN.
+  /* ĐƠN VỊ KHÁC NHAU ⇒ PHẢI NHÂN, KHÔNG ĐỔI TÊN — **VÀ CHỈ VỚI TOOL NÀY**.
    *
-   * `timeout_secs` là **giây** theo schema tool; `ShellPayload.timeoutMs` của
-   * `ipc.cjs` là **mili giây** với `min(1_000)`. Bản đầu để nó trong `ARG_RENAMES`
-   * nên `timeout_secs=120` ra `timeoutMs=120` ⇒ zod từ chối ⇒ lệnh không chạy
-   * (đo 2026-10-19: mọi giá trị 1…600 mà schema cho phép đều hỏng).
+   * `shell_run`: schema là `timeout_secs` 1…600 **giây**, còn `ShellPayload.timeoutMs`
+   * của `ipc.cjs` là **mili giây** với `min(1_000)`. Bản đầu để nó trong
+   * `ARG_RENAMES` nên `timeout_secs=120` ra `timeoutMs=120` ⇒ zod từ chối ⇒ lệnh
+   * không bao giờ chạy. Không sửa còn hơn: lệnh chạy với mặc định.
    *
-   * Nhân ở đây thay vì trong `ARG_RENAMES` vì bảng đó chỉ đổi **tên**; thêm phép
-   * tính vào đó thì nó thôi là "bảng sai tên" và lần sau sẽ có người thêm tiếp
-   * thứ gì đó không phải tên.
+   * `bg_run`: schema là `timeout_secs` 1…3600 **giây** và `BgRunPayload` của
+   * `ipc.cjs` **cũng giây** (`ipc.cjs:263`) — hai bên ĐÃ KHỚP. Bản sửa giữa nhân
+   * cho mọi tool làm hỏng đúng cái cần giữ: mọi `bg_run` chạy với mặc định 3600
+   * giây dù model yêu cầu 5 (đo 2026-10-19).
    *
-   * Ngoài giá trị không hợp lệ (0, NaN, số thực) thì bỏ hẳn: như vậy `ipc.cjs` dùng
-   * mặc định của nó, đúng như khi model không truyền tham số.
+   * Vì vậy phép tính phải **theo từng tool**, và `toolName` — tham số mà bản đầu
+   * nhận vào rồi không dùng — là thứ quyết định.
    */
-  const secs = args.timeout_secs;
-  if (typeof secs === 'number' && Number.isFinite(secs) && secs > 0) {
-    out.timeoutMs = Math.round(secs * 1000);
-    delete out.timeout_secs;
+  if (toolName === 'shell_run') {
+    const secs = args.timeout_secs;
+    if (typeof secs === 'number' && Number.isFinite(secs) && secs > 0) {
+      out.timeoutMs = Math.round(secs * 1000);
+      delete out.timeout_secs;
+    }
   }
   return out;
 }
@@ -472,7 +540,16 @@ const READ_HASHES = new WeakMap<NodeHost, Map<string, string>>();
  * tại. `path-guard.cjs` phía `ipc.cjs` vẫn lo phần chặn đường dẫn ra ngoài.
  */
 function khoaHash(workspaceRoot: string, p: string): string {
-  return path.resolve(workspaceRoot, p);
+  const giai = path.resolve(workspaceRoot, p);
+  /* Windows KHÔNG phân biệt HOA/THƯỜNG, nên `a.txt` và `A.TXT` là MỘT file.
+   * `path.resolve` không chuẩn hoá hoa/thường ⇒ hai khoá khác nhau ⇒ cổng TOCTOU bị
+   * lách bằng cách viết hoa (đo 2026-10-19, reviewer: đọc `a.txt` → ghi `A.TXT`
+   * → không bị chặn).
+   *
+   * Chỉ hạ trên Windows. Linux phân biệt hoa/thường thật, nên hạ ở đó sẽ gộp
+   * hai file KHÁC NHAU vào một khoá — tức bảo vệ nhầm sang file khác.
+   */
+  return process.platform === 'win32' ? giai.toLowerCase() : giai;
 }
 
 /** Lấy kho hash của host. Chỉ module này dùng. */
@@ -700,6 +777,20 @@ export function buildIpcTools(
           // Ghi xong thì hash cũ hết ý nghĩa — file đã là nội dung mới.
           if ((toolName === 'fs_write' || toolName === 'fs_edit') && a.path) {
             hashes.set(khoa, sha256(content ?? ''));
+            /* VẾT GHI FILE — và nó phải THẬT, không chỉ là lời hứa.
+             *
+             * `ipc.cjs` KHÔNG audit `fsWrite`/`fsDelete`/`fsAppend` (đo 2026-10-19:
+             * grep 12 chỗ gọi `auditLog`, không chỗ nào trong ba hàm đó) — nên lời
+             * hứa cũ "vết của mọi lệnh ghi/xoá" là SAI.
+             *
+             * Ghi ở đây, ở tầng tool, chứ không sửa `ipc.cjs`: `ipc.cjs` dùng chung
+             * với web, còn CLI cần vết đúng những gì **agent** làm. Sửa ở đây không
+             * đụng hành vi web.
+             *
+             * Chỉ ghi khi lệnh **thành công** — ghi cả lần thất bại thì nhật ký
+             * nói dối về việc file đã bị đổi.
+             */
+            host.audit(`fs: ${toolName} ${a.path as string}`);
           }
           return r;
         } catch (e) {

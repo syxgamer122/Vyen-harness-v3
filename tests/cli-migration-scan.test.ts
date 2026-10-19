@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Kiểm kê di cư sang CLI — Task 1: script quét API trình duyệt.
  *
  * Ba test dưới đây cố tình hỗn hợp hai loại:
@@ -14,8 +14,9 @@
  * Xem plan: docs/superpowers/plans/2026-10-18-cli-migration-inventory.md
  * Spec: docs/superpowers/specs/2026-10-18-cli-core-design.md §4
  */
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { BROWSER_APIS, scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
 import { countTsFiles } from '@/scripts/cli-migration/build-inventory';
 import { FORCE_LABEL } from '@/scripts/cli-migration/ly-do';
@@ -268,15 +269,57 @@ describe('browserBound — file kéo trình duyệt vào qua cạnh runtime', ()
  * chứng minh được là không rỗng.
  */
 describe('GUỐ — lõi CLI không được kéo trình duyệt vào', () => {
-  it('không file lõi nào kéo được module chạm API trình duyệt', () => {
+  /* ============ PHẢI QUÉT CẢ `cli/`, KHÔNG CHỈ `lib/` ============
+   *
+   * Bản đầu quét `listTsFiles('lib')`. Nhưng `cli/repl.ts`, `cli/session.ts`,
+   * `cli/approve.ts`, `cli/instructions.ts`, `cli/history.ts`, `cli/agent-turn.ts`
+   * đều là `CORE_ENTRIES` ⇒ chúng nằm trong `core` ⇒ **lẽ ra phải được soi**.
+   *
+   * Đo 2026-10-19 (reviewer độc lập): thêm `import { db } from '@/lib/db'` vào
+   * `cli/repl.ts` thì test vẫn XANH, và `cli/repl.ts` biến thành file không chạy
+   * được trên Node — đúng thứ mà test này sinh ra để chặn.
+   *
+   * Nguyên nhân: `browserBoundIn` chỉ đánh dấu file **có trong danh sách truyền
+   * vào**. Danh sách đó không có `cli/` nên file `cli/` không bao giờ bị đánh dấu,
+   * dù chúng ở trong `core`.
+   */
+  const boundCore = () => {
     const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
-    const bound = browserBoundIn(listTsFiles('lib'), touchers);
+    const tatCa = [...listTsFiles('lib'), ...listTsFiles('cli')];
+    return browserBoundIn(tatCa, touchers);
+  };
+
+  it('không file lõi nào kéo được module chạm API trình duyệt', () => {
+    const bound = boundCore();
     const core = reachableFrom();
     const polluted = [...core].filter((f) => bound.has(f)).sort();
     expect(
       polluted,
       `file lõi kéo trình duyệt vào — lõi sẽ không chạy được trên Node: ${polluted.join(', ')}`,
     ).toEqual([]);
+  });
+
+  /* Bảo đảm chính cái quét vừa rội lên thật sự soi được file `cli/`. Không có
+   * test này thì "quét cả cli/" chỉ là một dòng code vô nghĩa. */
+  it('quét THẬT sự thấy file trong cli/ — không phải chỉ là mở rộng danh sách', () => {
+    const bound = boundCore();
+    const fileCli = [...bound].filter((f) => f.startsWith('cli/'));
+    // Danh sách `bound` là "file bị kéo", nên lõi sạch thì rỗng — thứ cần kiểm
+    // là: `cli/` có mặt trong tập file được quét. Kiểm bằng cách dựng một file
+    // `cli/` giả rồi xem nó có bị đánh dấu hay không.
+    const gia = path.join(process.cwd(), 'cli', '.probe-import-db.ts');
+    writeFileSync(gia, "import { db } from '@/lib/db';\nexport const x = db;\n", 'utf8');
+    try {
+      const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
+      const tatCa = [...listTsFiles('lib'), ...listTsFiles('cli')];
+      const bound2 = browserBoundIn(tatCa, touchers);
+      expect(
+        bound2.has('cli/.probe-import-db.ts'),
+        'file cli/ import db ma khong bi danh dau — guard mau co lam gi',
+      ).toBe(true);
+    } finally {
+      rmSync(gia, { force: true });
+    }
   });
 });
 

@@ -102,9 +102,12 @@
  *                  thư mục hiện tại. `createNodeHost` TỪ CHỐI thư mục rộng (gốc
  *                  ổ đĩa, home) và thư mục không tồn tại — nếu bị từ chối thì CLI
  *                  vẫn chat được, chỉ không có tool, và có in lý do.
- *   VYEN_STATE_DIR nơi ghi `vyen-audit.log` (vết của mọi lệnh ghi/xoá). Mặc
- *                  định `~/.vyen/cli`. Đổi ra ngoài repo thì xoá file này là
- *                  xoá được vết.
+ *   VYEN_STATE_DIR nơi ghi `vyen-audit.log` — vết của những gì **agent** làm:
+ *                  ghi file (`fs_write`/`fs_edit`), chạy lệnh, và mọi lỗi.
+ *                  Mặc định `~/.vyen/cli`. Xoá file này là xoá được vết.
+ *                  Lưu ý: `ipc.cjs` có sẵn 12 chỗ audit cho lỗi/shell/git/bg-run;
+ *                  phần **ghi file** là tầng CLI bổ sung, vì `ipc.cjs` dùng chung
+ *                  với web và không ghi lại thao tác ghi file.
  *   VYEN_YOLO      đặt `1` để **tự động duyệt mọi lệnh ghi/xoá**. Mặc định là
  *                  hỏi từng lần trên console. Chỉ bật trong thư mục tạm.
  *   VYEN_DEBUG     đặt `1` để in thêm `devLog` (req id, host, body upstream).

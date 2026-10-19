@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createNodeHost, buildIpcTools, hostAuditLogPath, toIpcPayload } from '@/lib/tools/ipc-node';
+import { createNodeHost, buildIpcTools, hostAuditLogPath, toIpcPayload, DANGEROUS_CHANNELS, READ_ONLY_CHANNELS } from '@/lib/tools/ipc-node';
 
 type Tools = Record<string, { execute: (a: unknown) => Promise<Record<string, unknown>> }>;
 
@@ -369,6 +369,174 @@ describe('đơn vị tham số phải khớp, không chỉ tên', () => {
 
   it('không truyền thì không sinh gì', () => {
     expect(toIpcPayload('shell_run', { command: 'dir' }).timeoutMs).toBeUndefined();
+  });
+});
+
+/* ============ ĐƠN VỊ PHẢI THEO TỪNG TOOL ============
+ *
+ * Bản sửa trước nhân `timeout_secs` cho **mọi** tool. Đo 2026-10-19 (review):
+ * `bg_run` có schema `timeout_secs` 1…3600 **giây** và `ipc.cjs` cũng nhận
+ * `timeout_secs` **giây** (`ipc.cjs:263`) — tức hai bên **đã khớp**, không cần đổi.
+ * Phép nhân làm hỏng đúng cái nó cần giữ: mọi `bg_run` đều chạy với mặc định
+ * 3600 giây, dù model yêu cầu 5.
+ *
+ * `toIpcPayload` nhận `toolName` mà **không dùng** — đó là lý do lỗi này không bị
+ * bắt: đổi hành vi cho tất cả tool là mặc định "an toàn" về hình thức.
+ */
+describe('đơn vị timeout tính THEO TỪNG TOOL', () => {
+  it('shell_run: giây → mili giây', () => {
+    const p = toIpcPayload('shell_run', { command: 'dir', timeout_secs: 120 });
+    expect(p.timeoutMs).toBe(120_000);
+  });
+
+  it('bg_run: giây GIỮ NGUYÊN giây — ipc.cjs đã nhận đơn vị này', () => {
+    const p = toIpcPayload('bg_run', { command: 'dir', timeout_secs: 5 });
+    expect(p.timeout_secs, 'bg_run phai giu timeout_secs nguyen ven').toBe(5);
+    expect(p.timeoutMs, 'khong duoc sinh timeoutMs cho bg_run').toBeUndefined();
+  });
+});
+
+/* ============ WINDOWS KHÔNG PHÂN BIỆT HOA/THƯỜNG ============
+ *
+ * Cùng lớp lỗi với `./a.txt`, khác một cách viết: đọc `a.txt` → người khác sửa →
+ * ghi `A.TXT` thì **không bị chặn** (đo 2026-10-19, reviewer). `path.resolve` chuẩn
+ * hoá `.`/`..` nhưng **không** chuẩn hoá hoa/thường, mà Windows thì không phân biệt.
+ *
+ * Và kịch bản prompt injection mà comment trong mã nêu — "bảo nó ghi
+ * `./package.json`" — áp dụng nguyên văn cho `PACKAGE.JSON`.
+ */
+describe('trên Windows, HOA/THƯỜNG là cùng một file nên phải là cùng một khoá', () => {
+  const laWindows = process.platform === 'win32';
+
+  it(`ghi bằng chữ hoa khác chữ thường thì ${laWindows ? 'phải bị chặn' : 'bị bỏ qua (Linux phân biệt)'}`, async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      await t.fs_read.execute({ path: 'a.txt' });
+      writeFileSync(path.join(dir, 'a.txt'), 'NGUOI KHAC SUA\n', 'utf8');
+      const ghi = t.fs_write.execute({ path: 'A.TXT', content: 'de che' });
+      if (laWindows) {
+        await expect(ghi).rejects.toThrow(/TOCTOU|thay doi/i);
+      } else {
+        await ghi;
+      }
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+});
+
+/* ============ MỌI CHANNEL PHẢI ĐƯỢC PHÂN LOẠI ============
+ *
+ * `DANGEROUS_CHANNELS` là bảng **phủ định**: channel không có trong đó thì bị
+ * chặn. Nghe an toàn, nhưng nó không bắt được channel mới một cách có ý thức —
+ * thêm channel ghi mới thì bị chặn (được), nhưng cũng không ai biết phải khai
+ * báo; và nếu sau này có ai đó thêm channel ghi vào danh sách "đọc" để cho chạy
+ * thì không ai thấy.
+ *
+ * Vì vậy: mọi channel `ipc.cjs` đăng ký phải rơi vào **đúng một** trong hai bảng.
+ * Channel mới xuất hiện ⇒ test đỏ ⇒ buộc phải phân loại.
+ */
+describe('mọi channel của ipc.cjs đều phải được phân loại', () => {
+  it('không channel nào bỏ trống, không channel nào thuộc cả hai bảng', async () => {
+    const { dir, userData, cleanup } = mk();
+    try {
+      const host = createNodeHost({ workspaceRoot: dir, userDataDir: userData });
+      const ds = host.channels();
+      const chuaPhanLoai = ds.filter(
+        (c) => !DANGEROUS_CHANNELS.has(c) && !READ_ONLY_CHANNELS.has(c),
+      );
+      const caHai = ds.filter((c) => DANGEROUS_CHANNELS.has(c) && READ_ONLY_CHANNELS.has(c));
+      expect(chuaPhanLoai, 'channel chua duoc phan loai — hay de mac dinh chan?').toEqual([]);
+      expect(caHai, 'channel bi gan vao ca hai bang').toEqual([]);
+      host.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('`workspace-set` phải bị chặn — nó đổi gốc workspace', async () => {
+    const { dir, userData, cleanup } = mk();
+    try {
+      const host = createNodeHost({ workspaceRoot: dir, userDataDir: userData });
+      await expect(
+        host.call('vyen:workspace-set', { path: dir }),
+      ).rejects.toThrow();
+      host.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('`llm-fetch` phải bị chặn — nó gọi URL tùy ý kèm header', async () => {
+    const { dir, userData, cleanup } = mk();
+    try {
+      const host = createNodeHost({ workspaceRoot: dir, userDataDir: userData });
+      await expect(
+        host.call('vyen:llm-fetch', { url: 'https://example.com' }),
+      ).rejects.toThrow();
+      host.dispose();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/* ============ VẾT GHI FILE PHẢI THẬT ============
+ *
+ * Đo 2026-10-19 (reviewer độc lập): `fs_write` để lại **0 dòng** audit, trong khi
+ * `shell_run` để lại 1. Vì `ipc.cjs` chỉ audit lỗi/shell/git/bg-run, nên lời hứa
+ * "vết của mọi lệnh ghi/xoá" trong `cli/index.ts` là SAI — và test audit cũ đi qua
+ * **nhánh lỗi** nên vẫn xanh.
+ *
+ * Hai test cũ (`:387` và `ipc-node-host.test.ts:169`) chỉ khẳng định "log không rỗng".
+ * Test ở đây khẳng định đúng thứ: **ghi file thì log phải nói tên file đó**.
+ */
+describe('vết ghi file phải có thật trong nhật ký audit', () => {
+  it('`fs_write` để lại dòng audit nói tên file', async () => {
+    const { dir, userData, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      await t.fs_write.execute({ path: 'a.txt', content: 'x' });
+      const log = readFileSync(hostAuditLogPath(userData), 'utf8');
+      expect(log, 'ghi file ma khong co vet').toContain('fs_write');
+      expect(log).toContain('a.txt');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  it('`fs_edit` cũng để lại vết', async () => {
+    const { dir, userData, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      await t.fs_edit.execute({
+        path: 'a.txt',
+        blocks: '<<<<<<< SEARCH\ndong 2\n=======\nHAI\n>>>>>>> REPLACE',
+      });
+      const log = readFileSync(hostAuditLogPath(userData), 'utf8');
+      expect(log).toContain('fs_edit');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  it('lệnh THẤT BẠI thì KHÔNG được ghi là đã ghi — nhật ký không được nói dối', async () => {
+    const { dir, userData, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      // Đường dẫn ra ngoài workspace ⇒ `path-guard` chặn ⇒ lệnh KHÔNG chạy.
+      // (Ghi vào thư mục chưa có thì lại THÀNH CÔNG — `ipc.cjs` tự tạo thư mục.)
+      await t.fs_write.execute({ path: '../tho-ra-ngoai.txt', content: 'x' }).catch(() => {});
+      const log = readFileSync(hostAuditLogPath(userData), 'utf8');
+      expect(log, 'ghi that bai nhung van co vet "ghi file"').not.toContain('fs_write');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
   });
 });
 

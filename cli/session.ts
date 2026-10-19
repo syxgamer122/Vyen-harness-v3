@@ -127,6 +127,24 @@ export function openSession(stateDir: string, directory: string): SessionStore {
    * với thông báo không hề nói rằng xoá file là khỏi.
    */
   if (canhBoi !== null) catFile(file);
+  /* ============ CHUỖI HỞ ⇒ NÓ RA, ĐỪNG NẠP IM LẶNG ============
+   *
+   * `appendAll` ghi cả lô trong một `appendFileSync`, nên nếu tiến trình chết giữa
+   * chừng thì file có thể chỉ còn `assistant(tool-call)` mà thiếu dòng `tool`.
+   *
+   * Provider **từ chối** mọi lượt sau của phiên đó ("messages with role 'tool'
+   * must be a response to a preceding message with 'tool_calls'"). Nghĩa là nạp
+   * vào rồi im lặng là biến một sự cố hiếm thành **phiên chết vĩnh viễn không ai
+   * hiểu vì sao** — và yêu cầu "một lượt hỏng không phá phiên" là vô nghĩa nếu
+   * file đã hở.
+   *
+   * Đo 2026-10-19 (reviewer độc lập dựng tay file như vậy): trước khi có dòng này,
+   * nó mở **không hề báo lỗi**, messages = ["user","assistant"], và lượt sau hỏng.
+   *
+   * Vì sao **ném** mà không tự cắt bỏ: tự sửa là âm thầm xoá lịch sử của người
+   * dùng. Nói ra thì họ biết phải làm gì (xoá file, hoặc chấp nhận mất vài lượt).
+   */
+  kiemTraChuoi(messages, path.basename(file));
   let seq = messages.length;
 
   return {
@@ -229,6 +247,37 @@ function readMessages(file: string): { messages: CoreMessage[]; canhBoi: number 
  * trên cùng ổ đĩa, nên crash giữa lúc sửa cũng không tạo ra file nửa vời — đúng
  * thứ đang sửa.
  */
+/**
+ * Ném nếu transcript còn `tool-call` chưa có `tool-result` khớp.
+ *
+ * ============ VÌ SAO KHÔNG CẦN KIỂM CẢ LỊCH SỬ CŨ ============
+ *
+ * Transcript được ghi tuần tự, nên một chuỗi hở luôn nằm ở **đuôi**. Kiểm tra mọi
+ * cặp trong toàn bộ lịch sử thì tốn O(n) mỗi lần mở mà không bắt thêm ca nào.
+ *
+ * ============ VÌ SAO NÉM MÀ KHÔNG TỰ CẮT BỎ ============
+ *
+ * Tự sửa là âm thầm xoá lịch sử của người dùng. Nói ra thì họ biết phải làm gì:
+ * xoá file, hoặc chấp nhận mất vài lượt cuối.
+ */
+function kiemTraChuoi(messages: CoreMessage[], tenFile: string): void {
+  /** id của mọi `tool-call` chưa được trả lời. */
+  const chuaTraLoi = new Set<string>();
+  for (const m of messages) {
+    const parts = typeof m.content === 'object' && Array.isArray(m.content) ? m.content : [];
+    for (const c of parts as { type?: string; toolCallId?: string }[]) {
+      if (c.type === 'tool-call' && c.toolCallId) chuaTraLoi.add(c.toolCallId);
+      if (c.type === 'tool-result' && c.toolCallId) chuaTraLoi.delete(c.toolCallId);
+    }
+  }
+  if (chuaTraLoi.size === 0) return;
+  throw new Error(
+    `Transcript ${tenFile} co ${chuaTraLoi.size} loi chua co ket qua ` +
+      `(tool-call ${[...chuaTraLoi].join(', ')}). Provider se tu choi MOI luot sau ` +
+      `cua phien nay. File khong dung duoc — xoa no roi bat dau phien moi.`,
+  );
+}
+
 function catFile(file: string): void {
   const raw = fs.readFileSync(file, 'utf8');
   const lines = raw.split('\n');

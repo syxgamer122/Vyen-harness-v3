@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Kho transcript của CLI — thứ làm "mở terminal lên là còn nhớ" thành hiện thực.
  *
  * ============ VÌ SAO TEST NÀY TẬP TRUNG VÀO DÒNG CỤT ============
@@ -17,7 +17,7 @@
  * âm thầm là nuốt lịch sử mà người dùng không hề biết.
  */
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { CoreMessage } from 'ai';
@@ -245,6 +245,104 @@ describe('file hỏng ở GIỮA — phải nói chứ không nuốt', () => {
  * repo không che trước khi ghi — `lib/db.ts`, `lib/tool-result-server.ts`,
  * `lib/audit-log.ts` đều đã che, và spec §7 yêu cầu rõ.
  */
+/* ============ CHUỖI HỞ KHI NẠP ============
+ *
+ * Một lượt có tool sinh ra CHUỖI message: `assistant(tool-call)` → `tool` →
+ * `assistant`. Nếu `appendAll` bị đứt giữa chừng (mất điện, hết đĩa), file có
+ * thể chỉ còn `assistant(tool-call)` mà không có dòng `tool` — và **mọi provider
+ * đều từ chối** phiên đó, vĩnh viễn.
+ *
+ * Đo 2026-10-19 (reviewer độc lập): file như vậy mở lại **không hề báo lỗi**,
+ * messages = ["user","assistant"], và lượt tiếp theo là hỏng. Đây đúng là yêu cầu
+ * số 5 mà repo từng khẳng định đã giữ.
+ */
+describe('nạp transcript hở thì phải BÁO, không im lặng nạp vào', () => {
+  /** Dựng transcript có assistant(tool-call) nhưng KHÔNG có tool-result. */
+  function taoFileHung(f: string, seq: number) {
+    // Thư mục `sessions/` chưa tồn tại cho tới lần `openSession` đầu — tạo trước,
+    // nếu không `writeFileSync` ném ENOENT chứ không phải lỗi ta muốn kiểm.
+    mkdirSync(path.dirname(f), { recursive: true });
+    const lines = [
+      JSON.stringify({ kind: 'header', sessionId: 's', directory: 'd', createdAt: 't' }),
+      JSON.stringify({ seq: 1, message: { role: 'user', content: 'doc file' } }),
+      JSON.stringify({
+        seq: 2,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: { path: 'a' } },
+          ],
+        },
+      }),
+    ];
+    writeFileSync(f, `${lines.slice(0, seq).join('\n')}\n`, 'utf8');
+  }
+
+  it('báo rõ chuỗi bị hở thay vì nạp vào rồi để provider từ chối', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const f = sessionFileFor(state, dir);
+      taoFileHung(f, 3);
+      expect(() => openSession(state, dir)).toThrow(/tool/i);
+    } finally {
+      cleanup();
+    }
+  });
+
+  /* Bỏ kiểm tra thì phải đỏ — tức bản "mở được" chính là lỗi. */
+  it('lượt ĐẦY ĐỦ thì mở bình thường', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('doc file'));
+      s.appendAll([
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: { path: 'a' } },
+          ],
+        } as CoreMessage,
+        {
+          role: 'tool',
+          content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'fs_read', result: { ok: 1 } }],
+        } as CoreMessage,
+        { role: 'assistant', content: 'xong' } as CoreMessage,
+      ]);
+      s.close();
+      const moi = openSession(state, dir);
+      expect(moi.messages).toHaveLength(4);
+      moi.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('`tool_call_id` không khớp tool-result cũng phải bị bắt', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.appendAll([
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: { path: 'a' } },
+          ],
+        } as CoreMessage,
+        {
+          role: 'tool',
+          content: [
+            { type: 'tool-result', toolCallId: 'KHAC', toolName: 'fs_read', result: { ok: 1 } },
+          ],
+        } as CoreMessage,
+      ]);
+      s.close();
+      expect(() => openSession(state, dir)).toThrow(/tool/i);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe('che bí mật trước khi ghi đĩa', () => {
   const KHOA = 'sk-abc123secret456789xyz';
 
