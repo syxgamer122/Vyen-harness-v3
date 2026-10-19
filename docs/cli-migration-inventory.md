@@ -33,6 +33,8 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/tools/ipc-node.ts`
 - `cli/agent-turn.ts`
 - `cli/approve.ts`
+- `cli/repl.ts`
+- `cli/session.ts`
 
 ## Bằng chứng dòng
 

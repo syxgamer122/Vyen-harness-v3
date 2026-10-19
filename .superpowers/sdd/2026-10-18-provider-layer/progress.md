@@ -602,7 +602,69 @@ hai** thì đỏ. Test không rỗng, nhưng có lớp dư.
 
 ## Còn lại
 
-- **16 file kéo trình duyệt vào chưa phân loại giữ/xoá** — nợ duy nhất cần chủ repo
-  quyết, vì câu hỏi "lõi CLI còn cần chức năng này không" nằm ở ý định sản phẩm.
-- **Lịch sử hội thoại / REPL** — cần `lib/session/` thay `db.ts`. Mỗi lượt CLI hiện
-  độc lập, không nhớ lượt trước.
+- **Lịch sử hội thoại / REPL** — xem lượt 6, đã xong.
+
+# Lượt 6 (2026-10-19) — REPL + nhớ hội thoại qua các lần chạy
+
+Chủ repo nói rõ: *"chạy CLI lên là chạy một tiến trình như claude code, xong mình cứ
+làm việc trong cái conversation đó"*, và *"như opencode thì đóng terminal rồi mở lại
+vẫn lưu cái cuộc hội thoại cũ"*.
+
+## Đo trước: 15/17 file "kéo trình duyệt vào" đi qua ĐÚNG một cửa
+
+Tôi báo "16 file cần phán đoán" như thể đó 16 câu hỏi. Đo đường đi bằng BFS trên
+đồ thị import: **15/17 đi qua `lib/db.ts`** (Dexie), 2 file đi qua chỗ khác
+(`fs-access.ts`, `chat-broadcast.ts`). Mà `db.ts` đã có nhãn `THAY-THE` sẵn trong
+bảng kiểm kê. Nên đây là **một** nợ, không phải mười sáu.
+
+Lỗi lặp lại của tôi: đo đầu truyền sai tham số `browserBoundIn`, ra **0** file.
+Số 0 trông hợp lý nên dễ tin — và tin là bảng kiểm kê sai hoàn toàn.
+
+## Ba thứ lấy từ mã người khác, kèm bằng chứng
+
+1. **opencode** (`packages/core/src/session/sql.ts`): message lưu là **JSON mù**
+   (`data: text({mode:'json'})` + `seq`), KHÔNG dựng cột cho từng trường → thêm kiểu
+   message mới không phải migration. Session gắn với **thư mục** (cột `directory`).
+2. **Claude Code CHANGELOG 2.1.300**: *"the first transcript entry written after
+   resuming a session being lost when a crash had cut the transcript's last line
+   short"*. Đây không phải lo ngại giả định.
+3. **Tôi tái hiện đúng lỗi đó.** Bỏ dòng hỏng trong RAM nhưng **không cắt file** →
+   lần `append` sau nối liền vào dòng hỏng → mất luôn bản ghi vừa ghi. Test bắt
+   được (mutation "bỏ `catFile`" → 1 đỏ).
+
+**Không lấy SQLite** của opencode: sẽ kéo `better-sqlite3` (native dep) hoặc
+`node:sqlite` (Node ≥ 24). Với transcript tuyến tính của một người, SQL không mua
+được gì — và đổi lại bạn `Get-Content` ra đọc bằng mắt được.
+
+## Không làm compaction — và đây là bằng chứng, không phải tự hạn chế
+
+CHANGELOG Claude Code bốn bản gần nhất: **ít nhất 9 mục** là lỗi resume ×
+compaction (mất message sau compaction, mang về lịch sử trước compaction,
+compaction lặp vô hạn...). Vùng đó họ mất nhiều phiên bản mới chịu được.
+
+## Hai bug CHỈ chạy thậy mới ra — không test nào thấy
+
+1. **Tôi khoá ngay chính cách dùng vừa làm.** Guard "phải có câu hỏi" làm
+   `npm run cli` không đối số (tức REPL) in hướng dẫn rồi `exit 2`. Test gọi hàm
+   chứ không chạy CLI nên không thấy.
+2. **`rl.question` không trả `null` khi hết dòng mà NÉM** "readline was closed" →
+   `Ctrl+D` in dòng lỗi rác thay vì thoát sạch.
+
+## Bằng chứng chạy thật
+
+- Lần 1: `> cong cu: 14` → lượt hỏng 401 → `> lich su van con. Thu lai.` (phiên
+  không chết) → `/exit` sạch.
+- Lần 2, terminal mới, cùng thư mục: `> lich su: 1 message o "..."` ⇒ **đọc tiếp**.
+- 2 workspace khác → 2 file transcript khác, cùng thư mục state.
+
+## 1 mutation KHÔNG bị bắt, nói thẳng
+
+Đổi `rename` sang `truncate` vẫn 13 xanh — hai cách cho kết quả giống nhau trong
+đường test. Khác biệt thật là **nguyên tử khi crash**, mà test không nhìn thấy.
+Phần đó chưa được canh.
+
+## Còn lại
+
+- **Không rút gọn context**: đủ một buổi, không đủ cả ngày.
+- **Không tìm kiếm hội thoại**: JSONL không có chỉ mục. Muốn thì đổi sang SQLite.
+- **Không nạp `AGENTS.md` vào system prompt** — đáng làm, để sau.

@@ -67,6 +67,8 @@ export const CORE_ENTRIES = [
   // chỗ có logic đáng test, và chúng là nơi những thứ đó được canh.
   'cli/agent-turn.ts',
   'cli/approve.ts',
+  'cli/repl.ts',
+  'cli/session.ts',
 ];
 
 

@@ -15,7 +15,7 @@
  * và tool call bị vứt đi. Muốn "gọi tool → đọc kết quả → quyết định tiếp" thì
  * phải bật `maxSteps`. Test `calls.length === 2` là để canh đúng điều đó.
  */
-import { streamText, type LanguageModelV1, type ToolSet } from 'ai';
+import { streamText, type CoreMessage, type LanguageModelV1, type ToolSet } from 'ai';
 
 /** Số mô tả tool mà AI SDK có thể đi tiếp trong một lượt gọi. */
 const DEFAULT_MAX_STEPS = 12;
@@ -24,7 +24,23 @@ export interface AgentTurnOptions {
   model: LanguageModelV1;
   /** `undefined` = không có tool, chỉ chat. Không phải mảng rỗng. */
   tools?: ToolSet;
-  prompt: string;
+  /** Hướng dẫn cho model. Không phải phần của lịch sử hội thoại nên không lưu cùng transcript. */
+  system?: string;
+  /**
+   * Toàn bộ lịch sử hội thoại, **không** phải một câu hỏi.
+   *
+   * ============ VÌ SAO KHÔNG PHẢI `prompt: string` ============
+   *
+   * Ban đầu hàm nhận `prompt: string` vì lúc đó CLI chỉ chạy một lượt. Nhưng một
+   * lượt có tool không sinh ra **một** message — nó sinh ra một chuỗi: assistant
+   * gọi tool, rồi tool trả kết quả, rồi assistant trả lời. Nếu chỉ nhận chuỗi
+   * rồi lấy `text` thì lượt sau không có gì để nối vào, và mọi tool call mất
+   * sạch khỏi bộ nhớ.
+   *
+   * Nên hàm trả về `messages` để người gọi nối vào lịch sử. Đó cũng chính là thứ
+   * cần ghi xuống đĩa.
+   */
+  messages: CoreMessage[];
   maxTokens?: number;
   maxSteps?: number;
   /** Gọi mỗi lần model định chạy tool — để người dùng thấy máy đang làm gì. */
@@ -37,6 +53,14 @@ export interface AgentTurnOptions {
 export interface AgentTurnResult {
   /** Toàn bộ chữ model sinh ra, đã ghép. */
   text: string;
+  /**
+   * Message do lượt này sinh ra, theo thứ tự — gồm assistant gọi tool, message
+   * `tool` chứa kết quả, và assistant trả lời cuối.
+   *
+   * PHẢI ghi đủ cả khối này chứ không chỉ câu trả lời cuối. Thiếu message `tool`
+   * là provider trả 400 ở mọi lượt sau ("tool_use không có tool_result").
+   */
+  messages: CoreMessage[];
   usage: { promptTokens: number | null; completionTokens: number | null };
 }
 
@@ -97,7 +121,8 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   let streamError: unknown = null;
   const result = streamText({
     model: opts.model,
-    prompt: opts.prompt,
+    messages: opts.messages,
+    ...(opts.system ? { system: opts.system } : {}),
     ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
     ...(hasTools
       ? {
@@ -148,8 +173,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   if (streamError) throw streamError;
 
   const usage = await result.usage;
+  /* `response.messages` là thứ AI SDK sinh ra TRONG lượt này: assistant gọi tool,
+   * message `tool` mang kết quả, assistant trả lời cuối. Đọc mã `ai@4` để chắc:
+   * nó ghi rõ "The response messages that were generated during the call". */
+  const { messages: generated } = await result.response;
   return {
     text,
+    messages: generated as CoreMessage[],
     usage: {
       promptTokens: usage.promptTokens ?? null,
       completionTokens: usage.completionTokens ?? null,

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Vòng lặp tool của CLI — thứ biến nó từ "trả lời" thành "làm việc".
  *
  * ============ VÌ SAO TEST BẰNG MODEL GIẢ ============
@@ -72,6 +72,9 @@ const DONE = {
   usage: { promptTokens: 1, completionTokens: 1 },
 };
 
+/** Message người dùng — dùng trong các test đa lượt. */
+const user = (text: string) => ({ role: 'user' as const, content: text });
+
 function mk() {
   const dir = mkdtempSync(path.join(tmpdir(), 'vyen-turn-'));
   writeFileSync(path.join(dir, 'a.txt'), 'dong 1\n', 'utf8');
@@ -114,7 +117,7 @@ describe('runAgentTurn — vòng lặp tool', () => {
         DONE,
       ],
     ]);
-    const r = await runAgentTurn({ model, tools: tools(ghiNhat), prompt: 'doc file a.txt' });
+    const r = await runAgentTurn({ model, tools: tools(ghiNhat), messages: [{ role: 'user', content: 'doc file a.txt' }] });
     expect(ghiNhat).toEqual(['a.txt']);
     expect(r.text).toBe('da doc xong');
     // 2 lượt: tool-call rồi mới có chữ. 1 lượt = quên maxSteps.
@@ -133,7 +136,7 @@ describe('runAgentTurn — vòng lặp tool', () => {
     await runAgentTurn({
       model,
       tools: tools(),
-      prompt: 'p',
+      messages: [user('p')],
       onToolCall: (name) => seen.push(name),
     });
     expect(seen).toEqual(['fs_read']);
@@ -159,21 +162,100 @@ describe('runAgentTurn — vòng lặp tool', () => {
         },
       },
     } as unknown as Parameters<typeof runAgentTurn>[0]['tools'];
-    const r = await runAgentTurn({ model, tools: t, prompt: 'p', onToolError: (n) => seen.push(n) });
+    const r = await runAgentTurn({ model, tools: t, messages: [user('p')], onToolError: (n) => seen.push(n) });
     expect(r.text).toBe('khong doc duoc');
     expect(seen).toEqual(['fs_read']);
   });
 
   it('không có tool thì vẫn trả lời bình thường', async () => {
     const { model, calls } = stubModel([[{ type: 'text-delta', textDelta: 'chi chat' }, DONE]]);
-    const r = await runAgentTurn({ model, tools: undefined, prompt: 'p' });
+    const r = await runAgentTurn({ model, tools: undefined, messages: [user('p')] });
     expect(r.text).toBe('chi chat');
     expect(calls.length).toBe(1);
   });
 
+  /* ĐÂY LÀ THỨ QUAN TRỌNG NHẤT CỦA ĐA LƯỢT.
+   *
+   * Một lượt có tool sinh ra một CHUỖI message, không phải một: assistant gọi
+   * tool → tool trả kết quả → assistant trả lời. Nếu chỉ giữ câu trả lời cuối
+   * thì transcript lưu `tool_use` mà không có `tool_result`, và provider từ chối
+   * **mọi lượt sau** của phiên đó — tức một chỗ thiếu làm hỏng cả cuộc hội thoại.
+   *
+   * Vì vậy phải trả về đủ, và người gọi ghi đủ. */
+  it('trả về CẢ message gọi tool và message kết quả, không chỉ câu trả lời cuối', async () => {
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [{ type: 'text-delta', textDelta: 'da doc xong' }, DONE],
+    ]);
+    const r = await runAgentTurn({ model, tools: tools(), messages: [user('doc a.txt')] });
+
+    const vaiTro = r.messages.map((m) => m.role);
+    expect(vaiTro, 'phai co assistant (goi tool) roi moi co tool (ket qua)').toEqual([
+      'assistant',
+      'tool',
+      'assistant',
+    ]);
+  });
+
+  it('mọi tool-use đều có tool-result khớp id trong cùng lượt', async () => {
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [{ type: 'text-delta', textDelta: 'xong' }, DONE],
+    ]);
+    const r = await runAgentTurn({ model, tools: tools(), messages: [user('doc')] });
+    /* Gom mọi part của mọi message ra một danh sách phẳng. Kiểu `content` của AI
+     * SDK là union rất rộng, nên gom xong ép một lần — test chỉ cần biết có part
+     * `tool-call` và `tool-result` khớp id hay không, không cần kiểu chính xác. */
+    const part = (m: { content: unknown }): { type?: string; toolCallId?: string }[] =>
+      Array.isArray(m.content) ? (m.content as { type?: string; toolCallId?: string }[]) : [];
+    const tatCa = r.messages.flatMap((m) => part(m as { content: unknown }));
+    const goi = tatCa.filter((c) => c.type === 'tool-call');
+    const coKetQua = tatCa.filter((c) => c.type === 'tool-result');
+    expect(goi.length).toBeGreaterThan(0);
+    for (const g of goi) {
+      const id = g.toolCallId;
+      expect(
+        coKetQua.some((k) => k.toolCallId === id),
+        `tool-call ${id} khong co tool-result tuong ung`,
+      ).toBe(true);
+    }
+  });
+
+  it('lịch sử đầu vào đi qua tới model (đa lượt thật sự đa lượt)', async () => {
+    const { model, calls } = stubModel([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+    await runAgentTurn({
+      model,
+      tools: undefined,
+      messages: [user('cau 1'), { role: 'assistant', content: 'tra loi 1' }, user('cau 2')],
+    });
+    // Định dạng `ai@4` chuyển messages thành `{role, content}` cho provider. Nếu
+    // chỉ gửi lượt cuối thì provider mất bối cảnh — đúng lỗi "quên mất lượt trước".
+    const guiDi = JSON.stringify(calls[0]);
+    expect(guiDi, 'khong gui cau 1').toContain('cau 1');
+    expect(guiDi, 'khong gui tra loi 1').toContain('tra loi 1');
+    expect(guiDi, 'khong gui cau 2').toContain('cau 2');
+  });
+
+  it('system prompt tới được model', async () => {
+    const { model, calls } = stubModel([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+    await runAgentTurn({
+      model,
+      tools: undefined,
+      messages: [user('p')],
+      system: 'ban la tro ly lap trinh',
+    });
+    expect(JSON.stringify(calls[0])).toContain('tro ly lap trinh');
+  });
+
   it('trả về số token để in ra cuối lượt', async () => {
     const { model } = stubModel([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
-    const r = await runAgentTurn({ model, tools: undefined, prompt: 'p' });
+    const r = await runAgentTurn({ model, tools: undefined, messages: [user('p')] });
     expect(r.usage.promptTokens).toBe(1);
     expect(r.usage.completionTokens).toBe(1);
   });
@@ -198,7 +280,7 @@ describe('runAgentTurn — vòng lặp tool', () => {
           rawCall: { rawPrompt: null, rawSettings: {} },
         }),
     };
-    await expect(runAgentTurn({ model: bad, tools: undefined, prompt: 'p' })).rejects.toThrow(
+    await expect(runAgentTurn({ model: bad, tools: undefined, messages: [user('p')] })).rejects.toThrow(
       /401/,
     );
   });
@@ -230,7 +312,7 @@ describe('runAgentTurn — vòng lặp tool', () => {
         DONE,
       ],
     ]);
-    await expect(runAgentTurn({ model, tools: undefined, prompt: 'p' })).rejects.toThrow(
+    await expect(runAgentTurn({ model, tools: undefined, messages: [user('p')] })).rejects.toThrow(
       /429/,
     );
   });
@@ -250,7 +332,7 @@ describe('runAgentTurn — vòng lặp tool', () => {
       ],
     ]);
     await expect(
-      runAgentTurn({ model, tools: tools(), prompt: 'p' }),
+      runAgentTurn({ model, tools: tools(), messages: [user('p')] }),
     ).rejects.toThrow(/500/);
   });
 });
