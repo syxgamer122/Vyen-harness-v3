@@ -50,6 +50,10 @@
  *   /exit    thoát. Mọi thứ đã ghi xuống đĩa, mở lại là đọc tiếp.
  *   /new     bắt đầu phiên mới (lịch sử cũ vẫn còn trên đĩa, không bị xoá).
  *
+ *   ↑ / ↓     gọi lại lệnh đã gõ trong phiên này. Không có nó thì sửa câu lệnh
+ *             phải tự gõ lại từ đầu — và tự gõ lại dễ là **khác** câu cũ, mà với
+ *             câu ghi file thì khác một đối số là khác hẳn.
+ *
  * ============ PHÍM TẮT KHI LƯỢT ĐANG CHẠY ============
  *
  *   Esc      cắt lượt đang chạy. Phần trả lời dở **không** được ghi vào lịch sử —
@@ -111,7 +115,15 @@
 
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
+// `createInterface` lấy từ bản **promises** (còn `node:readline` trả bản
+// callback, mà `question()` của nó trả `void` chứ không phải Promise).
 import { createInterface } from 'node:readline/promises';
+// Interface PHẢI lấy từ `readline/promises` — bản ở `readline` là callback, mà
+// `question()` của nó trả `void`, nên `await rl.question(...)` hợp kiểu nhưng là
+// `await undefined`: câu trả lời luôn rỗng mà TypeScript không báo gì.
+import type { Interface } from 'node:readline/promises';
+import { emitKeypressEvents } from 'node:readline';
+import type { Key } from 'node:readline';
 import os from 'node:os';
 import path from 'node:path';
 import { type ToolSet } from 'ai';
@@ -129,6 +141,7 @@ import { runAgentTurn } from './agent-turn';
 import { runRepl } from './repl';
 import { openSession } from './session';
 import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
+import { TaoLichSu } from './history';
 
 /**
  * Bọc trong hàm async thay vì dùng top-level `await`.
@@ -138,6 +151,46 @@ import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
  * await. Đo thật 2026-10-18: `Top-level await is currently not supported with the
  * "cjs" output format`. Cách này giữ file chạy được dưới CẨ `node` lẫn `tsx`.
  */
+/**
+ * Đợi một dòng lệnh, có phím můi tên gọi lại lịch sử.
+ *
+ * `readline` nuốt phím mũi tên để di chuyển con trỏ, nên ta dùng `emitKeypressEvents`
+ * để nghe chúng theo tên phím (`up`/`down`) thay vì đoán từ byte `0x1b[A`.
+ * Thay dòng thì dùng `ctrl+u` (xoá tới đầu dòng) rồi `write` nội dung mới —
+ * đó là cách `readline` dành cho việc này, không phải tự vẽ ANSI.
+ */
+async function hoiDong(
+  rl: Interface,
+  lichSu: TaoLichSu,
+): Promise<string | null> {
+  const stdin = process.stdin;
+  emitKeypressEvents(stdin);
+  const datLai = (noiDung: string) => {
+    rl.write(null, { ctrl: true, name: 'u' });
+    if (noiDung) rl.write(noiDung);
+  };
+  const onPhim = (_str: string | undefined, key: Key | undefined) => {
+    if (!key) return;
+    if (key.name === 'up') {
+      const v = lichSu.lai();
+      if (v !== undefined) datLai(v);
+    } else if (key.name === 'down') {
+      datLai(lichSu.di());
+    }
+  };
+  stdin.on('keypress', onPhim);
+  try {
+    const traVe = await rl.question('> ');
+    return traVe ?? null;
+  } catch {
+    /* `rl.question` NÉM "readline was closed" khi hết dòng — đo thật 2026-10-19.
+     * Không bắt thì `Ctrl+D` in một dòng lỗi rác thay vì thoát sạch. */
+    return null;
+  } finally {
+    stdin.off('keypress', onPhim);
+  }
+}
+
 /**
  * Phân tích argv.
  *
@@ -291,15 +344,21 @@ async function main(): Promise<void> {
   /* Bản rỗng trước: nếu `createNodeHost` ném, REPL vẫn chạy được (chỉ mất tool) và
    * `docDong` không bao giờ là `undefined` — gọi hàm `undefined` là crash. */
   let docDong: (q: string) => Promise<string> = async () => '';
+  // `rl` và `lichSu` dùng ở phần REPL nằm NGOÀI khối `try` này, nên phải khai ở
+  // đây. Khai trong khối `try` thì phạm vi khối che mất — TypeScript báo "không
+  // tìm thấy tên", và nếu tôi ép kiểu cho qua thì chạy lúc runtime vẫn lỗi.
+  let rl: Interface | undefined;
+  const lichSu = new TaoLichSu();
   try {
     const host = createNodeHost({ workspaceRoot: workspace, userDataDir });
     disposeHost = host.dispose;
 
     // Cổng duyệt: hỏi trên console, trừ khi người dùng tự bật YOLO — và khi
     // bật thì PHẢI in ra, vì đó là lúc bỏ hết lớp bảo vệ giữa người và máy.
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    closeStdin = () => rl.close();
-    docDong = (q: string) => rl.question(q);
+    const rlMoi = createInterface({ input: process.stdin, output: process.stderr });
+    rl = rlMoi;
+    closeStdin = () => rlMoi.close();
+    docDong = (q: string) => rlMoi.question(q);
     const approve = yolo
       ? (() => {
           console.error('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
@@ -414,12 +473,23 @@ async function main(): Promise<void> {
       // nếu không bắt, `Ctrl+D` (hay nối ống vào) là in ra một dòng lỗi rác
       // thay vì thoát sạch. `null` ở đây là EOF.
       ask: async () => {
-        try {
-          return (await docDong('> ')) ?? null;
-        } catch {
-          return null;
-        }
+        /* `createNodeHost` ném thì không có `readline`, mà REPL vẫn phải chạy
+         * (chỉ mất tool). Không có `rl` thì trả `null` = thoát, tệ hơn là gọi
+         * `undefined`. */
+        if (!rl) return null;
+        /* Bật `keypress` chỉ khi ĐANG chờ dòng lệnh.
+         *
+         * ============ VÌ SAO BẬT/GIẮM THEO TỪNG LƯỢT ============
+         *
+         * Nếu để nghe suốt phiên thì phím gõ lúc lượt đang chạy cũng đẩy vào bộ đệm
+         * của `readline`, và câu đó bị dính vào dòng lệnh kế tiếp — người dùng gõ
+         * "doc a.txt" rồi nhận ra có "xq" dính trước. Gắn rồi gỡ theo từng lần
+         * chờ là cách chắc chắn.
+         */
+        const dong = await hoiDong(rl, lichSu);
+        return dong;
       },
+      lichSu,
       /* Bắt `Esc` trong lúc lượt chạy.
        *
        * ============ VÌ SAO `raw` MÀ KHÔNG `readline` ============

@@ -720,3 +720,44 @@ Giữa hai lượt thì `readline` đang chờ trong `rl.question()` và **nuố
 handler vào cùng readline thì không bắt được. Lúc lượt chạy readline rảnh, nên bấm
 `Esc` ra `0x1b` thô trên stdin → dùng `setRawMode`. Phím mũi tên (`0x1b 0x5b`) bị
 nuốt để không cắt nhầm. `Ctrl+C` để mặc định của terminal — chỉ `Esc` mới cắt.
+
+# Lượt 8 (2026-10-19) — `↑` gọi lại lệnh đã gõ (việc cuối trong danh sách)
+
+## Đây KHÔNG phải tiện nghi — nó là an toàn
+
+Người dùng sửa lại một câu lệnh đã gõ, bấm `↑` cho nhanh. **Nếu `↑` không có tác
+dụng, họ tự gõ lại từ đầu** — và tự gõ lại thường là gõ *khác*. Với công cụ có
+quyền ghi file, "gần giống" là rủi ro thật: lệnh gần giống mà khác một đối số là
+lệnh khác hẳn.
+
+## Một test rỗng, và vì sao lùi "vài bước" không đủ
+
+Bản đầu chỉ lùi 2 bước để kiểm "câu lặp chỉ lưu một lần". Đo 2026-10-19: bỏ hẳn
+kiểm tra trùng thì **test vẫn xanh** — vì bảng có trùng và bảng không trùng trả về
+**cùng chuỗi** ở hai vị trí đó. Đúng nghĩa AGENTS.md gọi là test rỗng.
+
+Sửa: thêm `kichThuoc` để **đếm được** số phần tử, rồi khẳng định `2`. Mutation bỏ
+kiểm tra trùng → 1 đỏ.
+
+Đây là **lần thứ ba** trong phiên tôi viết test xanh mà nó không canh gì. Cả ba đều
+lộ ra bằng mutation, không phải bằng đọc lại test.
+
+## 6 mutation — 5 bị bắt, 1 không áp dụng
+
+Vòng qua đầu bảng → 2 đỏ · ghi mới không reset con trỏ → 1 đỏ · bỏ giới hạn → 1 đỏ
+· lưu dòng trống → 1 đỏ · bỏ kiểm tra trùng → 1 đỏ (sau khi sửa test) ·
+"di() ở cuối" → **không áp dụng** (chuỗi có comment nên không khớp, **chưa kiểm**).
+
+## `Interface` phải lấy từ `readline/promises`, không phải `readline`
+
+Đo từ `@types/node`: `readline.Interface.question(query, callback)` trả `void`.
+`await rl.question('> ')` với kiểu đó **hợp kiểu** nhưng là `await undefined` — câu
+trả lời luôn rỗng và TypeScript không báo gì. `readline/promises.Interface` mới có
+`question` trả Promise.
+
+## Còn lại
+
+- **Không rút gọn context**: đủ một buổi, không đủ cả ngày.
+- **Không tìm kiếm hội thoại**: JSONL không có chỉ mục. Muốn thì đổi sang SQLite.
+- **Không `↑` xuyên phiên**: lịch sử dòng lệnh chỉ trong một tiến trình. Nạp từ
+  transcript sẽ đẩy `doc README.md` vào danh sách câu đã gõ — cân nhắc riêng.

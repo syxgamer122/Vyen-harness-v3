@@ -26,6 +26,7 @@
 import type { CoreMessage, LanguageModelV1, ToolSet } from 'ai';
 import { runAgentTurn } from './agent-turn';
 import type { SessionStore } from './session';
+import type { TaoLichSu } from './history';
 
 export type ReplCommand =
   | { kind: 'exit' }
@@ -75,6 +76,8 @@ export interface ReplOptions {
    * thẳng `process.stdin.on(...)` vào trong vòng lặp.
    */
   watchInterrupt?: (cancel: () => void) => () => void;
+  /** Lịch sử dòng lệnh — cho phím mũi tên gọi lại câu đã gõ. */
+  lichSu?: TaoLichSu;
   /** In ra màn hình (stdout trong bản thật). */
   out: (text: string) => void;
   /** In ra phần trạng / cảnh báo (stderr trong bản thật). */
@@ -121,6 +124,9 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
 
     const cauHoi = dong.trim();
     if (!cauHoi) continue;
+    // Ghi sau khi đã chắc là lệnh hợp lệ: dòng trống và lệnh `/...` không vào
+    // lịch sử dòng lệnh (`/exit` thì không có ý nghĩa để `↑` lại).
+    if (!parseCommand(dong)) opts.lichSu?.ghi(cauHoi);
 
     messages.push({ role: 'user', content: cauHoi });
     opts.session.append({ role: 'user', content: cauHoi });
@@ -168,6 +174,9 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       // Dọn listener TRƯỚC khi sang lượt sau. Bỏ sót thì phím Esc của lượt sau
       // sẽ kích hoạt `cancel` của lượt đã xong.
       nghePhim?.();
+      // Thoát chế độ duyệt lịch sử. Nếu không, `↑` sau khi gõ câu mới sẽ quay
+      // về câu cũ thay vì câu vừa gửi.
+      opts.lichSu?.dung();
     }
   }
 }
