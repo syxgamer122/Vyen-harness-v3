@@ -289,6 +289,37 @@ describe('che bí mật trước khi ghi đĩa', () => {
     }
   });
 
+  /* Kết quả tool KHÔNG đi qua `append` — nó đi qua `appendAll`
+   * (`cli/repl.ts` và `cli/index.ts` chỉ dùng `appendAll` cho message sinh ra
+   * bởi lượt). Bản đầu chỉ test `append`, nên gỡ che khỏi `appendAll` thì cả ba
+   * test vẫn xanh — tức đúng cái rò `.env` mà mục này sinh ra để chặn lại không
+   * ai canh. Reviewer bắt đúng. */
+  it('che qua `appendAll` — đường mà kết quả tool thật sự đi', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.appendAll([
+        userMsg('doc file .env'),
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 't1',
+              toolName: 'fs_read',
+              result: { content: `OPENAI=${KHOA}` },
+            },
+          ],
+        } as CoreMessage,
+      ]);
+      s.close();
+      const raw = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(raw, 'khoa rut qua appendAll van ghi nguyen').not.toContain(KHOA);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('không che nhầm nội dung thường', () => {
     const { state, dir, cleanup } = mk();
     try {

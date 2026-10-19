@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cầu nối `lib/ipc.cjs` ra khỏi Electron.
  *
  * ============ VÌ SAO FILE NÀY TỒN TẠI ============
@@ -567,15 +567,26 @@ export function buildIpcTools(
               content?: string;
             };
             let whole = full?.content ?? '';
-            /* GHI NHỚ HASH của lần đọc NÀY.
+            /* CHỈ GHI HASH KHI CHƯA CÓ — đây là điểm mấu chốt.
              *
-             * `fs_edit` ghi đè TOÀN BỘ file, nên nó cần chống TOCTOU y hệt `fs_write`:
-             * đọc → có người sửa file ngoài → ta ghi đè là mất thay đổi của họ. Bản
-             * đầu chỉ nhớ hash ở `fs_read`, nên `fs_edit` không bao giờ gửi
-             * `expectedBaseHash` ⇒ máy chống TOCTOU của `ipc.cjs` **không bao giờ
-             * chạy** cho tool này.
+             * Bản đầu tôi ghi vô điều kiện (`hashes.set(...)` luôn). Sai, và sai theo
+             * cách tệ nhất: nó **ghi đè H0 bằng H1**, rồi phép so thành H1 với H1 ⇒
+             * qua. Lớp bảo vệ có vẻ mà không chặn đúng ca nó sinh ra để chặn.
+             *
+             * ============ VÌ SAO H0 LẠI LÀ THỨ PHẢI GIỮ ============
+             *
+             * H0 = nội dung mà **người dùng đã đọc và duyệt**. Nếu file đã đổi
+             * thành H1 mà ta vẫn ghi, thứ bị ghi đè là chính phần họ duyệt — dù
+             * dữ liệu của người khác thì không mất (vì `fs_edit` áp khối lên nội
+             * dung hiện tại, đo thật 2026-10-19). Cổng duyệt sinh ra để chặn đúng
+             * điều đó.
+             *
+             * File CHƯA từng đọc thì chưa có H0 — lúc đó ghi hash mới vào, vì đó là
+             * cách duy nhất để biết file vừa ở trạng thái nào ngay trước lúc ghi.
              */
-            hashes.set(a.path as string, sha256(whole));
+            if (!hashes.has(a.path as string)) {
+              hashes.set(a.path as string, sha256(whole));
+            }
             for (const b of parsed.blocks) {
               const applied = replaceMostSimilarChunk(whole, b.search, b.replace);
               if (!applied.ok) {

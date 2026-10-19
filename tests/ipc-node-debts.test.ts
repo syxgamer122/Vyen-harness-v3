@@ -161,29 +161,96 @@ describe('fs_write ghi đè file tồn tại thì phải kèm hash lúc đọc',
     }
   });
 
-  /* `fs_edit` **đọc lại** file rồi áp khối lên nội dung HIỆN TẠI, nên thay đổi của
-   * người khác được giữ. Đo thật 2026-10-19:
-   *   đọc "dong 1/dong 2/dong 3" → người khác sửa thành
-   *   "dong 1/NGUOI KHAC SUA/dong 3/dong 4" → `fs_edit` sửa "dong 1" →
-   *   "DONG MOT/NGUOI KHAC SUA/dong 3/dong 4" — **không mất gì** của họ.
+  /* ĐÂY LÀ TEST QUYẾT ĐỊNH, và nó ĐỎ trên bản sửa đầu tiên của tôi.
    *
-   * Nên reviewer's I3 ("ghi đè mất nội dung mới") **sai**, đo bác bỏ. Nhưng phần
-   * còn lại thì đúng: trước khi sửa, `fs_edit` không nhớ hash lúc đọc nên không
-   * gửi `expectedBaseHash` ⇒ máy chống TOCTOU của `ipc.cjs` **không bao giờ
-   * chạy** cho tool này, tức lớp bảo vệ có sẵn bị bỏ không. */
-  it('fs_edit GIỮ NGUYÊN thay đổi của người sửa file ngoài phiên', async () => {
+   * ============ VÌ SAO KHÔNG CÒN "GIAO ĐỒ CỦA AI ĐÃ BỊ GHI ĐÈ" ============
+   *
+   * Đo 2026-10-19: `fs_edit` **đọc lại** file rồi áp khối lên nội dung hiện tại,
+   * nên thay đổi của người khác **được giữ**. Reviewer lần trước nói "ghi đè mất
+   * nội dung mới" là sai về mặt sự kiện — và tôi đã bác bỏ bằng đo.
+   *
+   * ============ NHƯNG CÁI ĐÚNG LÀ HÀNH ĐỘNG KHÔNG ĐƯỢC PHÉP ============
+   *
+   * Người dùng duyệt một diff dựa trên H0. Nếu file đã đổi thành H1 rồi ta ghi,
+   * thì thứ thật sự bị ghi đè là **phần người dùng đã duyệt**. Không mất dữ liệu
+   * của người khác, nhưng lỡ một thao tác mà họ không hề thấy — đúng cái mà cổng
+   * duyệt sinh ra để chặn.
+   *
+   * ============ VÀ BẢN SỬA ĐẦU CỦA TÔI KHÔNG BẮT ĐƯỢC ============
+   *
+   * Tôi ghi `hashes.set(path, sha256(noiDungVuaDoc))` ở lần đọc nội bộ. Vậy là
+   * **ghi đè H0 bằng H1**, rồi phép so thành H1 với H1 ⇒ **qua**. Lớp bảo vệ có
+   * vẻ mà không chặn đúng ca nó sinh ra để chặn.
+   *
+   * Cách đúng: chỉ ghi hash khi chưa có, tức giữ lại H0 để phép so thấy khác biệt.
+   */
+  it('fs_edit phải CHẶN khi file đổi sau lần đọc — nội dung đã duyệt không được ghi đè', async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      // Người dùng đọc a.txt — đây là H0, cơ sở của cái họ sẽ duyệt.
+      await t.fs_read.execute({ path: 'a.txt' });
+      // Có người sửa file ngoài phiên (IDE tự lưu, git checkout, agent khác…).
+      writeFileSync(path.join(dir, 'a.txt'), 'dong 1\nNGUOI KHAC SUA\ndong 3\n', 'utf8');
+      await expect(
+        t.fs_edit.execute({
+          path: 'a.txt',
+          blocks: '<<<<<<< SEARCH\ndong 1\n=======\nDONG MOT\n>>>>>>> REPLACE',
+        }),
+      ).rejects.toThrow(/TOCTOU|thay doi/i);
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  /* Ngược lại: chưa từng đọc thì không có H0 để so — `fs_edit` vẫn phải chạy được,
+   * không phải vì "đúng" mà vì không có gì để đối chiếu. */
+  it('fs_edit khi CHƯA từng đọc thì vẫn chạy — không có gì để so', async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      await tools().fs_edit.execute({
+        path: 'a.txt',
+        blocks: '<<<<<<< SEARCH\ndong 2\n=======\nHAI\n>>>>>>> REPLACE',
+      });
+      expect(readFileSync(path.join(dir, 'a.txt'), 'utf8')).toBe('dong 1\nHAI\ndong 3\n');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  /* Đọc xong rồi sửa mà không ai đụng vào — phải qua, nếu không lớp bảo vệ chặn
+   * nhầm mọi lần sửa bình thường. */
+  it('đọc xong rồi sửa, không ai đổi file thì CHẠY ĐƯỢC', async () => {
     const { dir, tools, hostOf, cleanup } = mk();
     try {
       const t = tools();
       await t.fs_read.execute({ path: 'a.txt' });
-      writeFileSync(path.join(dir, 'a.txt'), 'dong 1\nNGUOI KHAC SUA\ndong 3\n', 'utf8');
       await t.fs_edit.execute({
         path: 'a.txt',
-        blocks: '<<<<<<< SEARCH\ndong 1\n=======\nDONG MOT\n>>>>>>> REPLACE',
+        blocks: '<<<<<<< SEARCH\ndong 2\n=======\nHAI\n>>>>>>> REPLACE',
       });
-      const sau = readFileSync(path.join(dir, 'a.txt'), 'utf8');
-      expect(sau, 'mat thay doi cua nguoi khac').toContain('NGUOI KHAC SUA');
-      expect(sau).toContain('DONG MOT');
+      expect(readFileSync(path.join(dir, 'a.txt'), 'utf8')).toBe('dong 1\nHAI\ndong 3\n');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  it('sửa hai lần liên tiếp thì lần sau vẫn chạy — hash cập nhật sau lần ghi', async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      await t.fs_edit.execute({
+        path: 'a.txt',
+        blocks: '<<<<<<< SEARCH\ndong 2\n=======\nHAI\n>>>>>>> REPLACE',
+      });
+      await t.fs_edit.execute({
+        path: 'a.txt',
+        blocks: '<<<<<<< SEARCH\nHAI\n=======\nHAI_MOI\n>>>>>>> REPLACE',
+      });
+      expect(readFileSync(path.join(dir, 'a.txt'), 'utf8')).toBe('dong 1\nHAI_MOI\ndong 3\n');
     } finally {
       hostOf().dispose();
       cleanup();

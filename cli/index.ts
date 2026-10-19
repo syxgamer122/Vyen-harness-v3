@@ -284,7 +284,7 @@ async function main(): Promise<void> {
    * Chỉ `-p` mới đòi câu hỏi, vì `-p` nghĩa là "chạy một lượt rồi thoát" — không có
    * câu hỏi thì không có việc gì để chạy. */
   if (args.print && !prompt) {
-    console.error('-p nhung khong co cau hoi: npm run cli -p -- "cau hoi"');
+    console.error('-p nhung khong co cau hoi: npm run cli -- -p "cau hoi"');
     process.exit(2);
   }
 
@@ -343,23 +343,12 @@ async function main(): Promise<void> {
   const yolo = process.env.VYEN_YOLO === '1';
   let tools: ToolSet | undefined;
   let disposeHost: (() => void) | undefined;
-  // Readline giữ stdin mở, nên nếu không đóng thì tiến trình không thoát dù đã
-  // in xong. Đóng quá sớm thì lượt hỏi duyệt sau sẽ treo — nên đóng ở `finally`.
-  let closeStdin: (() => void) | undefined;
   const workspace = process.env.VYEN_WORKSPACE ?? process.cwd();
-  // KHAI TRƯỚC `try` vì REPL dùng `userDataDir` và `docDong` — khai trong thì phạm
-  // vi khối, TypeScript đúng ra báo "không tìm thấy tên" dù runtime có giá trị.
+  // KHAI TRƯỚC `try` vì REPL dùng `userDataDir` — khai trong thì phạm vi khối che
+  // mất, TypeScript đúng ra báo "không tìm thấy tên" dù runtime có giá trị.
   const userDataDir =
     process.env.VYEN_STATE_DIR ??
     path.join(os.homedir(), '.vyen', 'cli');
-  /* Bản rỗng trước: nếu `createNodeHost` ném, REPL vẫn chạy được (chỉ mất tool) và
-   * `docDong` không bao giờ là `undefined` — gọi hàm `undefined` là crash. */
-  let docDong: (q: string) => Promise<string> = async () => '';
-  // `rl` và `lichSu` dùng ở phần REPL nằm NGOÀI khối `try` này, nên phải khai ở
-  // đây. Khai trong khối `try` thì phạm vi khối che mất — TypeScript báo "không
-  // tìm thấy tên", và nếu tôi ép kiểu cho qua thì chạy lúc runtime vẫn lỗi.
-  let rl: Interface | undefined;
-  const lichSu = new TaoLichSu();
 
   /* `readline` DỰNG NGOÀI `try` — và đây là lý do reviewer bắt được.
    *
@@ -369,14 +358,18 @@ async function main(): Promise<void> {
    * dòng thông báo vừa in lại nói *"van chat binh thuong, chi khong dung duoc
    * cong cu"* — nói một đằng làm một nẻo.
    *
-   * Đọc dòng không cần workspace, nên tách nó ra khỏi phần dựng tool.
+   * Đọc dòng không cần workspace, nên tách nó ra khỏi phần dựng tool. Vì thế
+   * `rl`, `docDong`, `closeStdin` đều **không còn `| undefined`** và không còn
+   * guard `if (!rl) return null` — bản đầu giữ chúng là guard chết, và comment
+   * của guard ("không có `rl` thì trả `null`") mô tả tình huống đã không còn
+   * tồn tại: kiểu tài liệu chết theo AGENTS.md §4.
    */
-  {
-    const rlMoi = createInterface({ input: process.stdin, output: process.stderr });
-    rl = rlMoi;
-    closeStdin = () => rlMoi.close();
-    docDong = (q: string) => rlMoi.question(q);
-  }
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const docDong = (q: string): Promise<string> => rl.question(q);
+  // Readline giữ stdin mở, nên nếu không đóng thì tiến trình không thoát dù đã
+  // in xong. Đóng quá sớm thì lượt hỏi duyệt sau sẽ treo — nên đóng ở `finally`.
+  const closeStdin = (): void => rl.close();
+  const lichSu = new TaoLichSu();
   try {
     const host = createNodeHost({ workspaceRoot: workspace, userDataDir });
     disposeHost = host.dispose;
@@ -497,10 +490,6 @@ async function main(): Promise<void> {
       // nếu không bắt, `Ctrl+D` (hay nối ống vào) là in ra một dòng lỗi rác
       // thay vì thoát sạch. `null` ở đây là EOF.
       ask: async () => {
-        /* `createNodeHost` ném thì không có `readline`, mà REPL vẫn phải chạy
-         * (chỉ mất tool). Không có `rl` thì trả `null` = thoát, tệ hơn là gọi
-         * `undefined`. */
-        if (!rl) return null;
         /* Bật `keypress` chỉ khi ĐANG chờ dòng lệnh.
          *
          * ============ VÌ SAO BẬT/GIẮM THEO TỪNG LƯỢT ============

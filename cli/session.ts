@@ -29,27 +29,20 @@ import crypto from 'node:crypto';
 import type { CoreMessage } from 'ai';
 import { redactSecretsDeep } from '@/lib/secret-registry';
 
-/**
- * Che bí mật trước khi ghi xuống đĩa.
+/* Che bí mật trước khi ghi xuống đĩa — dùng `redactSecretsDeep` của sẵn có, KHÔNG
+ * tự viết hàm bọc thứ hai (AGENTS.md §6).
  *
  * ============ VÌ SAO BẮT BUỘC ============
  *
- * Kết quả `fs_read` nằm trong lịch sử hội thoại, tức sẽ nằm trong JSONL ở
+ * Kết quả `fs_read` nằm trong lịch sử hội thoại, tức nằm trong JSONL ở
  * `~/.vyen/cli/sessions/`. Đọc một `.env` là key của mọi thứ khác rơi vào đó.
  *
  * Đây là đường lưu duy nhất trong repo **không** che trước khi ghi: `lib/db.ts`,
  * `lib/tool-result-server.ts`, `lib/audit-log.ts` đều đã che, và spec §7 yêu cầu
  * rõ "redact trước khi ghi đĩa".
  *
- * Chỉ che lúc **ghi**, không che trong RAM: người dùng không nhìn thấy transcript
- * nên không mất gì, còn nếu che cả trong RAM thì lượt nối tiếp sẽ gửi chuỗi đã
- * bị che đi cho model.
- */
-function che(message: CoreMessage): CoreMessage {
-  // `redactSecretsDeep` đi đệ quy cả object lẫn chuỗi, và trả về **cùng kiểu**.
-  // Bản đầu tôi stringify rồi parse lại — làm hỏng mọi `undefined` trong message.
-  return redactSecretsDeep(message);
-}
+ * Chỉ che lúc **ghi**, không che trong RAM: nếu che cả trong RAM thì lượt nối
+ * tiếp sẽ gửi chuỗi đã bị che đi cho model. */
 
 export interface SessionHeader {
   kind: 'header';
@@ -141,14 +134,14 @@ export function openSession(stateDir: string, directory: string): SessionStore {
     messages,
     append(message: CoreMessage): void {
       messages.push(message);
-      appendLine(file, JSON.stringify({ seq: ++seq, message: che(message) }));
+      appendLine(file, JSON.stringify({ seq: ++seq, message: redactSecretsDeep(message) }));
     },
     appendAll(batch: CoreMessage[]): void {
       if (batch.length === 0) return;
       // Ghi **một** lần cho cả lô: lô tool-call + tool-result phải vào đĩa cùng
       // nhau, nếu không thì crash giữa lô là mất cặp đôi và provider từ chối cả
       // lượt sau (tool_use không có tool_result).
-      const phan = batch.map((m) => ({ seq: ++seq, message: che(m) }));
+      const phan = batch.map((m) => ({ seq: ++seq, message: redactSecretsDeep(m) }));
       appendLine(file, phan.map((p) => JSON.stringify(p)).join('\n'));
       messages.push(...batch);
     },
