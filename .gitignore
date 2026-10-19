@@ -74,3 +74,8 @@ tmp-test-*
 
 # Log npm tràn ra ở gốc repo lúc cài đặt.
 _install.out
+
+# Gói diff sinh ra cho reviewer (`.superpowers/sdd/<plan>/review-*.diff`) — file
+# SINH, dung lượng hàng MB, và nội dung trùng lặp git history. Ledger
+# (progress.md) mới là bản ghi bền vững.
+.superpowers/sdd/*/review-*.diff
