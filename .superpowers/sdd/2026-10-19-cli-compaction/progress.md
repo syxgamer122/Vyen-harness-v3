@@ -519,3 +519,139 @@ spill khi **thật sự cắt được gì**; chênh lệch chỉ do overhead th
 
 Đây là lần thứ hai trong phiên này một test "xanh" hoá ra không canh gì — và lần này
 mutation KHÔNG áp dụng vào code sai, mà test đơn giản là chưa đủ sắc.
+
+
+---
+
+# LƯỢT 4 — REVIEW TOÀN NHÁNH (reviewer `minimax-m3.1-flash-free`, range `fe5a0c0..994bc03`)
+
+Reviewer soi **58 file / +12.314 dòng** (toàn bộ phần vừa merge lên `main`): 0 Critical,
+**5 Important**, 10 Minor. Tôi tự kiểm chứng từng cái bằng cách **chạy code**, không tin lời reviewer.
+
+## Đã sửa (4 Important)
+
+### I-1. Lượt hỏng giữa chừng làm MẤT vết mọi tool đã chạy — **ĐÃ SỬA**
+
+`cli/agent-turn.ts` ném lỗi **trước** khi đọc `result.response` ⇒ `fs_write` đã ghi file mà
+transcript không có dấu vết ⇒ `/compact` không biết file nào vừa bị sửa, và đường `overflow`
+thử lại ⇒ model **làm lại** đúng các tool call đó ⇒ ghi file hai lần.
+
+**Đo lại (reviewer nói khác):** `result.response.messages` không **reject** — nó resolve ra
+**`undefined`** ⇒ không khôi phục được từ đó. Nhưng `fullStream` **có** phát part
+`tool-call` lẫn `tool-result`, và `args` là **object đã parse** (đo bằng script, đã xoá) ⇒
+dựng lại được từ chính stream.
+
+Cách sửa: gom part tool trong vòng lặp `fullStream` → dựng lại message đúng hình dạng
+`response.messages` (một message assistant gộp tool-call, một message tool gộp tool-result) →
+**chỉ giữ cặp ĐẦY ĐỦN** (tool-call không có tool-result thì bỏ — ghi nó là tạo chuỗi hở, mà
+chuỗi hở làm provider từ chối MỌI lượt sau) → gắn vào chính lỗi qua `WeakMap` (không bọc
+lỗi, vì bọc thì `diagnoseUpstreamError` mất status code) → REPL gọi `session.appendAll()`.
+
+**Ruling: gắn partial vào lỗi qua `WeakMap` thay vì bọc lỗi trong class mới.** Bọc lỗi làm
+`APICallError.isInstance(e)` false ⇒ `diagnoseUpstreamError` mất status code ⇒ chẩn đoán lỗi
+provider (401/429/5xx) bị hỏng. Chi phí nếu sai: phải sửa thêm một lớp bọc lỗi.
+
+Test: 3 test ở `tests/cli-agent-turn.test.ts` (lỗi vẫn nổi; phần đã chạy còn nguyên; mọi
+tool-call được ghi đều có tool-result tương ứng) + **1 test ở tầng nối** trong
+`tests/cli-repl-compaction.test.ts` (REPL thật sự ghi xuống transcript, và mở lại được).
+Mutation: bỏ lệnh `appendAll` ở REPL ⇒ test tầng nối đỏ ✓.
+
+### I-2. Nhật ký audit ghi bí mật thô ra đĩa — **ĐÃ SỬA**
+
+`lib/tools/ipc-node.ts` ghi thẳng dòng audit ra đĩa, **không** qua `redactSecretText`. Mà
+`ipc.cjs` audit lệnh shell nguyên văn (`lib/ipc.cjs:953`) và `bg-run` (`:1428`) ⇒ một câu
+`curl -H "Authorization: Bearer …"` là đủ để có khoá trong `~/.vyen/cli/vyen-audit.log`.
+
+Cùng chuỗi đó: transcript thì đã che, spill thì đã che, audit log **của web** thì đã che
+(`lib/audit-log.ts:246`) — chỉ audit log **của CLI** là chưa.
+
+**Ruling: bọc hàm audit (`auditGoc`) thay vì chỉ che ở chỗ ghi file.** Nếu chỉ che trong
+hàm ghi mặc định thì `opts.audit` mà caller tiêm vào vẫn nhận dòng thô. Bọc ở một chỗ ⇒
+mọi đường đều được che. Chi phí nếu sai: không có.
+
+Test: 2 test ở `tests/ipc-node-debts.test.ts` (tên file chứa khoá; lệnh shell chứa khoá).
+Cả hai đỏ trước khi sửa, có **bằng chứng runtime** (khoá thật nằm trong file audit).
+Mutation: bỏ `redactSecretText` ⇒ 2 test đỏ ✓.
+
+### I-3. Phím Esc được quảng cáo nhưng **không nối vào CLI thật** — **ĐÃ SỬA**
+
+`cli/terminal.ts` có `watchInterrupt` viết đầy đủ + 2 file test; `cli/repl.ts` có
+`AbortController` + option `watchInterrupt` + test; nhưng `cli/index.ts` **không truyền**
+`watchInterrupt` cho `runRepl` ⇒ `AbortController` không bao giờ được `abort()` ⇒ **bấm Esc
+không làm gì cả**, dù header của chính file quảng cáo Esc hoạt động.
+
+Cách sửa (2 phần):
+1. `cli/index.ts` tách `buildReplOptions()` ra **hàm export** và chỉ gọi `main()` khi được
+   gọi trực tiếp (`require.main === module`) ⇒ **tầng nối import được trong test**.
+2. `cli/terminal.ts`: cổng duyệt hỏi **trong lúc lượt đang chạy** ⇒ `watchInterrupt` đang
+   bật raw mode. Nay `hoi()` **tắt raw mode** khi hỏi và bật lại sau, và cờ `dangHoi` làm
+   `Esc` trong lúc hỏi **không** bị hiểu là yêu cầu dừng lượt (người dùng đang trả lời
+   câu hỏi, Esc ở đó nghĩa là "tôi không biết").
+
+Test: `tests/cli-repl-wiring.test.ts` (mới) — `buildReplOptions` phải trả `watchInterrupt` là
+hàm, phải truyền `modelNen` riêng, `windowTokens` chỉ khi có; + 2 test ở
+`tests/cli-terminal.test.ts` (raw mode tắt/bật; Esc khi hỏi duyệt không dừng lượt).
+Mutation: `watchInterrupt: undefined` ⇒ test đỏ ✓.
+
+### I-4. `fs_read` không nói model đọc tiếp từ đâu — **ĐÃ SỬA**
+
+Mô tả tool bảo model *"gọi lại với `start_line` lớn hơn"* mà kết quả không nói nó dừng ở
+dòng nào ⇒ "lớn hơn" là bao nhiêu? Model đoán ⇒ đọc lại trùng hoặc đọc hụt ⇒ tốn tiền mà
+không tiến. Với file > 24.000 ký tự thì đây là **mọi lượt**.
+
+Sửa: `applyReadWindow` trả thêm `startLine`/`endLine`; kết quả tool trả thêm `path` (bám
+`lib/fs-access.ts:410-417` của web).
+
+**Ruling: `endLine` đếm DÒNG THẬT, khác bản web.** Web tính
+`endLine = startIndex + content.split('\n').length` ⇒ file 5 dòng (kết thúc bằng `\n`) bị báo
+là **6** ⇒ model hỏi `start_line=6` ⇒ nhận về dòng rỗng ⇒ lại hỏi tiếp ⇒ **mắc vòng lặp
+đọc lại**. CLI là sản phẩm còn lại (web sẽ bị xoá) nên ở đây đếm đúng số dòng thật.
+Chi phí nếu sai: CLI lệch 1 đơn vị với web trong khi web còn sống.
+
+Test: `tests/ipc-node-read.test.ts` (mới) — 3 test (đủ `path`/`startLine`/`endLine`; cửa sổ
+dòng; file bị cắt trần thì `endLine` nhỏ hơn tổng số dòng). Mutation: bỏ
+`startLine`/`endLine` ⇒ 3 test đỏ ✓.
+
+## Minor đã sửa
+
+- **M-2**: header `cli/index.ts` còn ghi *"Không có compaction"* và không liệt kê
+  `/compact` lẫn `VYEN_CONTEXT_WINDOW` ⇒ đã sửa cả ba.
+
+## Minor còn mở (ghi ra để chủ repo quyết)
+
+- **M-1**: `/new` chỉ xoá tóm tắt trong RAM; mở lại session thì tóm tắt cũ quay lại (marker
+  trên file vẫn còn). Spec F12 có chấp nhận `/new` không xoá marker **cho lịch sử**, nhưng
+  bản tóm tắt là thứ khác.
+- **M-3**: khi thử lại sau tràn context, chữ đã stream của lượt hỏng vẫn nằm trên màn hình
+  và câu trả lời in ra lần hai. opencode cũng vậy.
+- **M-5 / M-8**: đường `-p` (`chayMotLuot`) vẫn nằm sau `main()` ở module scope ⇒ **không
+  test được**. Đã làm `cli/index.ts` import được (guard `require.main`), nhưng `main()` vẫn
+  tự đọc `process.env` và tự tạo terminal ⇒ chưa tách được để test từng nhánh.
+- **M-6**: `openSession` ném thì CLI in "chay tiep, chi khong nho duoc" rồi thoát mã 1 — có
+  sẵn từ trước, nhưng guard mới của `openSession` (message đầu là `tool`) khiến nó dễ gặp
+  hơn.
+- **M-4**: test `tests/cli-migration-scan.test.ts` dựng file probe **trong `cli/`** ⇒
+  `repo-hygiene` quét `cli/` mà không bỏ qua dotfile ⇒ nếu hai file test chạy song song thì
+  hygiene có thể đỏ **với lý do sai**. Chưa bắt được trong 6 vòng chạy nhưng xác suất
+  không phải 0.
+- **M-10**: `/compact` không debounce nhưng `reset()` không xoá `lanNenGanNhat` ⇒ `/new` xong,
+  lượt kế tiếp có thể bị chặn nén tự động còn 60s.
+
+## I-5 — CẦN CHỦ REPO QUYẾT (không tự làm)
+
+Spec §7 (`docs/superpowers/specs/2026-10-18-cli-core-design.md:91`): *"Model không hỗ trợ tool
+calling → rơi về `emulated-agent` (đã có, và là tài sản lớn nhất cho BYOK)"*. CLI hiện **không**
+có đường này: `cli/repl.ts` luôn truyền `tools` vào `streamText` ⇒ provider từ chối tool ⇒ lỗi
+⇒ phiên dừng. Với BYOK + model local (đúng thứ CLI nhắm tới) thì đây là ca chết cả session.
+
+Không plan nào ghi việc này (4 plan đều không có) ⇒ không coi là hồi quy, nhưng nó là **hàng
+của spec**. Hoặc làm, hoặc ghi rõ "chưa hỗ trợ" vào tài liệu.
+
+## Gate lượt 4
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm run typecheck` | 0 lỗi |
+| `npm run lint` | 0 lỗi / 8 warning (baseline) |
+| `npm run test` | **231/232 file, 3660 pass**; 3 fail = flaky `secret-registry` (AGENTS.md §1) |
+| Smoke CLI | `> cong cu: 14`, nạp `AGENTS.md`, REPL sẵn sàng (sau khi thêm guard `require.main`) |
