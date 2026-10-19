@@ -99,6 +99,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -114,8 +115,9 @@ import { getKeyLabel } from '@/lib/api-keys';
 import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
 import { createConsoleApprover, createAutoApprover } from './approve';
 import { runAgentTurn } from './agent-turn';
-import { runRepl, SYSTEM_PROMPT } from './repl';
+import { runRepl } from './repl';
 import { openSession } from './session';
+import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
 
 /**
  * Bọc trong hàm async thay vì dùng top-level `await`.
@@ -150,8 +152,9 @@ async function chayMotLuot(opts: {
   maxTokens: number;
   apiKey: string;
   model: string;
+  system: string;
 }): Promise<void> {
-  const { lm, session, question, tools, maxTokens, apiKey, model } = opts;
+  const { lm, session, question, tools, maxTokens, apiKey, model, system } = opts;
   session.append({ role: 'user', content: question });
   let wroteAny = false;
   try {
@@ -159,7 +162,7 @@ async function chayMotLuot(opts: {
       model: lm,
       tools,
       messages: [...session.messages],
-      system: SYSTEM_PROMPT,
+      system,
       maxTokens,
       onText: (delta) => {
         process.stdout.write(delta);
@@ -304,6 +307,31 @@ async function main(): Promise<void> {
     console.error('> van chat binh thuong, chi khong dung duoc cong cu.');
   }
 
+  /* ---- System prompt: dựng SAU khi biết đã bật được tool nào ----
+   *
+   * Thứ tự này là bắt buộc: hướng dẫn tool chỉ chèn cho tool **thật sự có**, nên
+   * dựng prompt trước khi `createNodeHost` chạy thì luôn phải giả định là có đủ
+   * tool — tức bảo model dùng `fs_write` trong khi `fs_write` không tồn tại. Đó
+   * chính là lỗi của bản prompt liệt kê cứng.
+   *
+   * File hướng dẫn dự án (`AGENTS.md`…) nằm trong phần này — đo mã opencode cho
+   * thấy prompt của họ chỉ ~10 dòng, còn bối cảnh dự án đến từ file. Repo này có
+   * sẵn `AGENTS.md` chi tiết mà bản cũ bỏ qua. */
+  const systemPrompt = buildSystemPrompt(
+    tools ? Object.keys(tools) : undefined,
+    workspace,
+  );
+  const coHuongDan = INSTRUCTION_FILES.filter((f) => {
+    try {
+      return statSync(path.join(workspace, f)).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (coHuongDan.length > 0) {
+    console.error(`> huong dan du an: ${coHuongDan.join(', ')}`);
+  }
+
   /* ---- Session transcript: thứ làm "đóng terminal rồi mở lại còn nhớ" ----
    *
    * Session gắn với **thư mục**, không gắn với người — đúng cách opencode dùng cột
@@ -346,7 +374,16 @@ async function main(): Promise<void> {
      * tiếp. Câu hỏi truyền qua argv là **lượt đầu tiên**, rồi CLI tiếp tục. */
     if (args.print) {
       // `prompt` chắc chắn có: `main()` đã kiểm và thoát nếu `-p` mà thiếu.
-      await chayMotLuot({ lm, session, question: prompt as string, tools, maxTokens, apiKey, model });
+      await chayMotLuot({
+        lm,
+        session,
+        question: prompt as string,
+        tools,
+        maxTokens,
+        apiKey,
+        model,
+        system: systemPrompt,
+      });
       return;
     }
 
@@ -354,7 +391,7 @@ async function main(): Promise<void> {
       model: lm,
       tools,
       session,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       maxTokens,
       ...(prompt ? { initial: prompt } : {}),
       // Một readline dùng cho CẢ hỏi duyệt lẫn nhận lệnh — nếu mở hai thì stdin

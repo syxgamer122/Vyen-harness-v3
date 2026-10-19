@@ -69,6 +69,7 @@ export const CORE_ENTRIES = [
   'cli/approve.ts',
   'cli/repl.ts',
   'cli/session.ts',
+  'cli/instructions.ts',
 ];
 
 

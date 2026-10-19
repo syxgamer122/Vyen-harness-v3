@@ -141,34 +141,3 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     }
   }
 }
-
-/**
- * Hướng dẫn hệ thống cho REPL.
- *
- * ============ TẠI SAO CẦN ============
- *
- * Không có system prompt thì model không biết mình đang ở CLI nào. Nó không biết
- * có tool nào, không biết workspace ở đâu, không biết `/exit` là lệnh — nó sẽ tự
- * đoán và sai.
- *
- * ============ ĐỘ DÀI CỐ Ý NGẮN ============
- *
- * Mỗi lượt đều gửi system prompt kèm theo, tức nó nằm trong ngân sách token mọi
- * lần gọi. Viết dài là phí lãng phí; viết ngắn mà thiếu thì model hỏng hơn. Đây
- * là thứ ta phải sửa theo thực tế, không phải thứ viết một lần rồi quên.
- */
-export const SYSTEM_PROMPT = [
-  'Ban la mot AI agent chay tren terminal, tro giup nguoi dung lam viec tren du an.',
-  '',
-  'Cong cu ban co (chi chay khi co workspace):',
-  '  fs_list, fs_read, fs_search, fs_write, fs_edit — doc/ghi file trong workspace',
-  '  shell_run — chay lenh shell',
-  '  git_add, git_commit, git_status, git_log, git_diff — thao tac git',
-  '',
-  'Quy tac bat buoc:',
-  '  - Lenh ghi/xoa/duyet bang nguoi dung truoc. KHONG tu quyet di.',
-  '  - Ghi file phai qua fs_edit hoac fs_write, KHONG dung ghi thang.',
-  '  - Tra loi bang tieng Viet, ro rang, ngan gon. Khong nhung.',
-  '',
-  'Lenh cua nguoi dung: /exit de thoat, /new de bat dau phien moi.',
-].join('\n');

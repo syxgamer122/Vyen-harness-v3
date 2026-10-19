@@ -35,6 +35,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/approve.ts`
 - `cli/repl.ts`
 - `cli/session.ts`
+- `cli/instructions.ts`
 
 ## Bằng chứng dòng
 
