@@ -761,3 +761,60 @@ trả lời luôn rỗng và TypeScript không báo gì. `readline/promises.Inte
 - **Không tìm kiếm hội thoại**: JSONL không có chỉ mục. Muốn thì đổi sang SQLite.
 - **Không `↑` xuyên phiên**: lịch sử dòng lệnh chỉ trong một tiến trình. Nạp từ
   transcript sẽ đẩy `doc README.md` vào danh sách câu đã gõ — cân nhắc riêng.
+
+# BÀI HỌC LỚN NHẤT CỦA PHIÊN (2026-10-19) — ghi lại để không lặp
+
+Ba vòng soi liên tiếp (2 review + 1 audit độc lập). Cả ba đều ra cùng một khuôn
+dạng lỗi, và nó **không phải** lỗi may rủi:
+
+> **Tôi viết lời hứa trong comment trước, rồi viết test sau — và test hoá ra không
+> canh đúng cái lời hứa đó.**
+
+### Các lần lặp lại, đủ để nhận ra mẫu
+
+| Lần | Lời hứa | Thực tế |
+|---|---|---|
+| 1 | "dòng hỏng được bỏ" | bỏ trong RAM, **không cắt file** ⇒ lần ghi sau dính vào dòng hỏng |
+| 2 | "TOCTOU tự bật" | bản sửa **ghi đè** H0 bằng H1 rồi so H1 với H1 ⇒ luôn qua |
+| 3 | "câu trùng chỉ lưu một lần" | test lùi 2 bước ⇒ bảng có trùng và không trùng cho cùng chuỗi |
+| 4 | "che bí mật" | test dùng `append`, còn tool result đi qua `appendAll` — **không test nào** chạm đường đó |
+| 5 | "một lượt hỏng không chết cả phiên" | `readMessages` **không kiểm chuỗi** ⇒ file hở nạp im lặng, provider từ chối **vĩnh viễn** |
+| 6 | "vết của mọi lệnh ghi/xoá" | `ipc.cjs` **không** audit `fsWrite`/`fsDelete` ⇒ 0 dòng |
+| 7 | "mọi channel nguy hiểm đều bị chặn" | `vyen:workspace-set` đổi gốc workspace ⇒ duyệt đường dẫn tương đối rồi ghi ra cây khác |
+| 8 | "lõi CLI không kéo trình duyệt vào" | guard quét `listTsFiles('lib')` ⇒ file `cli/` **không bao giờ** bị soi |
+
+Tám lần, **cùng một cách**: tôi kiểm chứng bằng cách đọc lại code của mình, và
+đọc lại code thì không thấy lỗi vì lời hứa nằm đúng chỗ lỗi nằm.
+
+### Vì sao tự soi không bắt được
+
+Lời hứa và cách hiện thực nằm **cùng một chỗ trong đầu tôi**. Đọc lại, tôi thấy
+đúng cái tôi đã tin. Chỉ một thứ bên ngoài mới phá được: **mutation** (làm hỏng
+đúng thứ) và **đo** (chạy thật, đọc kết quả).
+
+Ba ví dụ đo được, không phải nghĩ ra:
+- `timeout_secs` (giây) bị đổi tên thành `timeoutMs` (mili giây, `min(1000)`) ⇒
+  **mọi lệnh shell có timeout đều không chạy**. Chính file đó còn có 20 dòng
+  comment cảnh báo đúng loại lỗi này.
+- Cổng TOCTOU lách được bằng `./a.txt` và `A.TXT` — hai cách viết khác nhau của
+  **cùng một file**.
+- Guard trình duyệt quét `lib/` nên file `cli/` không bao giờ bị soi.
+
+### Luật mới, áp từ lượt này
+
+> **Viết test TRƯỚC. Muốn viết lời hứa trong comment thì phải kèm một test đỏ
+> khi bỏ lớp bảo vệ đi. Không viết được test đỏ ⇒ không được viết lời hứa.**
+
+Và: **đừng tin lời hứa của chính mình, kể cả lời hứa trong comment do chính mình
+viết.** Đó là điều reviewer độc lập bắt được nhiều lần nhất — và cả ba vòng soi
+đều dựa vào đúng điều đó.
+
+### Còn sót (biết rõ, ghi để không mất)
+
+- `canhBoi` tính ra rồi chỉ kiểm `null` — giá trị là code chết.
+- `toIpcPayload` vẫn nhận `toolName` mà trước lúc này không dùng.
+- `lib/approval-binding.ts` không audit `fsWrite`/`fsDelete` — đã sửa ở tầng CLI
+  (`host.audit`), nhưng `ipc.cjs` vẫn không ghi ⇒ web không có vết ghi file.
+- `DANGEROUS_CHANNELS` giờ có bảng `READ_ONLY_CHANNELS` đi kèm và test bắt buộc
+  mọi channel của `ipc.cjs` phải được phân loại — nhưng bảng đó liệt kê **tay**,
+  nên thêm channel mới vào `ipc.cjs` thì test đỏ (đúng ý) nhưng phải có người sửa.
