@@ -336,3 +336,36 @@ describe('runAgentTurn — vòng lặp tool', () => {
     ).rejects.toThrow(/500/);
   });
 });
+
+
+describe('runAgentTurn — finishReason', () => {
+  it('trả finishReason của lượt', async () => {
+    const { model } = stubModel([[{ type: 'text-delta', textDelta: 'xin chao' }, DONE]]);
+    const r = await runAgentTurn({ model, messages: [{ role: 'user', content: 'hi' }] });
+    expect(r.usage.finishReason).toBe('stop');
+  });
+
+  it('lượt có tool cũng trả finishReason', async () => {
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [{ type: 'text-delta', textDelta: 'xong' }, DONE],
+    ]);
+    const r = await runAgentTurn({
+      model,
+      tools: tools([]),
+      messages: [{ role: 'user', content: 'doc file a.txt' }],
+    });
+    expect(r.usage.finishReason).toBe('stop');
+  });
+
+  it('finishReason là "length" thì phải báo đúng — dùng để bắt tràn ngầm', async () => {
+    const { model } = stubModel([
+      [{ type: 'text-delta', textDelta: 'bi cat' }, { ...DONE, finishReason: 'length' }],
+    ]);
+    const r = await runAgentTurn({ model, messages: [{ role: 'user', content: 'hi' }] });
+    expect(r.usage.finishReason).toBe('length');
+  });
+});

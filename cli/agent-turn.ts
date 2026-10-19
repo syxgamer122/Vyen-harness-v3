@@ -70,7 +70,26 @@ export interface AgentTurnResult {
    * là provider trả 400 ở mọi lượt sau ("tool_use không có tool_result").
    */
   messages: CoreMessage[];
-  usage: { promptTokens: number | null; completionTokens: number | null };
+  usage: {
+    promptTokens: number | null;
+    completionTokens: number | null;
+    /**
+     * Lý do model dừng (`stop` | `length` | `tool-calls` | `content-filter` | …).
+     *
+     * ============ VÌ SAO ĐỌC TỪ `fullStream`, KHÔNG await `result.finishReason` ============
+     *
+     * `result.finishReason` là một Promise, và comment ở `cli/agent-turn.ts` đã ghi:
+     * khi provider lỗi, stream kết thúc im lặng và `finishReason` **không bao giờ
+     * settle** ⇒ await nó là **treo CLI**. Part `finish` trong `fullStream` thì tới
+     * đúng lúc nó tới.
+     *
+     * Cần cho `evaluateUsageTrigger` (`lib/context-budget.ts`): hai ca nguy hiểm nhất
+     * là “tràn ngầm” (`finishReason='stop'` nhưng `promptTokens > window`) và
+     * “gateway cắt input” (`finishReason='length'` mà `completionTokens = 0`) — cả hai
+     * **không** sinh lỗi nên provider không báo gì.
+     */
+    finishReason?: string;
+  };
 }
 
 /**
@@ -146,40 +165,49 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   });
 
   let text = '';
-  /* Có tool thì đọc `fullStream` để THẤY hoạt động tool. Chỉ in `textStream` là
-   * người dùng thấy màn hình đứng yên rồi thành công trong khi máy đang sửa
-   * file — trông như treo, và cũng che mất việc gì đã xảy ra. */
-  if (hasTools) {
-    for await (const part of result.fullStream) {
-      const p = part as {
-        type?: string;
-        /* `ai@4` đặt tên trường là `textDelta`, KHÔNG phải `text`. Đo thật
-         * 2026-10-18: dùng `text` thì text-delta rơi vào im lặng và kết quả là
-         * CÂU RỖNG dù model đã trả lời — tức báo thành công sai. */
-        textDelta?: string;
-        toolName?: string;
-      };
-      switch (p.type) {
-        case 'text-delta':
-          if (p.textDelta) {
-            text += p.textDelta;
-            opts.onText?.(p.textDelta);
-          }
-          break;
-        case 'tool-call':
-          if (p.toolName) opts.onToolCall?.(p.toolName);
-          break;
-        default:
-          break;
-      }
-    }
-  } else {
-    for await (const chunk of result.textStream) {
-      text += chunk;
-      opts.onText?.(chunk);
+  /* Đọc `fullStream` ở CẢ HAI nhánh (có tool và không có tool).
+   *
+   * Lý do 1 — thấy tool: chỉ in `textStream` thì người dùng thấy màn hình đứng yên
+   * rồi thành công trong khi máy đang sửa file — trông như treo, và cũng che mất việc
+   * gì đã xảy ra.
+   *
+   * Lý do 2 — bắt `finishReason`: part `finish` chỉ có trong `fullStream`. Và KHÔNG
+   * await `result.finishReason` (một Promise) — comment ở file này đã ghi: khi provider
+   * lỗi, stream kết thúc im lặng và `finishReason` KHÔNG BAO GIỜ settle ⇒ await nó là
+   * TREO CLI. Part `finish` thì tới đúng lúc nó tới.
+   *
+   * Cần cho `evaluateUsageTrigger` (`lib/context-budget.ts`): hai ca nguy hiểm nhất là
+   * “tràn ngầm” (`finishReason='stop'` nhưng `promptTokens > window`) và “gateway cắt
+   * input” (`finishReason='length'` mà `completionTokens = 0`) — cả hai KHÔNG sinh lỗi
+   * nên provider không báo gì. */
+  let finishReason: string | undefined;
+  for await (const part of result.fullStream) {
+    const p = part as {
+      type?: string;
+      /* `ai@4` dat ten truong la `textDelta`, KHONG phai `text`. Do that
+       * 2026-10-18: dung `text` thi text-delta roi vao im lang va ket qua la
+       * **CAU RONG** du model da tra loi — tuc bao thanh cong sai. */
+      textDelta?: string;
+      toolName?: string;
+      finishReason?: string;
+    };
+    switch (p.type) {
+      case 'text-delta':
+        if (p.textDelta) {
+          text += p.textDelta;
+          opts.onText?.(p.textDelta);
+        }
+        break;
+      case 'tool-call':
+        if (p.toolName) opts.onToolCall?.(p.toolName);
+        break;
+      case 'finish':
+        if (p.finishReason) finishReason = p.finishReason;
+        break;
+      default:
+        break;
     }
   }
-
   if (streamError) throw streamError;
 
 /* KHÔNG TIN `abortSignal` LUÔN ĐÚNG LÚC.
@@ -206,6 +234,7 @@ return {
   usage: {
     promptTokens: usage.promptTokens ?? null,
     completionTokens: usage.completionTokens ?? null,
+    ...(finishReason ? { finishReason } : {}),
   },
 };
 }
