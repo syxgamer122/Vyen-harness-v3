@@ -9,6 +9,7 @@ import {
   runEmulatedLoop,
 } from '@/lib/emulated-agent';
 import { buildAgentTools } from '@/lib/agent-tools-server';
+import { z } from 'zod';
 
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
@@ -552,5 +553,66 @@ describe('A1 — transcript có tool result đi qua được tới vòng 2', () 
     expect(sent.messages[0].role).toBe('system');
     expect(bodies[0]).toContain('Bạn là trợ lý.');
     expect(sent.messages.some((m) => m.role === 'tool')).toBe(true);
+  });
+});
+
+
+/* ============ MESSAGE MỚI SINH RA TRONG VÒNG LẶP GIẢ LẬP ============
+ *
+ * `runEmulatedLoop` trả về `{status, roundsUsed, totalCalls}` — nhưng transcript nó
+ * sinh ra (assistant gọi tool + user chứa TOOL_RESULT) nằm trong mảng `messages`
+ * CỤC BỘ của hàm đó ⇒ caller không lấy được.
+ *
+ * Với web thì không sao (lượt giả lập ở server không cần ghi vào transcript phía
+ * client). Với CLI thì SỐNG CẦN: không ghi thì lượt sau mất ngữ cảnh tool vừa chạy,
+ * và transcript trên đĩa không phản ánh điều agent đã làm.
+ */
+describe('runEmulatedLoop — trả message MỚI', () => {
+  it('messages trả về là phần MỚI, không kèm transcript đầu vào', async () => {
+    let completionCount = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('/chat/completions')) {
+          completionCount += 1;
+          return completion(
+            completionCount === 1
+              ? '<tool_call>\n{"name":"fs_read","arguments":{"path":"a.txt"}}\n</tool_call>'
+              : 'Đã đọc xong a.txt.',
+          );
+        }
+        throw new Error(`unexpected url ${url}`);
+      }),
+    );
+
+    let daGoi = 0;
+    const toolGia = {
+      fs_read: {
+        description: 'doc file',
+        parameters: z.object({ path: z.string().optional() }),
+        execute: async () => {
+          daGoi += 1;
+          return { content: 'NOI DUNG' };
+        },
+      },
+    } as never;
+
+    const result = await runEmulatedLoop({
+      model: makeModel(),
+      messages: [{ role: 'user', content: 'doc file a.txt' }],
+      system: 'Bạn là trợ lý.',
+      tools: toolGia,
+      onTextDelta: () => {},
+      onReasoningLine: () => {},
+      onAnnotation: () => {},
+    });
+
+    expect(daGoi, 'tool phai chay that').toBe(1);
+    expect(result.messages.length, 'phai co message moi').toBeGreaterThan(0);
+    // Transcript ĐẦU VÀO không được lặp lại trong phần trả về.
+    expect(result.messages.length).toBeLessThanOrEqual(4);
+    expect(result.messages[0].role).toBe('assistant');
+    expect(JSON.stringify(result.messages)).toContain('TOOL_RESULT');
   });
 });

@@ -43,6 +43,35 @@ export function markToolsUnsupported(base: string, model: string, now = Date.now
   entries.set(key(base, model), now);
 }
 
+/**
+ * Mẫu thật đo được: gateway/model nói "tôi không nhận tools / function calling".
+ *
+ * ============ VÌ SAO KHỚP CÂU TRẢ LỜI, KHÔNG KHỚP CHỮ "tool" ============
+ *
+ * Mẫu cũ `/tool|function/i` ăn vào **mọi** lỗi có chứa substring đó — kể cả lỗi tool
+ * của CHÍNH app ("Error executing tool web_search: fetch failed") ⇒ tước agent của model
+ * đó trong 10 phút (negative cache), vĩnh viễn trong TTL, chỉ vì một lần tool hỏng mạng.
+ *
+ * ⇒ Chỉ khớp khi thông điệp nói **đúng ý**: từ chối tools.
+ */
+export const TOOLS_UNSUPPORTED_RE = new RegExp(
+  [
+    String.raw`(?:does ?n[o']t|does not|doesn't|not)\s+(?:currently\s+)?support(?:s)?\s+(?:\w+\s+){0,2}?(?:tool|function|function[- ]calling|tool[- ]use)`,
+    String.raw`tool\s*(?:use|calling)?\s*(?:is\s+)?(?:not\s+supported|unsupported|is\s+not\s+available)`,
+    String.raw`(?:unsupported|invalid|unknown|unrecognized|unexpected)\s+(?:\w+\s+){0,2}?(?:tool|function)`,
+    String.raw`tried to call unavailable tool`,
+    String.raw`no tools are available`,
+    String.raw`tools?\s+(?:are|is)\s+(?:not\s+supported|unsupported|not\s+allowed|not\s+permitted|not\s+accepted|disabled)`,
+    String.raw`(?:does ?n[o']t|does not|doesn't)\s+(?:currently\s+)?accept\s+(?:\w+\s+){0,2}?tools?`,
+    String.raw`functions?\s+(?:are|is)\s+(?:not\s+supported|unsupported|not\s+allowed|not\s+permitted)`,
+  ].join('|'),
+  'i',
+);
+
+/** true nếu thông điệp lỗi nói đúng ý "không hỗ trợ tools". */
+export function isToolsUnsupportedMessage(msg: string): boolean {
+  return TOOLS_UNSUPPORTED_RE.test(msg ?? '');
+}
 /** Test helper. */
 export function resetToolSupportCache(): void {
   entries.clear();

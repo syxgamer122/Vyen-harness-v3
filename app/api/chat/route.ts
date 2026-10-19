@@ -48,7 +48,11 @@ import {
 import { RUN_CODE_DEF } from '@/lib/mcp/code-mode';
 import { formatWebContextBlock, type WebContextPayload } from '@/lib/web-context';
 import { markModelUnsupported } from '@/lib/model-negative-cache';
-import { isToolUnsupported, markToolsUnsupported } from '@/lib/tool-support-cache';
+import {
+  isToolUnsupported,
+  markToolsUnsupported,
+  TOOLS_UNSUPPORTED_RE,
+} from '@/lib/tool-support-cache';
 import {
   summarizeToolArgs,
   summarizeToolResult,
@@ -130,30 +134,6 @@ const MAX_TOOL_INVOCATIONS_PER_REQUEST = 64;
 const RETRYABLE_SAME_MODEL_STATUSES = new Set([429, 500, 502, 503, 504, 529]);
 const SAME_MODEL_RETRY_DELAY_MS = 800;
 
-/**
- * Gateway/model nói "tôi không nhận tools / function calling" — mẫu thật đo
- * được, KHÔNG suy đoán từ chữ "tool" rơi vãi trong thông báo.
- *
- * Nhánh retry tắt tools là ĐƯỜNG MỘT CHIỀU: gọi lại với `tools` đã tắt +
- * `markToolsUnsupported(base, model)` ghim cache 10 phút. Khớp sai ở đây
- * không chỉ tốn một lượt gọi — nó tước agent của model đó cho mọi lượt sau
- * trong TTL, vì một lỗi không liên quan (tool của app hỏng, context tràn,
- * rate-limit, gateway bận). Vì vậy chỉ khớp khi thông điệp nói đúng ý:
- * từ chối tools, hoặc model gọi tới tool mà gateway không công bố.
- */
-const TOOLS_UNSUPPORTED_RE = new RegExp(
-  [
-    String.raw`(?:does ?n[o']t|does not|doesn't|not)\s+(?:currently\s+)?support(?:s)?\s+(?:\w+\s+){0,2}?(?:tool|function|function[- ]calling|tool[- ]use)`,
-    String.raw`tool\s*(?:use|calling)?\s*(?:is\s+)?(?:not\s+supported|unsupported|is\s+not\s+available)`,
-    String.raw`(?:unsupported|invalid|unknown|unrecognized|unexpected)\s+(?:\w+\s+){0,2}?(?:tool|function)`,
-    String.raw`tried to call unavailable tool`,
-    String.raw`no tools are available`,
-    String.raw`tools?\s+(?:are|is)\s+(?:not\s+supported|unsupported|not\s+allowed|not\s+permitted|not\s+accepted|disabled)`,
-    String.raw`(?:does ?n[o']t|does not|doesn't)\s+(?:currently\s+)?accept\s+(?:\w+\s+){0,2}?tools?`,
-    String.raw`functions?\s+(?:are|is)\s+(?:not\s+supported|unsupported|not\s+allowed|not\s+permitted)`,
-  ].join('|'),
-  'i',
-);
 
 
 

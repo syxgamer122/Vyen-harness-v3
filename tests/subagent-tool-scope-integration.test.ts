@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.mocked(runEmulatedLoop).mockReset();
   vi.mocked(runEmulatedLoop).mockImplementation(async (opts) => {
     opts.onTextDelta?.('xong');
-    return { status: 'done', roundsUsed: 1, totalCalls: 0 };
+    return { status: 'done', roundsUsed: 1, totalCalls: 0, messages: [] };
   });
 });
 

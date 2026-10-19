@@ -331,6 +331,13 @@ export interface EmulatedLoopResult {
   status: 'done' | 'pending-client';
   roundsUsed: number;
   totalCalls: number;
+  /**
+   * Message MỚI sinh ra trong vòng lặp — KHÔNG gồm transcript đầu vào.
+   *
+   * Cần cho CLI: lượt giả lập cũng phải được GHI vào transcript, nếu không lượt
+   * sau mất ngữ cảnh tool vừa chạy và màn hình không phản ánh điều agent đã làm.
+   */
+  messages: CoreMessage[];
 }
 
 /**
@@ -348,6 +355,8 @@ export async function runEmulatedLoop(opts: EmulatedLoopOptions): Promise<Emulat
   /* System đã compose riêng (tham số `system` của generateText) nên bị lọc
      khỏi transcript — nhưng GIỮ NGUYÊN user/assistant/tool. */
   const messages: CoreMessage[] = opts.messages.filter((m) => m.role !== 'system');
+  /* Số message đầu vào — phần MỚI trả về là đuôi, không lặp lại transcript cũ. */
+  const soDauVao = messages.length;
 
   let totalCalls = 0;
 
@@ -382,7 +391,7 @@ export async function runEmulatedLoop(opts: EmulatedLoopOptions): Promise<Emulat
       const stripped = stripEmulatedToolMarkup((text ?? '').trim());
       const answer = stripped.text.trim() || (text ?? '').trim();
       if (answer) opts.onTextDelta(answer);
-      return { status: 'done', roundsUsed: round + 1, totalCalls };
+      return { status: 'done', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao) };
     }
 
     if (preamble) opts.onReasoningLine(preamble);
@@ -525,7 +534,7 @@ if (opts.clientTools?.has(call.name)) {
           toolName: call.name,
           args: call.args,
         });
-        return { status: 'pending-client', roundsUsed: round + 1, totalCalls };
+        return { status: 'pending-client', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao) };
       }
 
       const id = `emu-${round}-${totalCalls}`;
@@ -570,5 +579,5 @@ if (opts.clientTools?.has(call.name)) {
     });
   }
 
-  return { status: 'done', roundsUsed: maxRounds, totalCalls };
+  return { status: 'done', roundsUsed: maxRounds, totalCalls, messages: messages.slice(soDauVao) };
 }

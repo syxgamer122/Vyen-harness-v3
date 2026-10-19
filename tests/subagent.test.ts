@@ -41,7 +41,7 @@ type LoopOpts = Parameters<typeof runEmulatedLoop>[0];
 function mockLoopText(text: string) {
   vi.mocked(runEmulatedLoop).mockImplementation(async (opts) => {
     opts.onTextDelta(text);
-    return { status: 'done', roundsUsed: 1, totalCalls: 0 };
+    return { status: 'done', roundsUsed: 1, totalCalls: 0, messages: [] };
   });
 }
 
