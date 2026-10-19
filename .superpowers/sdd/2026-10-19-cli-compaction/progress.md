@@ -431,10 +431,20 @@ trước khi xoá.** Đã tuân thủ từ đây.
 |---|---|
 | `npm run typecheck` | 0 lỗi |
 | `npm run lint` | 0 lỗi / 8 warning (baseline repo) |
-| `npm run test` | 229/230 file, 3637 pass; 3 fail = flaky `secret-registry` (AGENTS.md §1) |
+| `npm run test` | 229/230 file, 3647 pass; 2 fail = flaky `secret-registry` (AGENTS.md §1) |
 | `npm run build` | exit 0 |
 | `npm run docs:check` | OK — 10 tài liệu, 589 file |
 | BOM | 0 file nguồn có BOM (`tests/repo-hygiene.test.ts` canh) |
+
+## Lượt 3 — sau khi sửa 3 Important + 1 Minor của reviewer
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm run typecheck` | 0 lỗi |
+| `npm run lint` | 0 lỗi / 8 warning (baseline) |
+| `npm run test` | 229/230 file, **3647 pass**; 2 fail = flaky `secret-registry` |
+| `npm run build` | exit 0 |
+
 
 
 # FINAL REVIEW — reviewer độc lập (subagent, đọc review package 2712e79..d187eb1)
