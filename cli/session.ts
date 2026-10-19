@@ -28,6 +28,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import type { CoreMessage } from 'ai';
 import { redactSecretsDeep } from '@/lib/secret-registry';
+import type { CompactionState } from '@/lib/context-compaction';
 
 /* Che bí mật trước khi ghi xuống đĩa — dùng `redactSecretsDeep` của sẵn có, KHÔNG
  * tự viết hàm bọc thứ hai (AGENTS.md §6).
@@ -52,16 +53,64 @@ export interface SessionHeader {
   createdAt: string;
 }
 
+/**
+ * Marker nén context — dòng riêng trong transcript JSONL.
+ *
+ * ============ VÌ SAO LÀ DÒNG RIÊNG, KHÔNG PHẢI MESSAGE ============
+ *
+ * Bản tóm tắt **không** nằm trong chuỗi message. Lý do: chuỗi message là thứ
+ * provider nhận, và một message `role:'user'` chèn vào giữa chuỗi sẽ phá vai trò
+ * của các message tool. Thay vào đó, bản tóm tắt nằm trong **system prompt**
+ * (`withSummary` ở `cli/compaction.ts`), còn marker chỉ ghi **ranh giới**.
+ *
+ * ============ VÌ SAO `throughCount` CHỨ KHÔNG PHẢI `throughSeq` ============
+ *
+ * `CoreMessage` không mang seq, mà `openSession` chỉ giữ một bộ đếm — buộc phải lộ
+ * seq ra ngoài thì dễ lệch. `throughCount` = **số dòng message ĐẦU TIÊN của file bị
+ * thay bằng bản tóm tắt**. Không phụ thuộc vị trí của dòng marker trong file ⇒
+ * marker ghi ở cuối cũng đúng, và đọc lại chỉ cần "bỏ N message đầu".
+ */
+export interface CompactionMarker {
+  kind: 'compaction';
+  /** Số dòng message đầu tiên của file đã bị thay bằng `summary`. */
+  throughCount: number;
+  summary: string;
+  /** Dữ kiện tích lũy qua các lần nén (file đã đọc/sửa, yêu cầu đã nêu). */
+  state?: CompactionState;
+  createdAt: string;
+}
+
 export interface SessionStore {
   header: SessionHeader;
-  /** Lịch sử đã nạp, theo thứ tự. */
+  /** Lịch sử đang dùng — hậu tố của các dòng message trong file. */
   messages: CoreMessage[];
+  /** Marker nén cuối cùng đọc được từ file. */
+  compaction?: CompactionMarker;
+  /**
+   * Ghi dòng compaction xuống file và cắt lịch sử đang dùng.
+   *
+   * @param input.firstKept Số message ĐẦU (cũ nhất) trong `messages` bị nén bỏ.
+   * @returns Phần lịch sử còn lại + ranh giới đã ghi.
+   */
+  compact(input: {
+    firstKept: number;
+    summary: string;
+    state?: CompactionState;
+  }): { kept: CoreMessage[]; throughCount: number };
+  /**
+   * Xoá lịch sử đang dùng trong RAM — file **không** đụng (lệnh `/new`).
+   *
+   * Hành vi này giữ nguyên từ trước: `/new` là "quên đi", không phải "xoá đi" —
+   * mở lại cùng thư mục thì lịch sử cũ vẫn còn trên đĩa.
+   */
+  reset(): void;
   /** Ghi thêm một message vào cuối file. */
   append(message: CoreMessage): void;
   /** Ghi thêm nhiều message — dùng sau khi một lượt sinh ra cả tool lẫn kết quả. */
   appendAll(messages: CoreMessage[]): void;
   close(): void;
 }
+
 
 /**
  * Đường dẫn file transcript của một thư mục.
@@ -108,7 +157,7 @@ export function sessionFileFor(stateDir: string, directory: string): string {
 export function openSession(stateDir: string, directory: string): SessionStore {
   const file = sessionFileFor(stateDir, directory);
   const header = readOrCreateHeader(file, directory);
-  const { messages, coDongHong } = readMessages(file);
+  const { messages, coDongHong, totalCount, maxSeq, compaction } = readMessages(file);
   /* PHẢI cắt file, không chỉ bỏ trong RAM.
    *
    * Đây là phần thứ hai của bug Claude Code từng dính. Nếu chỉ lọc trong RAM mà
@@ -137,13 +186,70 @@ export function openSession(stateDir: string, directory: string): SessionStore {
    * dùng. Nói ra thì họ biết phải làm gì (xoá file, hoặc chấp nhận mất vài lượt).
    */
   kiemTraChuoi(messages, path.basename(file));
-  let seq = messages.length;
+  /* ============ MESSAGE DAU LA `tool` => NEM ============
+   *
+   * `kiemTraChuoi` chi bat duoc tool-call **thieu** tool-result. Con tool-result
+   * **moi coi** (tool-call cua no da bi nen bo) thi vo hinh voi no — va provider
+   * se tra 400 o **moi** luot sau cua phien.
+   *
+   * Day la loi CHI co o CLI: `CoreMessage` tach tool-call (assistant) va
+   * tool-result (message `tool`) thanh hai message, con hinh dang UI message cua
+   * web gop chung nen khong gap. Phai canh rieng.
+   */
+  if (messages[0]?.role === 'tool') {
+    throw new Error(
+      `Transcript ${path.basename(file)} bat dau bang message "tool" ma khong co tool-call ` +
+        `di truoc. Provider se tu choi MOI luot sau cua phien nay. File khong dung duoc — ` +
+        `xoa no roi bat dau phien moi.`,
+    );
+  }
+  /* `seq` phai lay tu MAX seq doc duoc, KHONG phai `messages.length`.
+   *
+   * Sau khi nen, `messages` la hau to cua cac dong message trong file =>
+   * `messages.length` nho hon so dong da ghi => bo dem seq dung lai voi seq cu.
+   * Hien chua cho nao doc `seq` khi nap, nen hau qua moi la "file kho hieu"; nhung
+   * de seq dung la mot qua bom cho nguoi sau.
+   */
+  let seq = maxSeq;
+  /** So dong message DA ghi vao file (ke ca nhung dong da bi nen bo). */
+  let daGhi = totalCount;
+  /** Lich su dang dung — hau to cua cac dong message trong file. */
+  let dangDung: CoreMessage[] = messages;
+  let markerHienTai: CompactionMarker | undefined = compaction;
 
   return {
     header,
-    messages,
+    get messages(): CoreMessage[] {
+      return dangDung;
+    },
+    get compaction(): CompactionMarker | undefined {
+      return markerHienTai;
+    },
+    compact(input: {
+      firstKept: number;
+      summary: string;
+      state?: CompactionState;
+    }): { kept: CoreMessage[]; throughCount: number } {
+      /* Ranh gioi = so dong da bo truoc do + so dong bo lan nay. */
+      const throughCount = daGhi - dangDung.length + input.firstKept;
+      const marker: CompactionMarker = {
+        kind: 'compaction',
+        throughCount,
+        summary: input.summary,
+        ...(input.state ? { state: input.state } : {}),
+        createdAt: new Date().toISOString(),
+      };
+      appendLine(file, JSON.stringify(marker));
+      markerHienTai = marker;
+      dangDung = dangDung.slice(input.firstKept);
+      return { kept: dangDung, throughCount };
+    },
+    reset(): void {
+      dangDung = [];
+    },
     append(message: CoreMessage): void {
-      messages.push(message);
+      dangDung.push(message);
+      daGhi += 1;
       appendLine(file, JSON.stringify({ seq: ++seq, message: redactSecretsDeep(message) }));
     },
     appendAll(batch: CoreMessage[]): void {
@@ -171,7 +277,8 @@ export function openSession(stateDir: string, directory: string): SessionStore {
        */
       const phan = batch.map((m) => ({ seq: ++seq, message: redactSecretsDeep(m) }));
       appendLine(file, phan.map((p) => JSON.stringify(p)).join('\n'));
-      messages.push(...batch);
+      dangDung.push(...batch);
+      daGhi += batch.length;
     },
     close(): void {
       /* Không cần: appendFileSync ghi và đóng ngay. */
@@ -218,12 +325,23 @@ function readOrCreateHeader(file: string, directory: string): SessionHeader {
  *
  * Sửa: chỉ cần biết "có dòng hỏng không" để gọi `catFile`, thế là đủ.
  */
-function readMessages(file: string): { messages: CoreMessage[]; coDongHong: boolean } {
-  if (!fs.existsSync(file)) return { messages: [], coDongHong: false };
+function readMessages(file: string): {
+  messages: CoreMessage[];
+  coDongHong: boolean;
+  /** So dong message co trong file (ke ca nhung dong da bi nen bo). */
+  totalCount: number;
+  /** Seq lon nhat thay trong file. */
+  maxSeq: number;
+  /** Marker nen cuoi cung. */
+  compaction?: CompactionMarker;
+} {
+  if (!fs.existsSync(file)) return { messages: [], coDongHong: false, totalCount: 0, maxSeq: 0 };
   const raw = fs.readFileSync(file, 'utf8');
   const lines = raw.split('\n');
   const out: CoreMessage[] = [];
   let coDongHong = false;
+  let maxSeq = 0;
+  let compaction: CompactionMarker | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const d = lines[i];
@@ -231,8 +349,20 @@ function readMessages(file: string): { messages: CoreMessage[]; coDongHong: bool
     if (i === lines.length - 1 && d === '') break;
     if (d.trim() === '') continue;
     try {
-      const parsed = JSON.parse(d) as { message?: CoreMessage };
-      if (parsed?.message) out.push(parsed.message);
+      const parsed = JSON.parse(d) as {
+        message?: CoreMessage;
+        kind?: string;
+        seq?: number;
+      };
+      /* Marker nen: dong CUOI CUNG thang (no moi hon). */
+      if (parsed?.kind === 'compaction') {
+        compaction = parsed as unknown as CompactionMarker;
+        continue;
+      }
+      if (parsed?.message) {
+        out.push(parsed.message);
+        if (typeof parsed.seq === 'number' && parsed.seq > maxSeq) maxSeq = parsed.seq;
+      }
     } catch (e) {
       const laDongCuoi = i === lines.length - 1 || lines.slice(i + 1).every((x) => x === '');
       if (laDongCuoi) {
@@ -247,7 +377,16 @@ function readMessages(file: string): { messages: CoreMessage[]; coDongHong: bool
       );
     }
   }
-  return { messages: out, coDongHong };
+  const totalCount = out.length;
+  /* Ranh gioi nen: bo `throughCount` dong message dau tien cua file. */
+  const messages = out.slice(compaction?.throughCount ?? 0);
+  return {
+    messages,
+    coDongHong,
+    totalCount,
+    maxSeq,
+    ...(compaction ? { compaction } : {}),
+  };
 }
 
 /**

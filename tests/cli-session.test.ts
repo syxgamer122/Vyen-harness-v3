@@ -405,6 +405,10 @@ describe('che bí mật trước khi ghi đĩa', () => {
     const { state, dir, cleanup } = mk();
     try {
       const s = openSession(state, dir);
+      /* File phai bat dau bang message `user`: message `tool` mo dau khong co
+       * tool-call di truoc la chuoi HO — provider tu choi moi luot sau. Guard
+       * o `openSession` nem dung nhu vay, va day la file hop le. */
+      s.append(userMsg('doc file .env'));
       s.append({
         role: 'tool',
         content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'x', result: { k: KHOA } }],
@@ -490,6 +494,143 @@ describe('tính toàn vẹn của một lượt', () => {
       expect(s2.messages[1].role).toBe('assistant');
       expect(s2.messages[2].role).toBe('tool');
       s2.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+
+/* ================================================================== */
+/* Marker compaction trong JSONL                                       */
+/* ================================================================== */
+
+describe('marker compaction trong JSONL', () => {
+  it('mở lại sau khi nén thì lịch sử chỉ còn phần SAU ranh giới', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.append(userMsg('cau 2'));
+      const r = s.compact({ firstKept: 2, summary: 'TOM TAT' });
+      expect(r.kept).toHaveLength(1);
+      expect(r.throughCount).toBe(2);
+      s.append(asstMsg('tra loi 2'));
+      s.close();
+
+      const s2 = openSession(state, dir);
+      // File có 4 message; bỏ 2 đầu ⇒ còn 2.
+      expect(s2.messages.map((m) => m.content)).toEqual(['cau 2', 'tra loi 2']);
+      expect(s2.compaction?.summary).toBe('TOM TAT');
+      s2.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('file vẫn APPEND-ONLY — nén không xoá dòng message cũ nào', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.append(userMsg('cau 2'));
+      s.compact({ firstKept: 2, summary: 'TOM TAT' });
+      s.close();
+
+      const raw = readFileSync(sessionFileFor(state, dir), 'utf8').split('\n').filter(Boolean);
+      const dongMessage = raw.filter((d) => d.includes('"message"'));
+      // 3 message gốc vẫn còn nguyên trong file.
+      expect(dongMessage).toHaveLength(3);
+      expect(raw.some((d) => d.includes('"kind":"compaction"'))).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('seq trong file là DUY NHẤT và tăng dần — nén không được làm seq đụng nhau', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.append(userMsg('cau 2'));
+      s.compact({ firstKept: 2, summary: 'TOM TAT' });
+      s.close();
+
+      /* Mo lai day moi la cho seq bi tinh sai: bo dem duoc dung lai tu
+       * `messages.length` (da bi nen bo) thay vi tu max seq doc duoc. */
+      const s2 = openSession(state, dir);
+      s2.append(asstMsg('tra loi 2'));
+      s2.close();
+
+      const dong = readFileSync(sessionFileFor(state, dir), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((d) => JSON.parse(d) as { seq?: number; message?: unknown })
+        .filter((d) => d.message !== undefined)
+        .map((d) => d.seq as number);
+      expect(dong).toHaveLength(4);
+      expect(new Set(dong).size).toBe(4);
+      for (let i = 1; i < dong.length; i += 1) expect(dong[i]).toBeGreaterThan(dong[i - 1]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('nén lần thứ hai thì bỏ TÍCH luôn cả những gì đã bỏ lần trước', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.append(userMsg('cau 2'));
+      s.append(asstMsg('tra loi 2'));
+      s.append(userMsg('cau 3'));
+      const lan1 = s.compact({ firstKept: 2, summary: 'T1' });
+      expect(lan1.throughCount).toBe(2);
+      const lan2 = s.compact({ firstKept: 1, summary: 'T2' });
+      expect(lan2.throughCount).toBe(3);
+      s.close();
+
+      const s2 = openSession(state, dir);
+      // Bỏ 3 message đầu ⇒ còn 2.
+      expect(s2.messages).toHaveLength(2);
+      expect(s2.compaction?.summary).toBe('T2');
+      s2.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('message đầu còn lại là role tool ⇒ NÉM (tool-result mồ côi làm provider 400 mọi lượt sau)', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append({
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'fs_read', result: { content: 'x' } }],
+      } as CoreMessage);
+      s.close();
+      expect(() => openSession(state, dir)).toThrow(/tool/i);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('reset (lệnh /new) xoá lịch sử trong RAM nhưng KHÔNG đụng file', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.reset();
+      expect(s.messages).toHaveLength(0);
+      s.close();
+
+      const raw = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(raw).toContain('cau 1');
     } finally {
       cleanup();
     }
