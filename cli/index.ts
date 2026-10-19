@@ -283,6 +283,12 @@ export interface ReplDeps {
   initial?: string;
   terminal: ReturnType<typeof createTerminal>;
   lichSu: TaoLichSu;
+  /** Base URL cua provider — khoa cache "model nay che tools". */
+  providerBase?: string;
+  /** Id model — khoa cache "model nay che tools". */
+  modelId?: string;
+  /** Ep dung duong gia lap. */
+  forceEmulated?: boolean;
 }
 
 /**
@@ -310,6 +316,9 @@ export function buildReplOptions(deps: ReplDeps): ReplOptions {
     /* Nối phím Esc. Thiếu mối nối này thì Esc chỉ là lời hứa trong header. */
     watchInterrupt: deps.terminal.watchInterrupt,
     lichSu: deps.lichSu,
+    ...(deps.providerBase !== undefined ? { providerBase: deps.providerBase } : {}),
+    ...(deps.modelId !== undefined ? { modelId: deps.modelId } : {}),
+    ...(deps.forceEmulated ? { forceEmulated: true } : {}),
     out: (s) => process.stdout.write(s),
     note: (s) => console.error(s),
   };
@@ -548,6 +557,9 @@ async function main(): Promise<void> {
         ...(prompt ? { initial: prompt } : {}),
         terminal,
         lichSu,
+        providerBase: process.env.VYEN_BASE_URL ?? '',
+        modelId: process.env.VYEN_MODEL ?? '',
+        forceEmulated: process.env.VYEN_EMULATED === '1',
       }),
     );
   } catch (err) {

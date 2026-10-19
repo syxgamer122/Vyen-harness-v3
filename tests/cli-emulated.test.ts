@@ -16,6 +16,11 @@ import {
   shouldUseEmulated,
 } from '@/cli/emulated';
 import { resetToolSupportCache } from '@/lib/tool-support-cache';
+import { runRepl } from '@/cli/repl';
+import { openSession } from '@/cli/session';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 /** Model giả: mỗi lần gọi trả lần lượt một đoạn text. */
 function stubModel(texts: string[]) {
@@ -42,6 +47,21 @@ function stubModel(texts: string[]) {
   return model;
 }
 
+
+function mk() {
+  const state = mkdtempSync(path.join(tmpdir(), 'vyen-emu-'));
+  return {
+    state,
+    dir: 'C:\\du-an',
+    cleanup: () => rmSync(state, { recursive: true, force: true }),
+  };
+}
+
+/** Đọc từng dòng trong `dong`; hết thì trả `null` (EOF). */
+function reader(...dong: (string | null)[]) {
+  let i = 0;
+  return async () => (i < dong.length ? dong[i++] : null);
+}
 const KHOI_TOOL_CALL =
   '<tool_call>\n{"name":"fs_read","arguments":{"path":"a.txt"}}\n</tool_call>';
 
@@ -117,5 +137,126 @@ describe('shouldUseEmulated / markEmulated — cache model chê tools', () => {
   it('ép thì luôn đi đường giả lập', () => {
     resetToolSupportCache();
     expect(shouldUseEmulated({ force: true, modelId: 'model-y' })).toBe(true);
+  });
+});
+
+
+/* ============ REPL TỰ CHUYỂN SANG ĐƯỜNG GIẢ LẬP ============
+ *
+ * Spec `docs/superpowers/specs/2026-10-18-cli-core-design.md` §7:
+ * *"Model không hỗ trợ tool calling → rơi về `emulated-agent`"*. Trước đây CLI
+ * không có đường đó: provider từ chối ⇒ lỗi ⇒ **phiên dừng**. Với BYOK +
+ * model local (đúng thứ CLI nhắm tới) thì đó là chết cả session.
+ */
+describe('REPL — model không hỗ trợ tools', () => {
+  it('tự chuyển sang đường giả lập và VẪN trả lời được', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      /* Native path (doStream) trả lỗi "không hỗ trợ tools" — đúng cách provider
+       * báo lỗi API trong chế độ stream: một part `error` rồi đóng stream. */
+      const model = {
+        specificationVersion: 'v1',
+        provider: 'stub',
+        modelId: 'stub-1',
+        defaultObjectGenerationMode: 'tool',
+        doGenerate: async () => ({
+          text: 'Tôi trả lời bằng văn bản thôi.',
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue({
+                  type: 'error',
+                  error: new Error('This model does not support tools'),
+                } as never);
+                ctrl.close();
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          }),
+      } as unknown as LanguageModelV1;
+
+      const session = openSession(state, dir);
+      const out: string[] = [];
+      await runRepl({
+        model,
+        modelNen: model,
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'x' }),
+          },
+        } as unknown as ToolSet,
+        session,
+        ask: reader('xin chào', '/exit'),
+        out: (s) => out.push(s),
+      });
+
+      expect(out.join(''), 'phai tra loi duoc qua duong gia lap').toContain('trả lời bằng văn bản');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('lượt tiếp theo đi thẳng đường giả lập, không thử native chết lần nữa', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      let soLanNative = 0;
+      const model = {
+        specificationVersion: 'v1',
+        provider: 'stub',
+        modelId: 'stub-1',
+        defaultObjectGenerationMode: 'tool',
+        doGenerate: async () => ({
+          text: 'ok',
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+        doStream: () => {
+          soLanNative += 1;
+          return Promise.resolve({
+            stream: new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue({
+                  type: 'error',
+                  error: new Error('This model does not support tools'),
+                } as never);
+                ctrl.close();
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          });
+        },
+      } as unknown as LanguageModelV1;
+
+      const session = openSession(state, dir);
+      await runRepl({
+        model,
+        modelNen: model,
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'x' }),
+          },
+        } as unknown as ToolSet,
+        session,
+        providerBase: 'https://gw.test/v1',
+        modelId: 'model-x',
+        ask: reader('cau 1', 'cau 2', '/exit'),
+        out: () => {},
+      });
+
+      /* Lượt 1 native chết (phát hiện) → ghi cache; lượt 2 phải đi thẳng giả lập. */
+      expect(soLanNative, 'native chi duoc thu MOT lan').toBe(1);
+    } finally {
+      cleanup();
+    }
   });
 });
