@@ -189,7 +189,7 @@ Select-String -Path "app\**\*.ts" -Pattern "foo"   # KHÔNG recurse như tưởn
 nên kết luận một module lọc tool là chết, trong khi `route.ts:73` đang import nó.
 Đây là hướng sai chết người: tìm-hụt dễ dẫn tới xoá nhầm.
 
-Ba điều phải làm trước khi kết luận "chết":
+Bốn điều phải làm trước khi kết luận "chết":
 
 1. **Thử lệnh tìm lên một thứ chắc chắn còn sống** và xác nhận nó tìm thấy.
    Lệnh không tìm thấy thứ *đáng ra* phải thấy thì lệnh đó vô dụng.
@@ -197,6 +197,10 @@ Ba điều phải làm trước khi kết luận "chết":
    ném lỗi *cho từng file* rồi trả kết quả rỗng với exit 0.
 3. **Dùng công cụ recurse thật**: `rg`, tool `grep`, hoặc
    `Get-ChildItem -Recurse`. Không tin `**` trong PowerShell.
+4. **Quét cả cây, không chỉ thư mục code.** Ký hiệu còn sống có thể nằm trong
+   `tests/`, fixture, file cấu hình, hoặc chỉ xuất hiện dưới dạng *chuỗi* —
+   tên hàm lắp vào đường dẫn, key tra cứu động. Grep tên hàm thôi sẽ không
+   thấy, nên "không có kết quả" vẫn có thể là "còn đang dùng".
 
 Cùng dạng với mục 3 của §2: thao tác im lặng không báo lỗi, kết quả sai, tưởng
 đã kiểm chứng.
@@ -238,6 +242,16 @@ bảo vệ biến mất âm thầm.
 Luật: **khoá theo dạng đã chuẩn hoá** (`path.resolve` + hạ chữ hoa trên hệ điều
 hành không phân biệt), không theo chuỗi người dùng gõ. Cùng luật cho mọi thứ
 dùng làm khoá: id phiên, tên file, khoá cấu hình.
+
+### 7.3. Đổi hợp đồng thì grep mọi caller
+
+Đổi **signature**, kiểu trả về, hay hành vi của một hàm — code *gọi* nó có
+thể vỡ ở chỗ không nằm trong diff. Một thay đổi trông như "chỉ refactor"
+đã làm hỏng file khác, mà file đó không đổi nên không ai nhìn thấy.
+
+Luật: trước khi sửa, **grep mọi caller** của hàm đó (tên hàm, tên import, tên
+thuộc tính) trên toàn cây. Sửa ở **chỗ dùng chung, một lần** — đừng vá lặp ở
+từng caller để "cho xong".
 
 ## 8. Kiểm byte khi sửa file — BOM và thay đổi vô nghĩa
 
