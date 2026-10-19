@@ -37,6 +37,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/session.ts`
 - `cli/instructions.ts`
 - `cli/history.ts`
+- `cli/terminal.ts`
 
 ## Bằng chứng dòng
 

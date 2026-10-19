@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Kiểm kê di cư sang CLI — Task 1: script quét API trình duyệt.
  *
  * Ba test dưới đây cố tình hỗn hợp hai loại:

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Vòng lặp tool của CLI — thứ biến nó từ "trả lời" thành "làm việc".
  *
  * ============ VÌ SAO TEST BẰNG MODEL GIẢ ============

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Kho transcript của CLI — JSONL append-only.
  *
  * ============ VÌ SAO KHÔNG DÙNG SQLite ============
@@ -108,7 +108,7 @@ export function sessionFileFor(stateDir: string, directory: string): string {
 export function openSession(stateDir: string, directory: string): SessionStore {
   const file = sessionFileFor(stateDir, directory);
   const header = readOrCreateHeader(file, directory);
-  const { messages, canhBoi } = readMessages(file);
+  const { messages, coDongHong } = readMessages(file);
   /* PHẢI cắt file, không chỉ bỏ trong RAM.
    *
    * Đây là phần thứ hai của bug Claude Code từng dính. Nếu chỉ lọc trong RAM mà
@@ -117,16 +117,8 @@ export function openSession(stateDir: string, directory: string): SessionStore {
    *
    * Đo được khi test: file có 2 bản ghi + dòng cụt, `append` thêm một dòng, mở lại
    * thì chỉ còn 1 message. Bỏ trong RAM thôi là **mất bản ghi ngay sau khi ghi**.
-   *
-   * ============ VÌ SAO `!== null` MÀ KHÔNG `if (canhBoi)` ============
-   *
-   * `canhBoi` là **byte offset**, và 0 là offset hợp lệ: dòng đầu tiên hỏng, không
-   * có `\n` nào sau nó. Bản đầu viết `if (canhBoi)` nên offset 0 bị đọc thành
-   * "file sạch" ⇒ không cắt ⇒ dòng hỏng sống dai ⇒ `append` tiếp dính liền vào
-   * nó ⇒ lần mở sau ném `Transcript ... hong o dong 1` và CLI **từ chối khởi động**,
-   * với thông báo không hề nói rằng xoá file là khỏi.
    */
-  if (canhBoi !== null) catFile(file);
+  if (coDongHong) catFile(file);
   /* ============ CHUỖI HỞ ⇒ NÓ RA, ĐỪNG NẠP IM LẶNG ============
    *
    * `appendAll` ghi cả lô trong một `appendFileSync`, nên nếu tiến trình chết giữa
@@ -156,9 +148,27 @@ export function openSession(stateDir: string, directory: string): SessionStore {
     },
     appendAll(batch: CoreMessage[]): void {
       if (batch.length === 0) return;
-      // Ghi **một** lần cho cả lô: lô tool-call + tool-result phải vào đĩa cùng
-      // nhau, nếu không thì crash giữa lô là mất cặp đôi và provider từ chối cả
-      // lượt sau (tool_use không có tool_result).
+      /* Ghi cả lô trong MỘT lần ghi.
+       *
+       * ============ VÌ SAO, VÀ ĐIỀU GÌ ĐƯỢC BẢO ĐÁM ============
+       *
+       * Lý do: lô tool-call + tool-result phải vào đĩa cùng nhau. Nếu ghi rời
+       * rạch thì crash giữa lô để lại `tool_use` không có `tool_result`, và
+       * provider từ chối **mọi lượt sau** của phiên.
+       *
+       * ============ ĐIỀU GÌ **KHÔNG** ĐƯỢC HỨA ============
+       *
+       * Đây **KHÔNG** phải ghi nguyên tử. Một lần `appendFileSync` vẫn có thể bị
+       * cắt giữa chừng (mất điện, hết đĩa) — không hệ điều gì bảo đảm nguyên tử
+       * cho file. Và **không test nào phân biệt được** "gộp một lần" với "ghi
+       * từng dòng": hai cách cho ra file giống hệt nhau.
+       *
+       * Nên thứ **thật sự** bảo vệ phiên không nằm ở đây, mà ở `kiemTraChuoi`:
+       * lúc nạp, thấy `tool-call` không có `tool-result` khớp thì **nói ra** thay vì
+       * im lặng nạp vào. Đó mới là thứ đo được và test được.
+       *
+       * Gộp một lần vẫn đáng giữ: nó **giảm** cửa sổ hỏng, dù không loại bỏ.
+       */
       const phan = batch.map((m) => ({ seq: ++seq, message: redactSecretsDeep(m) }));
       appendLine(file, phan.map((p) => JSON.stringify(p)).join('\n'));
       messages.push(...batch);
@@ -198,36 +208,36 @@ function readOrCreateHeader(file: string, directory: string): SessionHeader {
 /**
  * Nạp các bản ghi.
  *
- * Trả kèm `canhBoi`: độ dài **byte** của phần đầu file còn hợp lệ, để `openSession`
- * cắt bỏ đuôi hỏng. Trả `null` khi file sạch.
+ * Trả kèm `coDongHong`: có dòng cuối bị cắt cụt không. Chỉ **có/không** thôi —
+ *
+ * ============ VÌ SAO KHÔNG TRẢ OFFSET ============
+ *
+ * Bản đầu tính cả byte offset (`canhHienTai`) rồi dùng nó làm điều kiện, nhưng
+ * `catFile` tự dựng lại phần đầu từ đầu file — nên con số đó **chết**: tốn công
+ * tính rồi không ai dùng. Giữ nó lại chỉ vì nó *nghe* có vẻ quan trọng.
+ *
+ * Sửa: chỉ cần biết "có dòng hỏng không" để gọi `catFile`, thế là đủ.
  */
-function readMessages(file: string): { messages: CoreMessage[]; canhBoi: number | null } {
-  if (!fs.existsSync(file)) return { messages: [], canhBoi: null };
+function readMessages(file: string): { messages: CoreMessage[]; coDongHong: boolean } {
+  if (!fs.existsSync(file)) return { messages: [], coDongHong: false };
   const raw = fs.readFileSync(file, 'utf8');
   const lines = raw.split('\n');
   const out: CoreMessage[] = [];
-  // Byte offset ngay sau dòng cuối còn hợp lệ. Mỗi lần đọc được một dòng thì
-  // `canhHienTai` tiến thêm chiều dài dòng đó cộng `\n`.
-  let canhHienTai = 0;
-  let canhBoi: number | null = null;
+  let coDongHong = false;
 
   for (let i = 0; i < lines.length; i++) {
     const d = lines[i];
     // Phần tử cuối rỗng = file kết thúc bằng `\n`, tức sạch.
     if (i === lines.length - 1 && d === '') break;
-    if (d.trim() === '') {
-      canhHienTai += Buffer.byteLength(d, 'utf8') + 1;
-      continue;
-    }
+    if (d.trim() === '') continue;
     try {
       const parsed = JSON.parse(d) as { message?: CoreMessage };
       if (parsed?.message) out.push(parsed.message);
-      canhHienTai += Buffer.byteLength(d, 'utf8') + 1;
     } catch (e) {
       const laDongCuoi = i === lines.length - 1 || lines.slice(i + 1).every((x) => x === '');
       if (laDongCuoi) {
         /* Crash cắt cụt dòng cuối — bỏ, và cắt file. Xem `openSession`. */
-        canhBoi = canhHienTai;
+        coDongHong = true;
         break;
       }
       throw new Error(
@@ -237,7 +247,7 @@ function readMessages(file: string): { messages: CoreMessage[]; canhBoi: number 
       );
     }
   }
-  return { messages: out, canhBoi };
+  return { messages: out, coDongHong };
 }
 
 /**

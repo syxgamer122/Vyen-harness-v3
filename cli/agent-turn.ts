@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Vòng lặp tool — hàm thuần, không đụng console, không đọc biến môi trường.
  *
  * ============ VÌ SAO TÁCH KHỎI `cli/index.ts` ============

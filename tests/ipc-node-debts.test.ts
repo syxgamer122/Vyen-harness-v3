@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Ba nợ còn lại từ review độc lập, gộp lại vì cùng một tầng và cùng một lý do:
  * cả ba đều là **khoảng hở an toàn**, không phải thiếu tiện nghi.
  *

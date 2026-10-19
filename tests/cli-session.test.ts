@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Kho transcript của CLI — thứ làm "mở terminal lên là còn nhớ" thành hiện thực.
  *
  * ============ VÌ SAO TEST NÀY TẬP TRUNG VÀO DÒNG CỤT ============
@@ -337,6 +337,38 @@ describe('nạp transcript hở thì phải BÁO, không im lặng nạp vào', 
       ]);
       s.close();
       expect(() => openSession(state, dir)).toThrow(/tool/i);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/* ============ CÙNG MỘT THƯ MỤC PHẢI LÀ CÙNG MỘT FILE ============
+ *
+ * `sessionFileFor` băm `realpathSync.native(path)`. Nếu không chuẩn hoá, cùng một
+ * thư mục mà gõ khác (`C:\a` vs `C:\a\.\` vs `C:\a\..\a`) sẽ sinh **hai file
+ * transcript khác nhau** ⇒ lịch sử "bị mất" một cách rất khó hiểu.
+ *
+ * Lời hứa này trước đây chỉ nằm trong comment, không có test.
+ */
+describe('cùng một thư mục thì phải là cùng một file transcript', () => {
+  it('đường dẫn ghi khác nhau cùng trỏ tới một thư mục thì ra cùng một file', () => {
+    const { state, cleanup } = mk();
+    try {
+      const a = sessionFileFor(state, 'C:\\du-an');
+      const b = sessionFileFor(state, 'C:\\du-an\\.');
+      const c = sessionFileFor(state, 'C:\\du-an\\..\\du-an');
+      expect(b, 'cung mot thu muc phai ra cung mot file').toBe(a);
+      expect(c).toBe(a);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('hai thư mục khác nhau thì ra hai file khác nhau', () => {
+    const { state, cleanup } = mk();
+    try {
+      expect(sessionFileFor(state, 'C:\\du-an-a')).not.toBe(sessionFileFor(state, 'C:\\du-an-b'));
     } finally {
       cleanup();
     }

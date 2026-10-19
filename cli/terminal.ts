@@ -1,0 +1,169 @@
+/**
+ * Vòng đời terminal: đọc dòng lệnh, nghe phím, bắt `Esc` khi lượt đang chạy.
+ *
+ * ============ VÌ SAO TÁCH RA KHỎI `cli/index.ts` ============
+ *
+ * Ba lời hứa trong `cli/index.ts` **không có test nào canh** (review độc lập
+ * 2026-10-19, bảng "Claims without coverage"):
+ *
+ *   1. `stdin.pause()` không được bao giờ gọi — gọi là treo cả REPL.
+ *   2. `watchInterrupt` phải gỡ listener và trả lại raw mode.
+ *   3. Listener `keypress` phải được gỡ sau mỗi lần chờ.
+ *
+ * Không tách thì không test được: `cli/index.ts` đọc `process.stdin` trực tiếp,
+ * mà stdin thật thì không có trong test. Ở đây **stdin và readline đều là tham số**
+ * ⇒ test dựng được đồ vật giả và kiểm từng lời hứa.
+ *
+ * ============ VÌ SAO `stdin.pause()` NGUY HIỂM ============
+ *
+ * `readline` chỉ gọi `input.resume()` lại trong `Interface.resume()`, mà hàm đó
+ * thoát sớm nếu cờ `rl.paused` chưa bật — cờ đó CHỈ `Interface.pause()` mới bật.
+ * Gọi `stdin.pause()` (dừng stream) không bật cờ ⇒ lượt sau `rl.question()` không
+ * bao giờ khởi động lại stdin ⇒ prompt hiện rồi nuốt mọi phím.
+ *
+ * Đo 2026-10-19: `echo | npm run cli` **không** bắt được, vì dữ liệu đã nằm sẵn
+ * trong bộ đệm. Chỉ terminal thật mới lộ — nên ở đây ta **không** đụng trạng thái
+ * chảy của stdin: `readline` là bên sở hữu nó.
+ */
+// `createInterface` phải lấy từ bản **promises** — bản ở `node:readline` là
+// callback, mà `question()` của nó trả `void`. `await rl.question('> ')` với kiểu
+// đó hợp kiểu nhưng là `await undefined`: câu trả lời luôn rỗng, và TypeScript
+// không báo gì. (Đã dính lỗi này một lần ở `cli/index.ts`.)
+import { createInterface } from 'node:readline/promises';
+import type { Interface } from 'node:readline/promises';
+import { emitKeypressEvents, type Key } from 'node:readline';
+import type { TaoLichSu } from './history';
+
+/** Phần stdin mà module này dùng. */
+export interface TerminalInput {
+  on(event: 'keypress' | 'data', fn: (...a: never[]) => void): unknown;
+  off(event: 'keypress' | 'data', fn: (...a: never[]) => void): unknown;
+  setRawMode?(mode: boolean): unknown;
+  isRaw?: boolean;
+}
+
+export interface TerminalOptions {
+  stdin: TerminalInput;
+  /** Nơi `readline` vẽ. Mặc định `process.stderr`. */
+  output?: { write(s: string): unknown };
+  /** Chỉ dùng cho test: thay thế `readline` bằng đồ vật giả. */
+  taoInterface?: (stdin: TerminalInput, output: unknown) => Interface;
+}
+
+export interface Terminal {
+  /**
+   * Hỏi một câu bất kỳ (dùng cho cổng duyệt tool). `null` = EOF.
+   *
+   * Cùng cơ chế với `hoiDong` nhưng không có phím mũi tên — cổng duyệt hỏi
+   * "y/N", mũi tên ở đó chỉ gây rối.
+   */
+  hoi(cauHoi: string): Promise<string | null>;
+  /** Đợi một dòng lệnh. `null` = EOF. */
+  hoiDong(lichSu: TaoLichSu): Promise<string | null>;
+  /**
+   * Bắt đầu lắng nghe yêu cầu dừng trong lúc lượt chạy. Trả về hàm dọn dẹp.
+   */
+  watchInterrupt(cancel: () => void): () => void;
+  /** Đóng readline. */
+  close(): void;
+}
+
+export function createTerminal(opts: TerminalOptions): Terminal {
+  const { stdin } = opts;
+  const output = opts.output ?? process.stderr;
+  const taoInterface =
+    opts.taoInterface ?? ((inp, out) => createInterface({ input: inp as never, output: out as never }));
+
+  const rl = taoInterface(stdin, output);
+
+  /**
+   * Hỏi một câu bất kỳ. Dùng cho cổng duyệt tool.
+   *
+   * `rl.question` NÉM "readline was closed" khi hết dòng — đo thật 2026-10-19.
+   * Không bắt thì `Ctrl+D` in một dòng lỗi rác thay vì thoát sạch.
+   */
+  async function hoi(cauHoi: string): Promise<string | null> {
+    try {
+      return (await rl.question(cauHoi)) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Đợi một dòng lệnh, có phím mũi tên gọi lại lịch sử.
+   *
+   * `readline` nuốt phím mũi tên để di chuyển con trỏ, nên ta dùng
+   * `emitKeypressEvents` để nghe chúng theo **tên phím** (`up`/`down`) thay vì đoán
+   * từ byte `0x1b[A`. Thay dòng thì dùng `ctrl+u` (xoá tới đầu dòng) rồi `write`
+   * nội dung mới — đó là cách `readline` dành cho việc này, không phải tự vẽ ANSI.
+   */
+  async function hoiDong(lichSu: TaoLichSu): Promise<string | null> {
+    emitKeypressEvents(stdin as never);
+    const datLai = (noiDung: string) => {
+      rl.write(null, { ctrl: true, name: 'u' });
+      if (noiDung) rl.write(noiDung);
+    };
+    const onPhim = (_str: string | undefined, key: Key | undefined) => {
+      if (!key) return;
+      if (key.name === 'up') {
+        const v = lichSu.lai();
+        if (v !== undefined) datLai(v);
+      } else if (key.name === 'down') {
+        datLai(lichSu.di());
+      }
+    };
+    stdin.on('keypress', onPhim as never);
+    try {
+      const traVe = await rl.question('> ');
+      return traVe ?? null;
+    } catch {
+      /* `rl.question` NÉM "readline was closed" khi hết dòng — đo thật 2026-10-19.
+       * Không bắt thì `Ctrl+D` in một dòng lỗi rác thay vì thoát sạch. */
+      return null;
+    } finally {
+      // Gỡ listener sau MỖI lần chờ. Giữ lại thì phím gõ lúc lượt sau đẩy vào
+      // bộ đệm của lượt này.
+      stdin.off('keypress', onPhim as never);
+    }
+  }
+
+  /**
+   * Bắt `Esc` trong lúc lượt chạy.
+   *
+   * ============ VÌ SAO `raw` MÀ KHÔNG `readline` ============
+   *
+   * Giữa hai lượt thì `readline` đang chờ trong `rl.question()`. Gắn thêm handler
+   * vào cùng readline thì **không** bắt được phím: readline đã nuốt phím và chờ
+   * một dòng hoàn chỉnh. Nên lúc lượt chạy, readline rảnh — bấm `Esc` lúc đó ra
+   * `0x1b` thô trên stdin. Đó là lý do dùng `raw`.
+   *
+   * ============ VÌ SAO KHÔNG `resume()`/`pause()` stdin ============
+   *
+   * `resume()` thừa — gắn listener `'data'` đã tự khôi phục chế độ chảy.
+   * `pause()` **phá** — xem ghi chú đầu file: nó treo cả REPL từ lượt thứ hai.
+   */
+  function watchInterrupt(cancel: () => void): () => void {
+    const truoc = stdin.isRaw;
+    stdin.setRawMode?.(true);
+    const onData = (b: Buffer) => {
+      // `0x1b` = Esc. Có `0x1b 0x5b` là chuỗi phím mũi tên — nuốt luôn để người
+      // dùng bấm mũi tên giữa lúc chờ không bị cắt nhầm lượt.
+      if (b[0] === 0x1b && b[1] === 0x5b) return;
+      if (b[0] === 0x1b) cancel();
+    };
+    stdin.on('data', onData as never);
+    return () => {
+      stdin.off('data', onData as never);
+      stdin.setRawMode?.(truoc ?? false);
+      /* KHÔNG `stdin.pause()` — xem ghi chú đầu file. Gọi là treo REPL. */
+    };
+  }
+
+  return {
+    hoi,
+    hoiDong,
+    watchInterrupt,
+    close: () => rl.close(),
+  };
+}

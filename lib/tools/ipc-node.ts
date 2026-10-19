@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cầu nối `lib/ipc.cjs` ra khỏi Electron.
  *
  * ============ VÌ SAO FILE NÀY TỒN TẠI ============

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Lịch sử dòng lệnh — phím mũi tên gọi lại câu đã gõ.
  *
  * ============ VÌ SAO NẰM Ở ĐÂY, KHÔNG DÙNG CỦA `readline` ============

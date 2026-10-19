@@ -71,6 +71,7 @@ export const CORE_ENTRIES = [
   'cli/session.ts',
   'cli/instructions.ts',
   'cli/history.ts',
+  'cli/terminal.ts',
 ];
 
 

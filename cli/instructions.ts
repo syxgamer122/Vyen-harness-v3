@@ -1,4 +1,4 @@
-﻿/**
+/**
  * System prompt của CLI — dựng lúc khởi động.
  *
  * ============ PROMPT NGẮN, BỐI CẢNH THÌ ĐẾN TỪ FILE ============

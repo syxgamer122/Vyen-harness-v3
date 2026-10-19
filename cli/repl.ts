@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Vòng lặp hội thoại — REPL của CLI.
  *
  * ============ CẤU TRÚC ============

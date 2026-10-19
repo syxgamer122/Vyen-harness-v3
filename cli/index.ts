@@ -150,6 +150,7 @@ import { runRepl } from './repl';
 import { openSession } from './session';
 import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
 import { TaoLichSu } from './history';
+import { createTerminal } from './terminal';
 
 /**
  * Bọc trong hàm async thay vì dùng top-level `await`.
@@ -159,46 +160,6 @@ import { TaoLichSu } from './history';
  * await. Đo thật 2026-10-18: `Top-level await is currently not supported with the
  * "cjs" output format`. Cách này giữ file chạy được dưới CẨ `node` lẫn `tsx`.
  */
-/**
- * Đợi một dòng lệnh, có phím můi tên gọi lại lịch sử.
- *
- * `readline` nuốt phím mũi tên để di chuyển con trỏ, nên ta dùng `emitKeypressEvents`
- * để nghe chúng theo tên phím (`up`/`down`) thay vì đoán từ byte `0x1b[A`.
- * Thay dòng thì dùng `ctrl+u` (xoá tới đầu dòng) rồi `write` nội dung mới —
- * đó là cách `readline` dành cho việc này, không phải tự vẽ ANSI.
- */
-async function hoiDong(
-  rl: Interface,
-  lichSu: TaoLichSu,
-): Promise<string | null> {
-  const stdin = process.stdin;
-  emitKeypressEvents(stdin);
-  const datLai = (noiDung: string) => {
-    rl.write(null, { ctrl: true, name: 'u' });
-    if (noiDung) rl.write(noiDung);
-  };
-  const onPhim = (_str: string | undefined, key: Key | undefined) => {
-    if (!key) return;
-    if (key.name === 'up') {
-      const v = lichSu.lai();
-      if (v !== undefined) datLai(v);
-    } else if (key.name === 'down') {
-      datLai(lichSu.di());
-    }
-  };
-  stdin.on('keypress', onPhim);
-  try {
-    const traVe = await rl.question('> ');
-    return traVe ?? null;
-  } catch {
-    /* `rl.question` NÉM "readline was closed" khi hết dòng — đo thật 2026-10-19.
-     * Không bắt thì `Ctrl+D` in một dòng lỗi rác thay vì thoát sạch. */
-    return null;
-  } finally {
-    stdin.off('keypress', onPhim);
-  }
-}
-
 /**
  * Phân tích argv.
  *
@@ -367,11 +328,10 @@ async function main(): Promise<void> {
    * của guard ("không có `rl` thì trả `null`") mô tả tình huống đã không còn
    * tồn tại: kiểu tài liệu chết theo AGENTS.md §4.
    */
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const docDong = (q: string): Promise<string> => rl.question(q);
+  const terminal = createTerminal({ stdin: process.stdin as never });
   // Readline giữ stdin mở, nên nếu không đóng thì tiến trình không thoát dù đã
   // in xong. Đóng quá sớm thì lượt hỏi duyệt sau sẽ treo — nên đóng ở `finally`.
-  const closeStdin = (): void => rl.close();
+  const closeStdin = (): void => terminal.close();
   const lichSu = new TaoLichSu();
   try {
     const host = createNodeHost({ workspaceRoot: workspace, userDataDir });
@@ -384,7 +344,7 @@ async function main(): Promise<void> {
           console.error('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
           return createAutoApprover(true);
         })()
-      : createConsoleApprover(docDong);
+      : createConsoleApprover((q) => terminal.hoi(q).then((a) => a ?? ''));
     const built = buildIpcTools(host, { approve });
     // `buildIpcTools` trả `Record<string, unknown>` vì hình dạng tool của AI SDK
     // rộng hơn thứ lớp cầu biết. Ép kiểu ở đây là ranh giới duy nhất; nếu để
@@ -492,64 +452,8 @@ async function main(): Promise<void> {
       // "readline was closed". Đo thật 2026-10-19 bằng `... | npm run cli`:
       // nếu không bắt, `Ctrl+D` (hay nối ống vào) là in ra một dòng lỗi rác
       // thay vì thoát sạch. `null` ở đây là EOF.
-      ask: async () => {
-        /* Bật `keypress` chỉ khi ĐANG chờ dòng lệnh.
-         *
-         * ============ VÌ SAO BẬT/GIẮM THEO TỪNG LƯỢT ============
-         *
-         * Nếu để nghe suốt phiên thì phím gõ lúc lượt đang chạy cũng đẩy vào bộ đệm
-         * của `readline`, và câu đó bị dính vào dòng lệnh kế tiếp — người dùng gõ
-         * "doc a.txt" rồi nhận ra có "xq" dính trước. Gắn rồi gỡ theo từng lần
-         * chờ là cách chắc chắn.
-         */
-        const dong = await hoiDong(rl, lichSu);
-        return dong;
-      },
+      ask: async () => terminal.hoiDong(lichSu),
       lichSu,
-      /*
-       * ============ VÌ SAO `raw` MÀ KHÔNG `readline` ============
-       *
-       * Giữa hai lượt thì `readline` đang chờ trong `rl.question()`. Nếu ta gắn
-       * thêm handler vào cùng readline thì nó **không** bắt được phím: readline đã
-       * nuốt phím và chờ một dòng hoàn chỉnh. Nên lúc lượt chạy, readline rảnh —
-       * bấm `Esc` lúc đó ra `0x1b` thô trên stdin. Đó là lý do dùng `raw`.
-       *
-       * `Ctrl+C` (\x03) thì để mặc định của terminal — thoát hẳn CLI. Chỉ `Esc`
-       * mới cắt lượt, để không lỡ tay mất cả phiên.
-       *
-       * ============ VÌ SAO KHÔNG `resume()`/`pause()` stdin ============
-       *
-       * Bản đầu tôi gọi `stdin.resume()` khi bắt đầu lượt và `stdin.pause()` khi
-       * kết thúc. **Cả hai là sai**, và cái thứ hai treo cả REPL:
-       *
-       * - `resume()` thừa — gắn listener `'data'` đã tự khôi phục chế độ chảy.
-       * - `pause()` **phá**. `readline` chỉ gọi `input.resume()` lại trong
-       *   `Interface.resume()`, mà hàm đó thoát sớm nếu cờ `rl.paused` chưa bật —
-       *   cờ đó CHỈ `Interface.pause()` mới bật. Gọi `stdin.pause()` (dừng stream)
-       *   không bật cờ, nên lượt sau `rl.question()` không bao giờ khởi động lại
-       *   stdin ⇒ prompt hiện ra rồi nuốt mọi phím, và chỉ còn cách giết tiến
-       *   trình. Không lỗi, không stack — chỉ treo.
-       *
-       * Đo 2026-10-19: `echo | npm run cli` **không** bắt được, vì dữ liệu đã nằm
-       * sẵn trong bộ đệm nên vẫn đọc được. Chỉ terminal thật mới lộ. Vì vậy ở đây
-       * **không** đụng trạng thái chảy của stdin nữa — `readline` là bên sở hữu nó. */
-      watchInterrupt: (cancel) => {
-        const stdin = process.stdin;
-        const truoc = stdin.isRaw;
-        stdin.setRawMode?.(true);
-        const onData = (b: Buffer) => {
-          // `0x1b` = Esc. Có `0x1b 0x5b` là chuỗi phím mũi tên — nuốt luôn
-          // để người dùng bấm mũi tên giữa lúc chờ không bị cắt nhầm lượt.
-          if (b[0] === 0x1b && b[1] === 0x5b) return;
-          if (b[0] === 0x1b) cancel();
-        };
-        stdin.on('data', onData);
-        return () => {
-          stdin.off('data', onData);
-          stdin.setRawMode?.(truoc ?? false);
-          /* KHÔNG `stdin.pause()` ở đây — xem ghi chú dưới. */
-        };
-      },
       out: (s) => process.stdout.write(s),
       note: (s) => console.error(s),
     });
