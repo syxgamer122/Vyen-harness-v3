@@ -60,11 +60,25 @@ export const CORE_ENTRIES = [
   // Lớp cầu nối ipc.cjs ra khỏi Electron. Thay cho `lib/tools/fs-node.ts` mà
   // spec §5 dự kiến — đo cho thấy ipc.cjs đã có đủ backend và máy an toàn.
   'lib/tools/ipc-node.ts',
-  // Tầng CLI. Hai file này **không** import API trình duyệt, nhưng phải khai ở
-  // đây vì lý do đúng như Global Constraint: entry thiếu thì đồ thị thu hẹp và
-  // file bị gán nhầm `XOA`. `cli/index.ts` cố ý **không** khai — nó đọc
-  // `process.env` và `process.exit`, tức không thuần; hai file dưới đây là hai
-  // chỗ có logic đáng test, và chúng là nơi những thứ đó được canh.
+  // Tầng CLI. Không file nào import API trình duyệt, nhưng phải khai ở đây vì
+  // lý do đúng như Global Constraint: entry thiếu thì đồ thị thu hẹp và file bị
+  // gán nhầm `XOA`.
+  //
+  // ============ VỀ `cli/index.ts` ============
+  //
+  // Bản đầu **cố ý không khai** nó, với lý do "nó đọc `process.env` và
+  // `process.exit`, tức không thuần". Lý do đó **sai**: `process.env` và
+  // `process.exit` là API **Node**, không phải trình duyệt — file đó chạy trên
+  // Node hoàn toàn bình thường.
+  //
+  // Hậu quả của việc bỏ nó: đây là file có bề mặt import rộng nhất của cả CLI
+  // (`@/lib/api-keys`, `@/lib/provider/upstream-diagnosis`, `@/lib/tools/ipc-node`)
+  // mà **không** nằm trong bất kỳ guard nào. Đo 2026-10-19: thêm
+  // `import { db } from '@/lib/db'` vào nó thì mọi test vẫn xanh.
+  //
+  // Nên nay khai, và `tests/repo-hygiene.test.ts` bắt buộc **mọi** file trong
+  // `cli/` phải ở đây — không còn lối để lọt mà không ai thấy.
+  'cli/index.ts',
   'cli/agent-turn.ts',
   'cli/approve.ts',
   'cli/repl.ts',

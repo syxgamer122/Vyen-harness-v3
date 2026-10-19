@@ -811,10 +811,58 @@ viết.** Đó là điều reviewer độc lập bắt được nhiều lần nh
 
 ### Còn sót (biết rõ, ghi để không mất)
 
-- `canhBoi` tính ra rồi chỉ kiểm `null` — giá trị là code chết.
-- `toIpcPayload` vẫn nhận `toolName` mà trước lúc này không dùng.
 - `lib/approval-binding.ts` không audit `fsWrite`/`fsDelete` — đã sửa ở tầng CLI
-  (`host.audit`), nhưng `ipc.cjs` vẫn không ghi ⇒ web không có vết ghi file.
+  (`host.audit`), nhưng `ipc.cjs` vẫn không ghi ⇒ **web** không có vết ghi file.
+  Việc của `ipc.cjs`, không phải của CLI.
 - `DANGEROUS_CHANNELS` giờ có bảng `READ_ONLY_CHANNELS` đi kèm và test bắt buộc
   mọi channel của `ipc.cjs` phải được phân loại — nhưng bảng đó liệt kê **tay**,
   nên thêm channel mới vào `ipc.cjs` thì test đỏ (đúng ý) nhưng phải có người sửa.
+
+# Lượt 8 (2026-10-19) — SỬA GỐC: bổ sung luật vào `AGENTS.md` + test vệ sinh
+
+Chủ repo: *"kiểm tra agent md xem đã có đủ luật chưa, tao cay m lắm rồi đấy, mắc lỗi
+nhiều vl"*. Đúng chỗ cần sửa gốc: tôi sửa **sản phẩm** suốt phiên thay vì sửa
+**luật** khiến lỗi đó không lặp lại.
+
+## `AGENTS.md` thiếu đúng những luật đã giữ tôi mắc lỗi 8 lần
+
+| Mục mới | Luật | Lỗi nó chặn |
+|---|---|---|
+| §2.1 | Đừng viết lời hứa trước khi có test đỏ | 8 lần cùng một dạng (xem bảng ở trên) |
+| §2.2 | Mutation xanh ≠ test tốt — phân biệt "mutation không áp dụng" với "test rỗng" | Đã báo "mutation bị bắt" oan 1 lần |
+| §2.3 | Test phải phân biệt được hai cách hiện thực | "ghi một lần ⇒ nguyên tử" không test nào phân biệt được |
+| §2.4 | Số 0 là kết quả đáng ngờ — kiểm lại **phép đo** chứ không phải kết quả | Truyền sai tham số ⇒ ra 0, gần tin |
+| §7.1 | Đơn vị schema ↔ backend; đổi tên **không** đổi được đơn vị | `timeout_secs` (giây) → `timeoutMs` (mili giây) ⇒ mọi lệnh shell chết |
+| §7.2 | Đừng dùng chuỗi người dùng làm khoá — chuẩn hoá trước | `./a.txt` và `A.TXT` lách được cổng TOCTOU |
+| §8 | File nguồn không có BOM; kiểm `git diff` xem thay đổi vô nghĩa | 10/10 file của tôi có BOM, 502 file repo sạch |
+
+Cùng đó: bản đồ nhanh có **7 dòng cho CLI**; checklist cuối thêm 3 mục kiểm tra.
+
+## `AGENTS.md` §4 nói "tài liệu không có hiệu lực, test mới có" ⇒ phải có test
+
+Nên `tests/repo-hygiene.test.ts` canh 2 điều:
+
+1. **Không file nguồn nào có BOM** (toàn repo, 8 thư mục).
+2. **Mọi file trong `cli/` phải khai trong `CORE_ENTRIES`** — không còn lối để lọt
+   mà không ai thấy. Đây là cách đóng lỗ hổng "guard quét `lib/` nên file `cli/`
+   không bao giờ bị soi" (đo 2026-10-19).
+
+Mutation xác nhận: thêm BOM → **1 đỏ**; bỏ `cli/index.ts` khỏi `CORE_ENTRIES` →
+**1 đỏ**; tạo file `cli/` không khai → **1 đỏ**.
+
+## Và một lý do loại trừ đã bị bác bỏ
+
+`cli/index.ts` trước đây bị **cố ý** loại khỏi `CORE_ENTRIES` với lý do "nó đọc
+`process.env` và `process.exit`, tức không thuần". **Lý do sai** — đó là API Node,
+không phải trình duyệt. Hậu quả: file có bề mặt import rộng nhất của cả CLI mà
+không nằm trong guard nào. Nay đã khai, và có test chặn.
+
+## Còn lại — đã sửa hết, không để "còn sót"
+
+- `canhBoi` (code chết) → **xoá**, thay bằng cờ `coDongHong`.
+- Lời hứa "ghi một lần ⇒ nguyên tử" → **xoá**, thay bằng lời hứa đúng phạm vi:
+  thứ bảo vệ phiên là `kiemTraChuoi` lúc nạp (đã có test).
+- 3 lời hứa về vòng đời terminal không có test → **tách `cli/terminal.ts`** (stdin
+  và readline là tham số) → có 7 test.
+- Lời hứa `realpathSync` (cùng thư mục ⇒ cùng file) → **có test**, mutation bỏ
+  `realpathSync` → 1 đỏ.

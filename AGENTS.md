@@ -63,6 +63,54 @@ Ba cách hỏng đã gặp, đừng lặp lại:
    `[System.IO.File]::ReadAllText/WriteAllText` với `Encoding::UTF8`, rồi **đọc
    lại xác nhận thay đổi đã vào**.
 
+### 2.1. Đừng viết lời hứa trước khi có test
+
+Đo 2026-10-19: cả 8 lần lỗi trong một phiên đều thuộc cùng một dạng — **lời
+hứa trong comment viết trước, test viết sau, và test hoá ra không canh đúng cái
+lời hứa đó**. Mẫu cụ thể đã gặp:
+
+- "dòng hỏng được bỏ" → bỏ trong RAM, **không cắt file** ⇒ lần ghi sau nối vào
+  dòng hỏng.
+- "TOCTOU tự bật" → bản sửa **ghi đè** giá trị cũ bằng chính giá trị sẽ so ⇒
+  luôn qua.
+- "một lượt hỏng không chết cả phiên" → không hề kiểm chuỗi message khi nạp.
+- "vết của mọi lệnh ghi/xoá" → hàm ghi file **không** ghi vào nhật ký.
+- "mọi channel nguy hiểm đều bị chặn" → thiếu `workspace-set` (đổi gốc workspace).
+
+Luật: **muốn viết một lời hứa về hành vi trong comment thì phải kèm một test đỏ
+khi bỏ lớp bảo vệ đi. Không viết được test đỏ ⇒ không viết lời hứa** — hoặc viết
+lời hứa đúng phạm vi điều đo được. Ví dụ đúng: đừng viết "ghi một lần là nguyên
+tử" (không test nào phân biệt được với ghi từng dòng — file sinh ra giống hệt),
+hãy viết "lúc nạp thấy `tool-call` không có `tool-result` thì báo lỗi" (đo được).
+
+### 2.2. Mutation xanh KHÔNG phải là "test tốt" — phải phân biệt
+
+Sau khi viết test, làm hỏng thứ nó khoá. Nếu test **vẫn xanh**, có hai khả năng
+và phải phân biệt được, nếu không lần sau bạn sẽ tưởng đã kiểm chứng:
+
+1. **Mutation không áp dụng** (chuỗi lệch, ký tự đặc biệt trong PowerShell).
+   Đo 2026-10-19: `timeout_secs` sửa xong, mutation "xoá khối nhân" **không áp
+   dụng** vì chuỗi có ký tự đặc biệt — và nếu không kiểm thì tôi đã báo "mutation
+   bị bắt" oan. **Luôn xác nhận bản vá đã vào file** trước khi kết luận.
+2. **Test rỗng** — nó khẳng định thứ gì khác. Ba dạng đã gặp:
+   `expect(true).toBe(true)`; assert "chuỗi có chứa X" trong khi X xuất hiện ở
+   nhánh lỗi; đếm bằng bộ đếm đặt **trong test** nên gọi nó cũng làm nó tăng.
+
+### 2.3. Test phải phân biệt được hai cách hiện thực
+
+Hai cách làm có thể cho ra **kết quả giống hệt** thì test không phân biệt được, và
+một trong hai có thể sai. Đo 2026-10-19: "ghi cả lô trong một `appendFileSync`" và
+"ghi từng dòng một" cho ra file giống hệt — nên "ghi một lần" **không phải** tính
+nguyên tử, và cũng không test nào chứng minh được. Khi đó, đừng dựa vào nó; hãy
+dựa vào thứ **đo được** (kiểm chuỗi lúc nạp).
+
+## 2.4. Số 0 và kết quả rỗng là kết quả đáng ngờ
+
+Đo 2026-10-19: truyền sai tham số vào hàm quét ⇒ ra **0 file kéo trình duyệt vào**.
+Số 0 trông rất hợp lý nên dễ tin — và tin là bảng kiểm kê sai hoàn toàn. Trước khi
+kết luận "không có gì", kiểm lại **phép đo** chứ không phải kết quả: thử phép đo
+đó trên một thứ **chắc chắn có** và xem nó có ra khác 0 không.
+
 ## 3. Sửa token màu phải sửa cả ba file
 
 `tests/design-system.test.ts` canh chiều hai chiều giữa test, `tailwind.config.ts`
@@ -153,7 +201,61 @@ Ba điều phải làm trước khi kết luận "chết":
 Cùng dạng với mục 3 của §2: thao tác im lặng không báo lỗi, kết quả sai, tưởng
 đã kiểm chứng.
 
-## 7. Bản đồ nhanh
+## 7. Đơn vị và định danh phải khớp — đây là nơi lỗi "âm thầm" hay nằm nhất
+
+### 7.1. Đơn vị giữa schema và backend phải khớp
+
+Đo 2026-10-19: `shell_run` nhận `timeout_secs` (schema: 1…600 **giây**). Bảng đổi
+tên tham số đưa nó thành `timeoutMs` (backend: `min(1_000)` **mili giây**) ⇒ **mọi
+giá trị schema cho phép đều bị zod từ chối ⇒ lệnh không bao giờ chạy**. Tệ hơn:
+không đổi tên thì lệnh vẫn chạy với mặc định.
+
+Cùng lượt đó, bản sửa kế tiếp nhân 1000 cho **mọi** tool ⇒ `bg_run` (schema và
+backend **đều** dùng giây) bị phá, mọi job chạy 3600 giây.
+
+Luật:
+
+- Đổi tên tham số **không** đổi được đơn vị. Khác đơn vị thì phải **chuyển đổi**,
+  và chuyển đổi phải **theo từng tool** chứ không phải theo tên tham số.
+- Trước khi tin một tên tham số đã "khớp", mở schema **và** schema của backend ra
+  đặt cạnh nhau, đọc **min/max và đơn vị** của cả hai.
+
+### 7.2. Đừng dùng chuỗi người dùng (hoặc model) làm khoá
+
+Đo 2026-10-19: khoá hash chống TOCTOU lấy theo **đúng chuỗi** `a.path` mà model
+đưa. Nên:
+
+```
+đọc "a.txt"         → ghi "a.txt"         ⇒ bị chặn  ✔
+đọc "a.txt"         → ghi "./a.txt"       ⇒ KHÔNG bị chặn  ✘
+đọc "a.txt"         → ghi "A.TXT"         ⇒ KHÔNG bị chặn  ✘  (Windows không phân biệt hoa/thường)
+```
+
+Cả ba là **cùng một file**. Không chỉ là lỗi người dùng: văn bản do model sinh ra
+có thể bị chèn (prompt injection) và bảo nó ghi `package.json` — đúng lúc đó lớp
+bảo vệ biến mất âm thầm.
+
+Luật: **khoá theo dạng đã chuẩn hoá** (`path.resolve` + hạ chữ hoa trên hệ điều
+hành không phân biệt), không theo chuỗi người dùng gõ. Cùng luật cho mọi thứ
+dùng làm khoá: id phiên, tên file, khoá cấu hình.
+
+## 8. Kiểm byte khi sửa file — BOM và thay đổi vô nghĩa
+
+Đo 2026-10-19: công cụ ghi file của harness thêm **UTF-8 BOM** vào **mọi** file tạo
+mới (10/10 file của tôi), còn 502 file còn lại của repo thì sạch. BOM không làm
+hỏng gì (`tsc` và `vitest` đều bỏ qua) — **chính vì vậy nó lọt vào diff mà không ai
+báo**, và nó là thay đổi byte vô nghĩa nằm chính giữa thay đổi thật.
+
+Luật:
+
+- File nguồn **không được có BOM**. `tests/repo-hygiene.test.ts` canh điều này.
+- Sau khi sửa hàng loạt file, đọc `git diff --stat` và xem có dòng nào đổi cả
+  file mà không đổi nội dung không.
+- Ký tự đặc biệt trong lệnh sửa file là nguồn lỗi âm thầm: backtick (`) thay vì
+  nháy đơn (`'`) làm **parse error**, còn `'` trong PowerShell `.Replace()` với
+  chuỗi tiếng Việt lại **không khớp và không báo lỗi** (§2.3).
+
+## 9. Bản đồ nhanh
 
 | Việc | Ở đâu |
 |---|---|
@@ -164,12 +266,22 @@ Cùng dạng với mục 3 của §2: thao tác im lặng không báo lỗi, k�
 | Bảng màu giao diện | `app/globals.css` + `tailwind.config.ts` + `tests/design-system.test.ts` |
 | Test hợp đồng design system | `tests/design-system.test.ts` |
 | Vị trí logo được phép hiện | `tests/brand-placement.test.ts` |
+| **CLI — điểm vào** | `cli/index.ts` (REPL, `-p` cho một lượt) |
+| **CLI — vòng lặp tool** | `cli/agent-turn.ts` (`maxSteps`, `abortSignal`) + `cli/repl.ts` (`/exit`, `/new`) |
+| **CLI — lưu hội thoại** | `cli/session.ts` (JSONL append-only, một file cho mỗi thư mục) |
+| **CLI — cổng duyệt** | `cli/approve.ts` (mặc định KHÔNG) + `cli/terminal.ts` (vòng đời stdin) |
+| **CLI — system prompt** | `cli/instructions.ts` (nạp `AGENTS.md`, hướng dẫn tool có điều kiện) |
+| **CLI — cầu nối tool** | `lib/tools/ipc-node.ts` (cầu `lib/ipc.cjs`: path-guard, chống TOCTOU, audit) |
+| **CLI — bảng kiểm kê** | `docs/cli-migration-inventory.md` + `scripts/cli-migration/` |
 
-## 8. Trước khi báo xong
+## 10. Trước khi báo xong
 
 - [ ] `npm run typecheck` exit 0
 - [ ] `npm run test` — không đỏ (trừ 3 flaky ở mục 1)
 - [ ] `npm run lint` — không có lỗi mới
 - [ ] `npm run docs:check` OK
 - [ ] Test mới đã được chứng minh ĐỎ (mục 2)
+- [ ] **Mutation đã được xác nhận là thật sự thay đổi hành vi** (mục 2.2)
+- [ ] **Mọi lời hứa trong comment mới đều có test đỏ khi bỏ lớp bảo vệ** (mục 2.1)
 - [ ] File mới đã `git add`
+- [ ] File nguồn không có BOM (mục 8)
