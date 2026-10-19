@@ -31,6 +31,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `lib/provider/anthropic-adapter.ts`
 - `lib/provider/upstream-diagnosis.ts`
 - `lib/tools/ipc-node.ts`
+- `cli/index.ts`
 - `cli/agent-turn.ts`
 - `cli/approve.ts`
 - `cli/repl.ts`
@@ -38,6 +39,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/instructions.ts`
 - `cli/history.ts`
 - `cli/terminal.ts`
+- `cli/context-adapter.ts`
 
 ## Bằng chứng dòng
 

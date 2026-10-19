@@ -86,6 +86,10 @@ export const CORE_ENTRIES = [
   'cli/instructions.ts',
   'cli/history.ts',
   'cli/terminal.ts',
+  // Adapter CoreMessage → BudgetMessageLike (plan 2026-10-19-cli-compaction).
+  // `tests/repo-hygiene.test.ts` bắt buộc **mọi** file trong `cli/` phải ở đây,
+  // nên file mới phải khai ngay task tạo nó — không để dồn tới cuối plan.
+  'cli/context-adapter.ts',
 ];
 
 
