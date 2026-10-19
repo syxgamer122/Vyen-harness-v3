@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Ba nợ còn lại từ review độc lập, gộp lại vì cùng một tầng và cùng một lý do:
  * cả ba đều là **khoảng hở an toàn**, không phải thiếu tiện nghi.
  *
@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createNodeHost, buildIpcTools, hostAuditLogPath } from '@/lib/tools/ipc-node';
+import { createNodeHost, buildIpcTools, hostAuditLogPath, toIpcPayload } from '@/lib/tools/ipc-node';
 
 type Tools = Record<string, { execute: (a: unknown) => Promise<Record<string, unknown>> }>;
 
@@ -285,6 +285,92 @@ describe('fs_write ghi đè file tồn tại thì phải kèm hash lúc đọc',
 });
 
 /* ============ NỢ 3 — audit không mặc định rỗng ============ */
+
+/* ============ GÕ KHÁC ĐƯỜNG DẪN KHÔNG LÁCH ĐƯỢC ============
+ *
+ * Đo 2026-10-19: đọc `a.txt` → người khác sửa → ghi `a.txt` thì **bị chặn**; nhưng
+ * ghi `./a.txt` hoặc `sub/../a.txt` thì **ghi thành công và mất thay đổi của họ**.
+ * Vì `READ_HASHES` khoá theo đúng chuỗi `a.path` do model đưa, mà mọi cách viết
+ * đó cùng trỏ tới một file.
+ *
+ * Không chỉ là lỗi của người dùng: văn bản do model sinh ra có thể bị chèn
+ * (prompt injection) và bảo nó ghi `./package.json`.
+ */
+describe('khoá TOCTOU theo ĐƯỜNG DẪN ĐÃ GIẢI, không theo chuỗi người dùng gõ', () => {
+  for (const spell of ['./a.txt', 'sub/../a.txt']) {
+    it(`ghi "${spell}" cũng phải bị chặn khi file đổi sau lúc đọc`, async () => {
+      const { dir, tools, hostOf, cleanup } = mk();
+      try {
+        const t = tools();
+        await t.fs_read.execute({ path: 'a.txt' });
+        writeFileSync(path.join(dir, 'a.txt'), 'NGUOI KHAC SUA\n', 'utf8');
+        await expect(
+          t.fs_write.execute({ path: spell, content: 'de che' }),
+        ).rejects.toThrow(/TOCTOU|thay doi/i);
+        expect(readFileSync(path.join(dir, 'a.txt'), 'utf8'), 'thay doi bi ghi de').toBe(
+          'NGUOI KHAC SUA\n',
+        );
+      } finally {
+        hostOf().dispose();
+        cleanup();
+      }
+    });
+  }
+
+  /* Ghi file CHƯA từng đọc thì phải chạy — không có H0 để so. Khóa theo đường dẫn
+   * đã giải mà không cẩn thận thì dễ thành "chặn nhầm mọi lần ghi". */
+  it('ghi file CHƯA từng đọc thì vẫn chạy', async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      await tools().fs_write.execute({ path: './moi.txt', content: 'x' });
+      expect(existsSync(path.join(dir, 'moi.txt'))).toBe(true);
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+});
+
+/* ============ ĐƠN VỊ KHÔNG KHỚP NHAU ============
+ *
+ * Đo 2026-10-19: `shell_run` chết vì tham số, không phải vì logic. Schema tool
+ * cho `timeout_secs` 1…600 **giây**; `ipc.cjs` nhận `timeoutMs` **mili giây** với
+ * `min(1_000)`. Bản đầu đổi tên thẳng nên `timeout_secs=120` thành `120` < 1000 ⇒
+ * zod từ chối ⇒ **lệnh không bao giờ chạy**, và mọi giá trị schema cho phép đều
+ * hỏng. Không đổi tên còn hơn: lệnh chạy với mặc định.
+ *
+ * Mutation xoá hẳn khối nhân này thì trước đây **không test nào đỏ** — đó là lý do
+ * lỗi này sống dai qua hai vòng review.
+ */
+describe('đơn vị tham số phải khớp, không chỉ tên', () => {
+  it('timeout_secs (giây) ra timeoutMs (mili giây)', () => {
+    const p = toIpcPayload('shell_run', { command: 'dir', timeout_secs: 120 });
+    expect(p.timeoutMs, '120 giay phai ra 120000 ms').toBe(120_000);
+    expect(p.timeout_secs, 'khong giu ten cu').toBeUndefined();
+  });
+
+  it('giá trị nhỏ nhất schema cho phép vẫn vượt min(1000) của ipc.cjs', () => {
+    const p = toIpcPayload('shell_run', { command: 'dir', timeout_secs: 1 });
+    expect(p.timeoutMs).toBe(1_000);
+  });
+
+  it('giá trị lớn nhất schema cho phép', () => {
+    const p = toIpcPayload('shell_run', { command: 'dir', timeout_secs: 600 });
+    expect(p.timeoutMs).toBe(600_000);
+  });
+
+  it('giá trị vô nghĩa thì BỎ hẳn, để ipc.cjs dùng mặc định', () => {
+    expect(toIpcPayload('shell_run', { command: 'dir', timeout_secs: 0 }).timeoutMs).toBeUndefined();
+    expect(toIpcPayload('shell_run', { command: 'dir', timeout_secs: -5 }).timeoutMs).toBeUndefined();
+    expect(
+      toIpcPayload('shell_run', { command: 'dir', timeout_secs: Number.NaN }).timeoutMs,
+    ).toBeUndefined();
+  });
+
+  it('không truyền thì không sinh gì', () => {
+    expect(toIpcPayload('shell_run', { command: 'dir' }).timeoutMs).toBeUndefined();
+  });
+});
 
 describe('audit mặc định ghi ra đĩa', () => {
   it('có file audit ngay khi host tạo', () => {

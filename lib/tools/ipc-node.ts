@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Cầu nối `lib/ipc.cjs` ra khỏi Electron.
  *
  * ============ VÌ SAO FILE NÀY TỒN TẠI ============
@@ -107,6 +107,8 @@ const DANGEROUS_CHANNELS: ReadonlySet<string> = new Set([
 type Handler = (event: unknown, payload: unknown) => unknown;
 
 export interface NodeHost {
+  /** Gốc workspace **đã giải**. Cần cho `buildIpcTools` để khoá hash TOCTOU. */
+  workspaceRoot: string;
   /**
    * Gọi một channel của `ipc.cjs`.
    *
@@ -208,6 +210,9 @@ export function createNodeHost(opts: NodeHostOptions): NodeHost {
   };
 
   const host: NodeHost = {
+    /* Gốc workspace đã giải. `buildIpcTools` cần nó để khoá hash TOCTOU theo
+     * đường dẫn đã giải thay vì theo chuỗi model đưa — xem `khoaHash`. */
+    workspaceRoot: root,
     async call<T>(channel: string, payload?: unknown): Promise<T> {
       const fn = handlers.get(channel);
       if (!fn) {
@@ -336,6 +341,21 @@ export function buildIpcToolMap(host: NodeHost): Record<string, string> {
  *   - `bg_status` nhận `job_id`, schema lại là `id` → `id` undefined → `ipc.cjs`
  *     trả về **toàn bộ** danh sách job thay vì job được hỏi. Sai âm thầm.
  *   - `git_add` nhận `paths`, schema là `relPaths` → lỗi zod.
+ *
+ * ============ `timeout_secs` KHÔNG THUỘC BẢNG NÀY — VÌ SAI ĐƠN VỊ ============
+ *
+ * Bản đầu tôi để `timeout_secs: 'timeoutMs'` trong `ARG_RENAMES`. Đo 2026-10-19 cho
+ * thấy điều đó **phá** `shell_run` hoàn toàn:
+ *
+ *   schema tool : `timeout_secs: z.number().int().min(1).max(600)`  ← **giây**
+ *   ipc.cjs     : `timeoutMs: z.number().int().min(1_000)`         ← **mili giây**
+ *
+ * Nên `timeout_secs=120` bị đổi thành `timeoutMs=120`, thấp hơn `min(1000)` ⇒ zod
+ * từ chối ⇒ **lệnh không bao giờ chạy**. Mọi giá trị schema cho phép (1…600) đều
+ * hỏng. Tệ hơn: nếu KHÔNG đổi tên thì `timeout_secs` bị bỏ qua và lệnh vẫn chạy
+ * với mặc định — tức bảng "sửa" lại làm nó hỏng.
+ *
+ * Đơn vị khác nhau thì không đổi tên được, phải **nhân**. Xem `toIpcPayload`.
  */
 const ARG_RENAMES: Record<string, string> = {
   // Đường dẫn.
@@ -345,8 +365,6 @@ const ARG_RENAMES: Record<string, string> = {
   job_id: 'id',
   // Tìm kiếm.
   is_regex: 'isRegex',
-  // Shell.
-  timeout_secs: 'timeoutMs',
 };
 
 /**
@@ -364,6 +382,25 @@ export function toIpcPayload(
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
     out[ARG_RENAMES[k] ?? k] = v;
+  }
+  /* ĐƠN VỊ KHÁC NHAU ⇒ PHẢI NHÂN, KHÔNG ĐỔI TÊN.
+   *
+   * `timeout_secs` là **giây** theo schema tool; `ShellPayload.timeoutMs` của
+   * `ipc.cjs` là **mili giây** với `min(1_000)`. Bản đầu để nó trong `ARG_RENAMES`
+   * nên `timeout_secs=120` ra `timeoutMs=120` ⇒ zod từ chối ⇒ lệnh không chạy
+   * (đo 2026-10-19: mọi giá trị 1…600 mà schema cho phép đều hỏng).
+   *
+   * Nhân ở đây thay vì trong `ARG_RENAMES` vì bảng đó chỉ đổi **tên**; thêm phép
+   * tính vào đó thì nó thôi là "bảng sai tên" và lần sau sẽ có người thêm tiếp
+   * thứ gì đó không phải tên.
+   *
+   * Ngoài giá trị không hợp lệ (0, NaN, số thực) thì bỏ hẳn: như vậy `ipc.cjs` dùng
+   * mặc định của nó, đúng như khi model không truyền tham số.
+   */
+  const secs = args.timeout_secs;
+  if (typeof secs === 'number' && Number.isFinite(secs) && secs > 0) {
+    out.timeoutMs = Math.round(secs * 1000);
+    delete out.timeout_secs;
   }
   return out;
 }
@@ -416,6 +453,27 @@ function sha256(s: string): string {
  * liệu thì đã bị chặn.
  */
 const READ_HASHES = new WeakMap<NodeHost, Map<string, string>>();
+
+/**
+ * Khoá phải là **đường dẫn đã giải**, không phải chuỗi model đưa.
+ *
+ * Đo 2026-10-19 (làm đúng như bản đầu, tức khoá theo `a.path`):
+ *   đọc `a.txt` → người khác sửa → ghi `a.txt`        ⇒ **bị chặn** ✔
+ *   đọc `a.txt` → người khác sửa → ghi `./a.txt`      ⇒ **ghi được, mất thay đổi** ✘
+ *   đọc `a.txt` → người khác sửa → ghi `sub/../a.txt` ⇒ **ghi được, mất thay đổi** ✘
+ *
+ * Cả ba cùng trỏ tới một file, nên một chuỗi phải phải là một khoá.
+ *
+ * Vì sao đáng sửa dù "model tự viết khác hiếm": văn bản do model sinh ra có thể bị
+ * chèn (prompt injection) và bảo nó ghi `./package.json` — đúng lúc đó lớp bảo vệ
+ * biến mất âm thầm.
+ *
+ * `path.resolve` là đủ: nó chuẩn hoá `.`, `..`, và dấu tách mà không cần file tồn
+ * tại. `path-guard.cjs` phía `ipc.cjs` vẫn lo phần chặn đường dẫn ra ngoài.
+ */
+function khoaHash(workspaceRoot: string, p: string): string {
+  return path.resolve(workspaceRoot, p);
+}
 
 /** Lấy kho hash của host. Chỉ module này dùng. */
 function readHashes(host: NodeHost): Map<string, string> {
@@ -493,6 +551,11 @@ export function buildIpcTools(
   host: NodeHost,
   opts: BuildToolsOptions,
 ): Record<string, unknown> {
+  // Khoá hash phải tính trên đường dẫn đã giải so với **gốc workspace**, nên cần
+  // biết gốc. Host không công khai nó ra ngoài (xem `ipc.cjs` chỉ nhận
+  // `workspaceRoot` lúc `register`), nên ở đây ta đọc lại từ chính `opts` mà
+  // `createNodeHost` đã dùng — cùng một nguồn sự thật, không phải bản sao.
+  const workspaceRoot = (host as unknown as { workspaceRoot?: string }).workspaceRoot ?? '';
   const out: Record<string, unknown> = {};
   for (const toolName of Object.keys(IPC_TOOL_CHANNELS)) {
     const def = (CLIENT_TOOL_DEFS as Record<string, unknown>)[toolName] as
@@ -537,6 +600,9 @@ export function buildIpcTools(
         }
         const channel = IPC_TOOL_CHANNELS[toolName];
         const hashes = readHashes(host);
+        /* Khoá theo đường dẫn ĐÃ GIẢI — xem `khoaHash`. Không có nó thì
+         * `./a.txt` và `a.txt` là hai khoá khác nhau và cổng TOCTOU bị lách. */
+        const khoa = typeof a.path === 'string' ? khoaHash(workspaceRoot, a.path) : '';
         try {
           /* ---- fs_edit: ghép khối SEARCH/REPLACE rồi ghi như fs_write ----
            *
@@ -584,8 +650,8 @@ export function buildIpcTools(
              * File CHƯA từng đọc thì chưa có H0 — lúc đó ghi hash mới vào, vì đó là
              * cách duy nhất để biết file vừa ở trạng thái nào ngay trước lúc ghi.
              */
-            if (!hashes.has(a.path as string)) {
-              hashes.set(a.path as string, sha256(whole));
+            if (!hashes.has(khoa)) {
+              hashes.set(khoa, sha256(whole));
             }
             for (const b of parsed.blocks) {
               const applied = replaceMostSimilarChunk(whole, b.search, b.replace);
@@ -607,9 +673,9 @@ export function buildIpcTools(
            *
            * File CHƯA từng đọc thì không có hash để đối chiếu, nên không gửi
            * `hasDiff` — `ipc.cjs` cho qua, và đó là đúng: không có gì để so. */
-          if ((toolName === 'fs_write' || toolName === 'fs_edit') && hashes.has(a.path as string)) {
+          if ((toolName === 'fs_write' || toolName === 'fs_edit') && hashes.has(khoa)) {
             a.hasDiff = true;
-            a.expectedBaseHash = hashes.get(a.path as string);
+            a.expectedBaseHash = hashes.get(khoa);
           }
 
           const payload = toIpcPayload(toolName, a);
@@ -623,7 +689,7 @@ export function buildIpcTools(
             const full = (r as { content?: string } | undefined)?.content ?? '';
             // Hash phải tính trên TOÀN BỘ file, không phải phần cửa sổ — nếu tính
             // trên cửa sổ thì đọc tiếp rồi ghi sẽ luôn lệch và chặn oan.
-            if (a.path) hashes.set(a.path as string, sha256(full));
+            if (a.path) hashes.set(khoa, sha256(full));
             const { content, truncated } = applyReadWindow(
               full,
               a.start_line as number,
@@ -633,7 +699,7 @@ export function buildIpcTools(
           }
           // Ghi xong thì hash cũ hết ý nghĩa — file đã là nội dung mới.
           if ((toolName === 'fs_write' || toolName === 'fs_edit') && a.path) {
-            hashes.set(a.path as string, sha256(content ?? ''));
+            hashes.set(khoa, sha256(content ?? ''));
           }
           return r;
         } catch (e) {
