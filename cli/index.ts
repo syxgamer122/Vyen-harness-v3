@@ -142,9 +142,11 @@ import { resolveAnthropicModel } from '../lib/provider/anthropic-adapter.ts';
 // `node cli/index.ts` thẳng thì hai import này hỏng. Chạy `npm run cli` thì
 // được. Nếu sau này đổi alias, sửa cả hai chỗ cùng lúc.
 import { diagnoseUpstreamError } from '@/lib/provider/upstream-diagnosis';
+import { isContextOverflowError } from '@/lib/context-budget';
 import { getKeyLabel } from '@/lib/api-keys';
 import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
 import { createConsoleApprover, createAutoApprover } from './approve';
+import { buildModelConfigs, createCompactionRunner, statusCodeOf } from './compaction';
 import { runAgentTurn } from './agent-turn';
 import { runRepl } from './repl';
 import { openSession } from './session';
@@ -185,6 +187,8 @@ function parseArgs(argv: string[]): { question?: string; print: boolean } {
 /** Chạy một lượt rồi thoát — đường dùng khi có `-p`. */
 async function chayMotLuot(opts: {
   lm: Parameters<typeof runAgentTurn>[0]['model'];
+  /** Instance model RIENG cho luot tom tat. */
+  lmNen: Parameters<typeof runAgentTurn>[0]['model'];
   session: ReturnType<typeof openSession>;
   question: string;
   tools: ToolSet | undefined;
@@ -192,48 +196,70 @@ async function chayMotLuot(opts: {
   apiKey: string;
   model: string;
   system: string;
+  windowTokens?: number;
 }): Promise<void> {
-  const { lm, session, question, tools, maxTokens, apiKey, model, system } = opts;
+  const { lm, lmNen, session, question, tools, maxTokens, apiKey, model, system } = opts;
+  const nen = createCompactionRunner({
+    session,
+    model: lmNen,
+    system,
+    ...(opts.windowTokens !== undefined ? { windowTokens: opts.windowTokens } : {}),
+    note: (s) => console.error(s),
+  });
   session.append({ role: 'user', content: question });
   let wroteAny = false;
-  try {
-    const turn = await runAgentTurn({
-      model: lm,
-      tools,
-      messages: [...session.messages],
-      system,
-      maxTokens,
-      onText: (delta) => {
-        process.stdout.write(delta);
-        wroteAny = true;
-      },
-      onToolCall: (name) => console.error(`\n[goi tool] ${name}`),
-      onToolError: (name, msg) => console.error(`[tool that bai] ${name}: ${msg}`),
-    });
-    session.appendAll(turn.messages);
-    if (wroteAny) process.stdout.write('\n');
-    console.error(
-      `\n> xong. token: vao ${turn.usage.promptTokens ?? '?'} / ra ${turn.usage.completionTokens ?? '?'}`,
-    );
-  } catch (e) {
-    /* Chuyển lỗi thô thành chẩn đoán có nghĩa (spec §7).
-     *
-     * Không in `e.message` thẳng: message của provider là tiếng Anh dài dòng, và
-     * quan trọng hơn là **không phân biệt được lỗi mạng với lỗi key** — người
-     * dùng CLI không biết nên bật lại Wi-Fi hay đổi key. */
-    const diag = diagnoseUpstreamError(e, {
-      requestId: randomUUID().slice(0, 8),
-      model,
-      keyLabel: getKeyLabel(apiKey),
-      providerBase: process.env.VYEN_BASE_URL,
-    });
-    console.error(`\n> ${diag.code}  (${diag.scope})`);
-    console.error(`> ${diag.userMessage}`);
-    console.error(
-      `> phai doi key: ${diag.blameKey ? 'co' : 'khong'} | dung thu key khac: ${diag.stopFailover ? 'dung roi' : 'chua'}`,
-    );
-    if (process.env.VYEN_DEBUG === '1') console.error(`> dev: ${diag.devLog}`);
-    process.exitCode = 1;
+  let daThuLai = false;
+  for (;;) {
+    try {
+      if (!daThuLai) await nen.nen('auto');
+      const turn = await runAgentTurn({
+        model: lm,
+        tools,
+        messages: [...session.messages],
+        system: nen.system(),
+        maxTokens,
+        onText: (delta) => {
+          process.stdout.write(delta);
+          wroteAny = true;
+        },
+        onToolCall: (name) => console.error(`\n[goi tool] ${name}`),
+        onToolError: (name, msg) => console.error(`[tool that bai] ${name}: ${msg}`),
+      });
+      session.appendAll(turn.messages);
+      if (wroteAny) process.stdout.write('\n');
+      console.error(
+        `\n> xong. token: vao ${turn.usage.promptTokens ?? '?'} / ra ${turn.usage.completionTokens ?? '?'}`,
+      );
+      return;
+    } catch (e) {
+      /* Tràn context: provider TỪ CHỐI, không phải lỗi của ta. Nén lại rồi thử
+       * đúng MỘT lần — không có lưới an toàn nào khác. */
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!daThuLai && isContextOverflowError(statusCodeOf(e), msg)) {
+        daThuLai = true;
+        console.error('> het context, dang nen lai...');
+        if (await nen.nen('overflow')) continue;
+      }
+      /* Chuyển lỗi thô thành chẩn đoán có nghĩa (spec §7).
+       *
+       * Không in `e.message` thẳng: message của provider là tiếng Anh dài dòng, và
+       * quan trọng hơn là **không phân biệt được lỗi mạng với lỗi key** — người
+       * dùng CLI không biết nên bật lại Wi-Fi hay đổi key. */
+      const diag = diagnoseUpstreamError(e, {
+        requestId: randomUUID().slice(0, 8),
+        model,
+        keyLabel: getKeyLabel(apiKey),
+        providerBase: process.env.VYEN_BASE_URL,
+      });
+      console.error(`\n> ${diag.code}  (${diag.scope})`);
+      console.error(`> ${diag.userMessage}`);
+      console.error(
+        `> phai doi key: ${diag.blameKey ? 'co' : 'khong'} | dung thu key khac: ${diag.stopFailover ? 'dung roi' : 'chua'}`,
+      );
+      if (process.env.VYEN_DEBUG === '1') console.error(`> dev: ${diag.devLog}`);
+      process.exitCode = 1;
+      return;
+    }
   }
 }
 
@@ -406,8 +432,27 @@ async function main(): Promise<void> {
   console.error(`> toi da ${maxTokens} token`);
   console.error('> (ket qua se do la day)\n');
 
+  /* HAI instance model: chat khong dung `fetch` ep `stream:false`, con luot tom
+   * tat co. Dung chung mot instance se lam MOI luot chat hong — xem
+   * `buildModelConfigs`. */
+  const { chat: cfgChat, nen: cfgNen } = buildModelConfigs(cfg);
+
+  /* Context window cua model BYOK. CLI khong biet cua so gateway nao nen nguoi
+   * dung khai bang bien moi truong; bo trong thi dung mac dinh cua CLI. */
+  const rawWindow = process.env.VYEN_CONTEXT_WINDOW;
+  let windowTokens: number | undefined;
+  if (rawWindow) {
+    const n = Number(rawWindow);
+    if (!Number.isInteger(n) || n <= 0) {
+      console.error(`VYEN_CONTEXT_WINDOW khong hop le: ${rawWindow} (can la so nguyen duong)`);
+      process.exit(2);
+    }
+    windowTokens = n;
+  }
+
   try {
-    const lm = kind === 'anthropic' ? resolveAnthropicModel(cfg) : resolveOpenAIModel(cfg);
+    const lm = kind === 'anthropic' ? resolveAnthropicModel(cfgChat) : resolveOpenAIModel(cfgChat);
+    const lmNen = kind === 'anthropic' ? resolveAnthropicModel(cfgNen) : resolveOpenAIModel(cfgNen);
 
     /* Đo 2026-10-18 với key sai: stream lỗi **không** ném ra `for await` — nó kết
      * thúc im lặng sau 0 chunk, và `finishReason` không bao giờ settle. Nếu nuốt,
@@ -426,6 +471,7 @@ async function main(): Promise<void> {
       // `prompt` chắc chắn có: `main()` đã kiểm và thoát nếu `-p` mà thiếu.
       await chayMotLuot({
         lm,
+        lmNen,
         session,
         question: prompt as string,
         tools,
@@ -433,16 +479,19 @@ async function main(): Promise<void> {
         apiKey,
         model,
         system: systemPrompt,
+        ...(windowTokens !== undefined ? { windowTokens } : {}),
       });
       return;
     }
 
     await runRepl({
       model: lm,
+      modelNen: lmNen,
       tools,
       session,
       system: systemPrompt,
       maxTokens,
+      ...(windowTokens !== undefined ? { windowTokens } : {}),
       ...(prompt ? { initial: prompt } : {}),
       // Một readline dùng cho CẢ hỏi duyệt lẫn nhận lệnh — nếu mở hai thì stdin
       // bị hai tiến trình cùng chia, người dùng gõ một câu mà CLI lắng nghe hai

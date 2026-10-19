@@ -27,7 +27,7 @@
  * Không có chỗ cắt nào mà phần giữ lại vẫn hợp lệ ⇒ trả `null` (không nén). Đây là
  * giới hạn thật, ghi rõ chứ không giấu.
  */
-import { generateText, type CoreMessage, type LanguageModelV1 } from 'ai';
+import { APICallError, generateText, type CoreMessage, type LanguageModelV1 } from 'ai';
 import {
   RESERVE_TOKENS,
   estimateContextTokens,
@@ -50,6 +50,9 @@ import {
   type CompactionState,
 } from '@/lib/context-compaction';
 import { toBudgetMessages } from './context-adapter';
+import { nonStreamingFetch } from '@/lib/non-streaming-fetch';
+import type { ProviderRuntimeConfig } from '@/lib/provider/adapter';
+import type { SessionStore } from './session';
 
 /**
  * Context window mặc định khi model BYOK không khai cửa sổ.
@@ -67,6 +70,16 @@ import { toBudgetMessages } from './context-adapter';
  * Người dùng khai đúng cửa sổ thật qua biến môi trường `VYEN_CONTEXT_WINDOW`.
  */
 export const CLI_DEFAULT_CONTEXT_WINDOW = 200_000;
+
+/**
+ * Mã lỗi HTTP của lỗi provider — `undefined` nếu không phải lỗi HTTP.
+ *
+ * Cần cho `isContextOverflowError(status, text)`: lỗi tràn context phải phân biệt
+ * được với 429 (rate-limit, dù body cũng có chữ "tokens").
+ */
+export function statusCodeOf(e: unknown): number | undefined {
+  return APICallError.isInstance(e) ? e.statusCode : undefined;
+}
 
 export interface CutChoice {
   /** Chỉ số trong `messages` của message ĐẦU TIÊN được giữ. */
@@ -268,5 +281,99 @@ export async function compactConversation(input: CompactInput): Promise<CompactO
     olderCount: cut.older.length,
     keptCount: cut.keep.length,
     keptTokens: estimateContextTokens(toBudgetMessages(cut.keep)),
+  };
+}
+
+/**
+ * Dựng HAI cấu hình model: một cho lượt chat, một cho lượt tóm tắt.
+ *
+ * ============ VÌ SAO PHẢI HAI ============
+ *
+ * `nonStreamingFetch` ghi đè `stream: false` **vô điều kiện**
+ * (`lib/non-streaming-fetch.ts:40`). Cả `@ai-sdk/openai` lẫn `@ai-sdk/anthropic` đều
+ * gửi `stream: true` khi stream. Nên dùng chung một instance là **mọi lượt chat hỏng**
+ * — provider trả JSON, SDK đọc SSE thì chết.
+ *
+ * Ngược lại, `generateText` (lượt tóm tắt) **không** gửi trường `stream`, mà nhiều
+ * gateway bỏ qua nó và trả SSE ⇒ AI SDK ném "Invalid JSON response" ⇒ nén context
+ * chết âm thầm.
+ *
+ * ⇒ Chat dùng config gốc, tóm tắt dùng config có `fetch: nonStreamingFetch`.
+ */
+export function buildModelConfigs(cfg: ProviderRuntimeConfig): {
+  chat: ProviderRuntimeConfig;
+  nen: ProviderRuntimeConfig;
+} {
+  return { chat: { ...cfg }, nen: { ...cfg, fetch: nonStreamingFetch } };
+}
+
+export interface CompactionRunnerOptions {
+  session: SessionStore;
+  /** Instance model RIÊNG cho lượt tóm tắt. */
+  model: LanguageModelV1;
+  /** System prompt gốc (chưa kèm bản tóm tắt). */
+  system: string;
+  windowTokens?: number;
+  /** In ra phần trạng cho người dùng. */
+  note?: (text: string) => void;
+}
+
+export interface CompactionRunner {
+  /** Nén nếu cần. `true` = lịch sử trong RAM đã thay đổi. */
+  nen(reason: 'auto' | 'manual' | 'overflow'): Promise<boolean>;
+  /** System prompt hiện tại — đã kèm bản tóm tắt của lần nén gần nhất. */
+  system(): string;
+}
+
+/** Giữa hai lần nén tự động, không gọi lại model. */
+const DEBOUNCE_MS = 60_000;
+
+/**
+ * Bọc cơ chế nén thành một "runner" dùng chung cho REPL và đường `-p`.
+ *
+ * ============ BẢN TÓM TẮT NẠP LẠI TỪ ĐĨA ============
+ *
+ * `session.compaction` là marker đọc được từ transcript ⇒ mở terminal lần sau,
+ * bản tóm tắt vẫn còn ⇒ không mất dấu vết công việc. Đây là lý do marker được
+ * ghi xuống đĩa chứ không chỉ nằm trong RAM.
+ *
+ * ============ DEBOUNCE CHỈ CHO ĐƯỜNG TỰ ĐỘNG ============
+ *
+ * Người dùng gõ `/compact` thì phải có tác dụng — chặn nó bằng debounce là điều
+ * khó chịu không giải thích được. Đường `overflow` thì càng không được chặn: đó
+ * là lần cứu duy nhất.
+ */
+export function createCompactionRunner(opts: CompactionRunnerOptions): CompactionRunner {
+  let summary = opts.session.compaction?.summary;
+  let state = opts.session.compaction?.state;
+  let lanNenGanNhat = 0;
+
+  return {
+    system: () => withSummary(opts.system, summary),
+    async nen(reason: 'auto' | 'manual' | 'overflow'): Promise<boolean> {
+      if (reason === 'auto' && Date.now() - lanNenGanNhat < DEBOUNCE_MS) return false;
+
+      const r = await compactConversation({
+        messages: opts.session.messages,
+        model: opts.model,
+        system: opts.system,
+        ...(opts.windowTokens !== undefined ? { windowTokens: opts.windowTokens } : {}),
+        ...(summary ? { previousSummary: summary } : {}),
+        ...(state ? { previousState: state } : {}),
+        force: reason === 'overflow',
+      });
+
+      if (r.kind !== 'ok') {
+        if (r.kind === 'failed') opts.note?.(`> nen that bai: ${r.error}`);
+        return false;
+      }
+
+      opts.session.compact({ firstKept: r.firstKept, summary: r.summary, state: r.state });
+      summary = r.summary;
+      state = r.state;
+      lanNenGanNhat = Date.now();
+      opts.note?.(`> da nen: ${r.olderCount} message -> ${r.keptCount} message`);
+      return true;
+    },
   };
 }

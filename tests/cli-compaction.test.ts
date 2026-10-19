@@ -19,7 +19,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { CoreMessage, LanguageModelV1 } from 'ai';
-import { chooseCut, compactConversation, withSummary } from '@/cli/compaction';
+import { chooseCut, compactConversation, withSummary, buildModelConfigs } from '@/cli/compaction';
+import { createNonStreamingFetch, nonStreamingFetch } from '@/lib/non-streaming-fetch';
 
 /** Model giả cho `generateText` — gọi `doGenerate`, ghi lại prompt đã nhận. */
 function stubModel(opts: { text?: string; fail?: boolean } = {}) {
@@ -217,5 +218,33 @@ describe('compactConversation', () => {
     const r = await compactConversation({ messages: msgsNhe, model, system: 'SYSTEM' });
     expect(r.kind).toBe('skipped');
     expect(seen).toHaveLength(0);
+  });
+});
+
+
+describe('buildModelConfigs — HAI instance model', () => {
+  const cfg = { kind: 'openai-compatible' as const, apiKey: 'k', model: 'm' };
+
+  it('model CHAT không dùng fetch ép stream:false', () => {
+    const { chat, nen } = buildModelConfigs(cfg);
+    expect(chat.fetch).toBeUndefined();
+    expect(nen.fetch).toBe(nonStreamingFetch);
+  });
+
+  it('model CHAT GIỮ fetch của người dùng — chỉ lượt tóm tắt mới bị ép', () => {
+    const fetchNguoiDung = (async () => new Response('{}')) as unknown as typeof fetch;
+    const { chat, nen } = buildModelConfigs({ ...cfg, fetch: fetchNguoiDung });
+    expect(chat.fetch).toBe(fetchNguoiDung);
+    expect(nen.fetch).toBe(nonStreamingFetch);
+  });
+
+  it('fetch ép stream:false THẬT SỰ làm stream:false — nên tuyệt đối không dùng cho chat', async () => {
+    const bodies: string[] = [];
+    const spy = createNonStreamingFetch(async (_input, init) => {
+      bodies.push(String(init?.body));
+      return new Response('{}', { status: 200 });
+    });
+    await spy('http://x', { method: 'POST', body: JSON.stringify({ model: 'm', stream: true }) });
+    expect(bodies[0]).toContain('"stream":false');
   });
 });
