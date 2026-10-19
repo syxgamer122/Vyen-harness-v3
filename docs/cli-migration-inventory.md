@@ -41,6 +41,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/history.ts`
 - `cli/terminal.ts`
 - `cli/context-adapter.ts`
+- `cli/compaction.ts`
 
 ## Bằng chứng dòng
 

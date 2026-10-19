@@ -361,6 +361,15 @@ export function splitForCompaction(
   messages: readonly BudgetMessageLike[],
   windowTokens?: number | null,
   reserveTokens: number = RESERVE_TOKENS,
+  /**
+   * Sàn số tin tối thiểu để đáng gọi LLM.
+   *
+   * Mặc định giữ nguyên `MIN_MESSAGES_TO_COMPACT` ⇒ **đường web không đổi hành vi**.
+   * Đường `overflow` của CLI truyền `0`: khi provider vừa từ chối vì tràn context
+   * thì phải nén được dù lịch sử chỉ có mấy chục tin — nếu còn dính sàn này thì
+   * hội thoại ≤ 13 tin không cứu được, dù nó nặng.
+   */
+  minMessagesToCompact: number = MIN_MESSAGES_TO_COMPACT,
 ): CompactionSplit | null {
   if (messages.length === 0) return null;
 
@@ -383,7 +392,7 @@ export function splitForCompaction(
   /* Lấy điểm cắt MUỘN hơn = evict nhiều hơn = thoả cả hai trần. Kẹp lại để
      luôn còn ít nhất một tin nguyên văn. */
   const firstKept = Math.min(Math.max(countCut, tokenCut), messages.length - 1);
-  if (firstKept < MIN_MESSAGES_TO_COMPACT) return null;
+  if (firstKept < minMessagesToCompact) return null;
 
   const older = messages.slice(0, firstKept);
   const keep = messages.slice(firstKept);

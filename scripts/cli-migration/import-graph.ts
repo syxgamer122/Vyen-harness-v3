@@ -95,6 +95,8 @@ export const CORE_ENTRIES = [
   // `tests/repo-hygiene.test.ts` bắt buộc **mọi** file trong `cli/` phải ở đây,
   // nên file mới phải khai ngay task tạo nó — không để dồn tới cuối plan.
   'cli/context-adapter.ts',
+  // Cơ chế nén context của CLI: chọn ranh giới + tạo bản tóm tắt.
+  'cli/compaction.ts',
 ];
 
 
