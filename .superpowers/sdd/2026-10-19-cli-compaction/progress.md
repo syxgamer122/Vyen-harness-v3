@@ -655,3 +655,92 @@ của spec**. Hoặc làm, hoặc ghi rõ "chưa hỗ trợ" vào tài liệu.
 | `npm run lint` | 0 lỗi / 8 warning (baseline) |
 | `npm run test` | **231/232 file, 3660 pass**; 3 fail = flaky `secret-registry` (AGENTS.md §1) |
 | Smoke CLI | `> cong cu: 14`, nạp `AGENTS.md`, REPL sẵn sàng (sau khi thêm guard `require.main`) |
+
+
+---
+
+# LƯỢT 5 — I-5: ĐƯỜNG GIẢ LẬP CHO MODEL KHÔNG HỖ TRỢ FUNCTION CALLING
+
+Spec `docs/superpowers/specs/2026-10-18-cli-core-design.md` §91: *"Model không hỗ trợ tool calling
+→ rơi về `emulated-agent` (đã có, và là tài sản lớn nhất cho BYOK)"*. CLI **không** có đường
+này. Đây là hàng của spec, nên làm.
+
+## Vì sao quan trọng (đã kiểm chứng)
+
+`cli/repl.ts` luôn gửi `tools` cho provider ⇒ provider từ chối ⇒ lỗi ⇒ **phiên dừng**. Với
+BYOK + model local (đúng thứ CLI nhắm tới) thì đó là **chết cả session**, không phải lỗi nhỏ.
+
+## 4 task
+
+| Task | Nội dung |
+|---|---|
+| 1 | `TOOLS_UNSUPPORTED_RE` chuyển từ `app/api/chat/route.ts` vào `lib/tool-support-cache.ts` (**một nguồn** cho web + CLI); `runEmulatedLoop` trả về **message MỚI** |
+| 2 | `cli/emulated.ts` (mới) — `runEmulatedTurn` bọc `lib/emulated-agent.ts` với bộ tool của CLI |
+| 3 | Nối vào REPL + `VYEN_EMULATED` |
+| 4 | `CORE_ENTRIES` + sinh lại bảng kiểm kê + gate cuối |
+
+## Ruling
+
+- **Ruling: dùng LẠI `lib/emulated-agent.ts` thay vì viết vòng lặp thứ hai.** Nó đã có đủ 5 lớp
+  loop protection, parser khoan dung, anti-hallucination. Viết bản thứ hai là "hai nguồn sự
+  thật" (`AGENTS.md` §6). Chi phí nếu sai: không có.
+- **Ruling: `TOOLS_UNSUPPORTED_RE` chuyển vào `lib/tool-support-cache.ts`, KHÔNG viết bản mới
+  cho CLI.** Bản cũ `/tool|function/i` ăn vào lỗi tool của CHÍNH app ("Error executing tool
+  web_search: fetch failed") ⇒ tước agent của model đó 10 phút vì một lần tool hỏng mạng.
+  Chi phí nếu sai: không có.
+- **Ruling: đường giả lập dùng instance model RIÊNG (`modelNen`, có `fetch: nonStreamingFetch`).**
+  Vòng lặp giả lập dùng `generateText` (buffered) ⇒ không gửi `stream`; gateway bỏ qua
+  trường đó và trả SSE ⇒ AI SDK ném "Invalid JSON response" ⇒ đường giả lập chết âm thầm.
+  Chi phí nếu sai: không có.
+- **Ruling: mọi tool của CLI là "server tool" của vòng lặp giả lập** (không qua `clientTools`).
+  `clientTools` là đường của web (yield turn về renderer); CLI chạy tool cục bộ qua
+  `lib/ipc.cjs` ⇒ phải đi qua `tools` để thực thi thật. Chi phí nếu sai: tool không chạy.
+- **Ruling: `EmulatedLoopResult` THÊM field `messages` (bắt buộc, không phải optional).** Hai
+  file test mock `runEmulatedLoop` phải thêm `messages: []` — đó là sửa test theo hợp đồng mới,
+  không phải nới kiểu.
+- **Ruling: phát hiện "model chê tools" qua `isToolsUnsupportedError`, KHÔNG qua `status 400`
+  + chữ "tool".** Dùng đúng mẫu đã đo của web.
+
+## Quy trình — tự thừa nhận 2 lần viết implementation TRƯỚC test
+
+Task 2 và Task 3 tôi viết **implementation trước test** ⇒ test chạy xanh ngay ⇒ **không có
+bằng chứng RED**. Đúng mẫu `AGENTS.md` §2.1.
+
+Bù lại bằng **mutation proof** (bằng chứng mạnh hơn: test BẮT ĐƯỢC lỗi):
+
+| Mutation | Kết quả |
+|---|---|
+| Task 1: `isToolsUnsupportedMessage` → `/tool/i` | 2 test đỏ ✓ |
+| Task 2: bỏ `tools` khỏi lời gọi `runEmulatedLoop` | 1 test đỏ ✓ |
+| Task 2: `onTextDelta` không gom text | 2 test đỏ ✓ |
+| Task 3: tắt nhánh tự chuyển sang giả lập | 2 test đỏ ✓ |
+| Task 3: bỏ `markEmulated` (ghi cache) | 1 test đỏ ✓ |
+
+**Và một mutation của tôi là NO-OP:** lần đầu tôi "bỏ `markEmulated`" bằng cách thêm
+comment vào dòng lệnh gọi — lệnh gọi vẫn còn ⇒ test vẫn xanh ⇒ tưởng test rỗng. Đúng bẫy
+`AGENTS.md` §2.2 ("mutation không áp dụng" ≠ "test rỗng"). Đã sửa lại cho thật và bắt được.
+
+## Test thêm được
+
+- `tests/tool-support-cache.test.ts` (mới) — mẫu khớp/không khớp.
+- `tests/emulated-agent.test.ts` — `messages` trả về là phần MỚI.
+- `tests/cli-emulated.test.ts` (mới) — tool CLI chạy thật; REPL tự chuyển; native chỉ thử
+  MỘT lần (lượt sau đi thẳng giả lập nhờ cache 10 phút).
+
+## Lỗ hổng phát hiện (ghi ra, KHÔNG tự sửa)
+
+Mẫu đã đo của web **không** khớp cách diễn đạt "Function calling IS not supported" (mẫu
+`functions?\s+(?:are|is)\s+(?:not\s+supported|…)` cần "function" đứng trước, không khớp
+"function calling"). "This model does not support function calling" thì khớp ✓. Tôi **giữ
+nguyên** danh sách mẫu đã đo (đó là điểm của việc gộp về một nguồn) và sửa kỳ vọng test
+cho đúng phạm vi đã đo. Mở rộng mẫu = đoán, mà `AGENTS.md` §6 nói đừng đoán.
+
+## Gate lượt 5
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm run typecheck` | 0 lỗi |
+| `npm run lint` | 0 lỗi / 8 warning (baseline) |
+| `npm run test` | **233/234 file, 3673 pass**; 2 fail = flaky `secret-registry` |
+| `npm run build` | exit 0 |
+| `npm run docs:check` | OK — 10 tài liệu, 596 file |

@@ -105,6 +105,11 @@
  *                  nén ngữ cảnh. Bỏ trống thì dùng 200.000 — cùng giá trị opencode
  *                  dùng cho model không khai cửa sổ. Model của bạn có cửa sổ nhỏ
  *                  hơn (ví dụ 32.000) thì khai đúng, nếu không CLI nén muộn.
+ *   VYEN_EMULATED    đặt `1` để **ép** dùng đường giả lập: tool được mô tả bằng
+ *                  văn bản trong system prompt, model gọi tool bằng khối
+ *                  `<tool_call>` thuần. Dùng khi model/gateway của bạn không hỗ
+ *                  trợ function calling. CLI tự chuyển sang đường này khi gặp lỗi
+ *                  "không hỗ trợ tools" — biến này chỉ để ép từ đầu.
  *   VYEN_WORKSPACE thư mục dự án mà tool được phép chạm vào. Bỏ trống thì dùng
  *                  thư mục hiện tại. `createNodeHost` TỪ CHỐI thư mục rộng (gốc
  *                  ổ đĩa, home) và thư mục không tồn tại — nếu bị từ chối thì CLI

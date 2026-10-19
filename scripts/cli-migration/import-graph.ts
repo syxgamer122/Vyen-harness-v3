@@ -97,6 +97,8 @@ export const CORE_ENTRIES = [
   'cli/context-adapter.ts',
   // Cơ chế nén context của CLI: chọn ranh giới + tạo bản tóm tắt.
   'cli/compaction.ts',
+  // Lượt GIẢ LẬP cho model không hỗ trợ function calling (spec §7).
+  'cli/emulated.ts',
 ];
 
 
