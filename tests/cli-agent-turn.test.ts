@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { LanguageModelV1, LanguageModelV1StreamPart } from 'ai';
 import { z } from 'zod';
-import { runAgentTurn } from '@/cli/agent-turn';
+import { runAgentTurn, messagesDaHoanThanh } from '@/cli/agent-turn';
 
 /**
  * Part của stub — khai báo lỏng cho dễ đọc, ép kiể **một lần** trong
@@ -367,5 +367,110 @@ describe('runAgentTurn — finishReason', () => {
     ]);
     const r = await runAgentTurn({ model, messages: [{ role: 'user', content: 'hi' }] });
     expect(r.usage.finishReason).toBe('length');
+  });
+});
+
+
+/* ============ LƯỢT HỎNG GIỮA CHỪNG: GIỮ LẠI PHẦN TOOL ĐÃ CHẠY XONG ============
+ *
+ * Đo 2026-10-20 (reviewer độc lập): lượt hỏng giữa chừng thì `runAgentTurn` ném lỗi
+ * **trước** khi đọc `result.response` ⇒ mọi tool đã chạy xong biến mất khỏi
+ * transcript.
+ *
+ * Hậu quả thật: `fs_write` ĐÃ ghi file, nhưng transcript chỉ còn câu hỏi của người
+ * dùng ⇒ `/compact` không biết có file nào vừa bị sửa, và đường `overflow` thử lại
+ * ⇒ model **làm lại** đúng các tool call đó ⇒ `fs_write`/`git_commit` chạy hai lần.
+ *
+ * Đo thêm (bằng script, đã xoá): `result.response.messages` resolve ra **undefined** khi
+ * stream lỗi ⇒ không khôi phục được từ đó. Nhưng `fullStream` **có** phát part
+ * `tool-call` lẫn `tool-result` (và `args` là object đã parse) ⇒ dựng lại được từ
+ * chính stream.
+ *
+ * Ràng buộc an toàn: chỉ ghi phần **ĐẦY ĐỦN** (tool-call có tool-result tương ứng).
+ * Tool call chưa có kết quả thì không ghi — ghi nó là tạo chuỗi hở, mà chuỗi hở làm
+ * provider từ chối MỌI lượt sau của phiên.
+ */
+describe('runAgentTurn — lượt hỏng giữa chừng', () => {
+  it('lỗi vẫn phải nổi ra', async () => {
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [
+        { type: 'text-delta', textDelta: 'da doc' },
+        { type: 'error', error: new Error('500 upstream exploded') },
+        DONE,
+      ],
+    ]);
+    await expect(
+      runAgentTurn({ model, tools: tools([]), messages: [user('p')] }),
+    ).rejects.toThrow(/500/);
+  });
+
+  it('giữ lại phần tool ĐÃ chạy xong để không phải làm lại', async () => {
+    const ghiNhat: string[] = [];
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [
+        { type: 'text-delta', textDelta: 'da doc' },
+        { type: 'error', error: new Error('500 upstream exploded') },
+        DONE,
+      ],
+    ]);
+    let loi: unknown;
+    try {
+      await runAgentTurn({ model, tools: tools(ghiNhat), messages: [user('p')] });
+    } catch (e) {
+      loi = e;
+    }
+    expect(ghiNhat, 'tool phai da chay').toEqual(['a.txt']);
+
+    const daHoanThanh = messagesDaHoanThanh(loi);
+    expect(daHoanThanh).toHaveLength(2);
+    expect(daHoanThanh[0].role).toBe('assistant');
+    expect(daHoanThanh[1].role).toBe('tool');
+    // Kết quả tool phải còn nguyên trong message.
+    expect(JSON.stringify(daHoanThanh[1])).toContain('NOI DUNG');
+  });
+
+  it('mọi tool-call được ghi đều có tool-result tương ứng — không bao giờ ghi chuỗi hở', async () => {
+    /* AI SDK luôn chạy tool rồi mới sang lượt sau, nên "tool-call không kết quả"
+     * gần như không xảy ra. Điều đáng canh là **bất biến**: phần ghi ra không bao giờ
+     * chứa một tool-call mà không có tool-result tương ứng — vì chuỗi hở làm provider
+     * từ chối MỌI lượt sau của phiên. */
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [
+        { type: 'text-delta', textDelta: 'da doc' },
+        { type: 'error', error: new Error('500 upstream exploded') },
+        DONE,
+      ],
+    ]);
+    let loi: unknown;
+    try {
+      await runAgentTurn({ model, tools: tools([]), messages: [user('p')] });
+    } catch (e) {
+      loi = e;
+    }
+    const daHoanThanh = messagesDaHoanThanh(loi);
+    const coKetQua = new Set(
+      daHoanThanh
+        .filter((m) => m.role === 'tool')
+        .flatMap((m) => (m.content as { type?: string; toolCallId?: string }[]).map((p) => p.toolCallId ?? '')),
+    );
+    for (const m of daHoanThanh) {
+      if (m.role !== 'assistant') continue;
+      for (const p of m.content as { type?: string; toolCallId?: string }[]) {
+        if (p.type !== 'tool-call') continue;
+        expect(coKetQua.has(p.toolCallId ?? ''), 'tool-call khong co tool-result').toBe(true);
+      }
+    }
   });
 });

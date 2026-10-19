@@ -26,7 +26,7 @@
 import type { CoreMessage, LanguageModelV1, ToolSet } from 'ai';
 import { evaluateUsageTrigger, isContextOverflowError } from '@/lib/context-budget';
 import { CLI_DEFAULT_CONTEXT_WINDOW, createCompactionRunner, statusCodeOf } from './compaction';
-import { runAgentTurn } from './agent-turn';
+import { runAgentTurn, messagesDaHoanThanh } from './agent-turn';
 import type { SessionStore } from './session';
 import type { TaoLichSu } from './history';
 
@@ -212,6 +212,19 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
           await nen?.nen('tran-ngam');
         }
       } catch (e) {
+        /* Phần tool ĐÃ CHẠY XONG trước lúc lượt hỏng thì vẫn phải ghi lại.
+         *
+         * Không ghi thì `fs_write` đã ghi file mà transcript không có dấu vết ⇒ `/compact`
+         * không biết file nào vừa bị sửa, và đường `overflow` thử lại ⇒ model LÀM LẠI
+         * đúng các tool call đó ⇒ ghi file hai lần.
+         *
+         * Chỉ phần ĐẦY ĐỦN mới được ghi (tool-call có tool-result tương ứng) — ghi
+         * chuỗi hở làm provider từ chối MỌI lượt sau của phiên. */
+        const daHoanThanh = messagesDaHoanThanh(e);
+        if (daHoanThanh.length > 0) {
+          opts.session.appendAll(daHoanThanh);
+          note(`> ${daHoanThanh.length} message da hoan thanh truoc khi luot hong — da ghi lai.`);
+        }
         /* Lượt hỏng KHÔNG được làm sập cả REPL — nếu ném ra ngoài thì chỉ một lần
          * lỗi 429 là mất trắng phiên làm việc, đúng lúc đang làm dở.
          *

@@ -569,3 +569,49 @@ describe('audit mặc định ghi ra đĩa', () => {
     }
   });
 });
+
+
+/* ============ NHẬT KÝ AUDIT PHẢI CHE BÍ MẬT ============
+ *
+ * Đo 2026-10-20 (reviewer độc lập): audit log của CLI ghi thẳng dòng lệnh ra đĩa,
+ * **không** qua `redactSecretText`. Mà `ipc.cjs` audit lệnh shell nguyên văn
+ * (`lib/ipc.cjs:953`) và `bg-run` (`:1428`) — nên một câu
+ * `curl -H "Authorization: Bearer …"` đủ để có khoá trong `~/.vyen/cli/vyen-audit.log`
+ * bằng chữ thường.
+ *
+ * Cùng chuỗi đó: nằm trong transcript thì **được che** (`cli/session.ts` dùng
+ * `redactSecretsDeep`), nằm trong spill thì **được che** (`spillRedacted`), nằm trong
+ * audit log của web thì **được che** (`lib/audit-log.ts:246`) — còn audit log của CLI
+ * thì không.
+ */
+describe('nhật ký audit phải che bí mật', () => {
+  it('tên file chứa khoá không được nằm trong file audit', async () => {
+    const { dir, userData, tools, hostOf, cleanup } = mk();
+    const KHOA = 'sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGG';
+    try {
+      const t = tools();
+      await t.fs_write.execute({ path: `${KHOA}.txt`, content: 'x' });
+      const log = readFileSync(hostAuditLogPath(userData), 'utf8');
+      expect(log, 'audit log ghi khoa tho').not.toContain(KHOA);
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  it('lệnh shell chứa khoá cũng phải được che', async () => {
+    const { dir, userData, tools, hostOf, cleanup } = mk();
+    const KHOA = 'sk-ant-api03-ZZZZYYYYXXXXWWWWVVVVUUUU';
+    try {
+      const t = tools();
+      await t.shell_run
+        .execute({ command: `echo ${KHOA}` })
+        .catch(() => {});
+      const log = readFileSync(hostAuditLogPath(userData), 'utf8');
+      expect(log, 'audit log ghi khoa tho').not.toContain(KHOA);
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+});

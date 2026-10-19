@@ -38,6 +38,7 @@ import ipc from '../ipc.cjs';
 import { parseEditBlocks, replaceMostSimilarChunk } from '../edit-blocks';
 import { CLIENT_TOOL_DEFS } from '../agent-tools';
 import { capToolValue } from '../tool-result-server';
+import { redactSecretText } from '../secret-registry';
 
 /**
  * `approval-binding.cjs` phải nạp bằng `require` neo tại chính `ipc.cjs`, KHÔNG
@@ -231,7 +232,7 @@ export function createNodeHost(opts: NodeHostOptions): NodeHost {
   const handlers = new Map<string, Handler>();
   // Ghi append, không ghi đè: audit là dấu vết, mất dòng cũ thì mất ý nghĩa.
   const auditFile = hostAuditLogPath(opts.userDataDir);
-  const audit =
+  const auditGoc =
     opts.audit ??
     ((line: string) => {
       try {
@@ -242,6 +243,15 @@ export function createNodeHost(opts: NodeHostOptions): NodeHost {
         // Mất một dòng log tệ hơn là ghi file thất bại.
       }
     });
+  /* Che bí mật TRƯỚC khi đi ra BẤT KỲ đường nào — kể cả audit do caller tiêm
+   * vào. Đo 2026-10-20: `ipc.cjs` audit lệnh shell nguyên văn (`lib/ipc.cjs:953`)
+   * và `bg-run` (`:1428`) ⇒ một câu `curl -H "Authorization: Bearer …"` là đủ để
+   * có khoá trong `~/.vyen/cli/vyen-audit.log` bằng chữ thường.
+   *
+   * Cùng chuỗi đó: transcript thì đã che (`redactSecretsDeep`), spill thì đã che
+   * (`spillRedacted`), audit log của web thì đã che (`lib/audit-log.ts:246`) — chỉ
+   * audit log của CLI là chưa. */
+  const audit = (line: string) => auditGoc(redactSecretText(line));
   // Chạm file một lần lúc khởi tạo để `có file audit` là đúng ngay từ đầu, không
   // phải đợi hành động đầu tiên mới có.
   try {
@@ -488,7 +498,7 @@ function applyReadWindow(
   raw: string,
   startLine?: number,
   lineCount?: number,
-): { content: string; truncated: boolean } {
+): { content: string; truncated: boolean; startLine: number; endLine: number } {
   const lines = raw.split('\n');
   const start = Math.max(1, startLine ?? 1);
   const end = lineCount ? start + lineCount - 1 : lines.length;
@@ -500,7 +510,24 @@ function applyReadWindow(
     content = content.slice(0, MAX_READ_CHARS);
     truncated = true;
   }
-  return { content, truncated };
+  /* `endLine` tính từ phần ĐÃ CẮT, không từ phần chưa cắt — nếu lấy của phần
+   * chưa cắt thì model đọc `endLine` rồi báo "đã đọc tới dòng N" trong khi
+   * `content` dừng ở dòng M (M < N) ⇒ file lớn hơn trần là mọi lượt, vì
+   * `truncated` vẫn đúng nên không ai nghi ngờ. Cùng lý do với bản web
+   * (`lib/fs-access.ts:404-408`). */
+  /* So dong THẬT trong `content`: dấu `\n` cuối file tạo ra một phần tử rỗng,
+   * không phải một dòng. Bản web đếm cả nó (`lib/fs-access.ts:416` ⇒
+   * `endLine = startIndex + content.split('\n').length`) ⇒ file 5 dòng bị báo là 6.
+   * Hậu quả: model hỏi `start_line=6` ⇒ nhận về dòng rỗng ⇒ lại hỏi tiếp ⇒
+   * mắc vòng lặp đọc lại. CLI là sản phẩm còn lại (web sẽ bị xoá), nên ở đây
+   * đếm đúng số dòng thật. */
+  const soDong = content === '' ? 0 : content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
+  return {
+    content,
+    truncated,
+    startLine: start,
+    endLine: start + Math.max(0, soDong - 1),
+  };
 }
 
 function sha256(s: string): string {
@@ -791,15 +818,20 @@ export function buildIpcTools(
             // Hash phải tính trên TOÀN BỘ file, không phải phần cửa sổ — nếu tính
             // trên cửa sổ thì đọc tiếp rồi ghi sẽ luôn lệch và chặn oan.
             if (a.path) hashes.set(khoa, sha256(full));
-            const { content, truncated } = applyReadWindow(
+            const { content, truncated, startLine, endLine } = applyReadWindow(
               full,
               a.start_line as number,
               a.line_count as number,
             );
-            return capToolValue({ ...(r as object), content, truncated }, spillSaver) as Record<
-              string,
-              unknown
-            >;
+            /* `path`/`startLine`/`endLine`: model phải biết ĐỌC TIẾP TỪ ĐÂU. Mô tả
+             * tool bảo "gọi lại với `start_line` lớn hơn" mà không nói nó dừng ở
+             * dòng nào thì "lớn hơn" là bao nhiêu? Model đoán ⇒ đọc lại trùng hoặc
+             * đọc hụt ⇒ tốn tiền mà không tiến. Bản web đã trả đủ
+             * (`lib/fs-access.ts:410-417`). */
+            return capToolValue(
+              { ...(r as object), content, truncated, startLine, endLine, path: a.path },
+              spillSaver,
+            ) as Record<string, unknown>;
           }
           // Ghi xong thì hash cũ hết ý nghĩa — file đã là nội dung mới.
           if ((toolName === 'fs_write' || toolName === 'fs_edit') && a.path) {

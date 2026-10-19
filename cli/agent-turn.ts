@@ -137,6 +137,88 @@ function wrapTools(
   return out as ToolSet;
 }
 
+/* ============ PHẦN TOOL ĐÃ HOÀN THÀNH KHI LƯỢT HỎNG ============
+ *
+ * Đo 2026-10-20: lượt hỏng giữa chừng ⇒ `runAgentTurn` ném lỗi TRƯỚC khi đọc
+ * `result.response` ⇒ mọi tool đã chạy xong biến mất khỏi transcript.
+ *
+ * Hậu quả thật: `fs_write` ĐÃ ghi file mà transcript không có dấu vết ⇒ `/compact`
+ * không biết file nào vừa bị sửa, và đường `overflow` thử lại ⇒ model LÀM LẠI đúng
+ * các tool call đó ⇒ `fs_write`/`git_commit` chạy hai lần.
+ *
+ * Đo thêm: `result.response.messages` resolve ra **undefined** khi stream lỗi ⇒
+ * không khôi phục được từ đó. Nhưng `fullStream` CÓ phát part `tool-call` lẫn
+ * `tool-result` (và `args` là object đã parse) ⇒ dựng lại được từ chính stream.
+ *
+ * Ràng buộc an toàn: chỉ ghi phần **ĐẦY ĐỦN** (tool-call có tool-result tương
+ * ứng). Tool call chưa có kết quả thì không ghi — ghi nó là tạo chuỗi hở, mà chuỗi
+ * hở làm provider từ chối MỌI lượt sau của phiên.
+ */
+type ToolEvent =
+  | { kind: 'call'; toolCallId: string; toolName: string; args: unknown }
+  | { kind: 'result'; toolCallId: string; toolName: string; result: unknown };
+
+/** Lỗi lượt → phần message ĐÃ HOÀN THÀNH trước lúc hỏng. */
+const messagesHoanThanh = new WeakMap<object, CoreMessage[]>();
+
+/**
+ * Phần message ĐÃ HOÀN THÀNH trước lúc lượt hỏng — lấy ra từ lỗi mà
+ * `runAgentTurn` ném ra.
+ *
+ * Rỗng nếu lượt hỏng trước khi tool nào kịp chạy xong.
+ */
+export function messagesDaHoanThanh(e: unknown): CoreMessage[] {
+  if (!e || typeof e !== 'object') return [];
+  return messagesHoanThanh.get(e) ?? [];
+}
+
+/**
+ * Dựng lại message từ các part tool trong stream, chỉ giữ cặp ĐẦY ĐỦN.
+ *
+ * Hình dạng đúng như `response.messages` của AI SDK: một message assistant gộp
+ * các tool-call của lượt, rồi một message tool gộp các tool-result tương ứng.
+ */
+function buildPartialMessages(events: ToolEvent[]): CoreMessage[] {
+  const coKetQua = new Set(events.filter((e) => e.kind === 'result').map((e) => e.toolCallId));
+  const out: CoreMessage[] = [];
+  let assistant: { type: 'tool-call'; toolCallId: string; toolName: string; args: unknown }[] = [];
+  let tool: { type: 'tool-result'; toolCallId: string; toolName: string; result: unknown }[] = [];
+
+  const flushAssistant = () => {
+    const parts = assistant.filter((c) => coKetQua.has(c.toolCallId));
+    assistant = [];
+    if (parts.length) out.push({ role: 'assistant', content: parts } as never);
+  };
+  const flushTool = () => {
+    const parts = tool.filter((r) => coKetQua.has(r.toolCallId));
+    tool = [];
+    if (parts.length) out.push({ role: 'tool', content: parts } as never);
+  };
+
+  for (const e of events) {
+    if (e.kind === 'call') {
+      flushTool();
+      assistant.push({
+        type: 'tool-call',
+        toolCallId: e.toolCallId,
+        toolName: e.toolName,
+        args: e.args,
+      });
+    } else {
+      flushAssistant();
+      tool.push({
+        type: 'tool-result',
+        toolCallId: e.toolCallId,
+        toolName: e.toolName,
+        result: e.result,
+      });
+    }
+  }
+  flushAssistant();
+  flushTool();
+  return out;
+}
+
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnResult> {
   const hasTools = Boolean(opts.tools && Object.keys(opts.tools).length > 0);
 
@@ -181,6 +263,8 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
    * input” (`finishReason='length'` mà `completionTokens = 0`) — cả hai KHÔNG sinh lỗi
    * nên provider không báo gì. */
   let finishReason: string | undefined;
+  /** Part tool thấy trong stream — dùng để dựng lại phần ĐÃ HOÀN THÀNH khi lượt hỏng. */
+  const toolEvents: ToolEvent[] = [];
   for await (const part of result.fullStream) {
     const p = part as {
       type?: string;
@@ -190,6 +274,9 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
       textDelta?: string;
       toolName?: string;
       finishReason?: string;
+      toolCallId?: string;
+      args?: unknown;
+      result?: unknown;
     };
     switch (p.type) {
       case 'text-delta':
@@ -200,6 +287,24 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
         break;
       case 'tool-call':
         if (p.toolName) opts.onToolCall?.(p.toolName);
+        if (p.toolCallId) {
+          toolEvents.push({
+            kind: 'call',
+            toolCallId: p.toolCallId,
+            toolName: p.toolName ?? 'tool',
+            args: p.args,
+          });
+        }
+        break;
+      case 'tool-result':
+        if (p.toolCallId) {
+          toolEvents.push({
+            kind: 'result',
+            toolCallId: p.toolCallId,
+            toolName: p.toolName ?? 'tool',
+            result: p.result,
+          });
+        }
         break;
       case 'finish':
         if (p.finishReason) finishReason = p.finishReason;
@@ -208,20 +313,32 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
         break;
     }
   }
-  if (streamError) throw streamError;
+  if (streamError) {
+    /* Gắn phần ĐÃ HOÀN THÀNH vào chính lỗi ⇒ caller lấy ra được mà không
+     * phải đổi kiểu lỗi (đổi kiểu thì `diagnoseUpstreamError` mất status code). */
+    const partial = buildPartialMessages(toolEvents);
+    if (partial.length && typeof streamError === 'object') messagesHoanThanh.set(streamError, partial);
+    throw streamError;
+  }
 
-/* KHÔNG TIN `abortSignal` LUÔN ĐÚNG LÚC.
- *
- * Đo 2026-10-19: khi stub (và nhiều provider/gateway) không nghe tín hiệu dừng,
- * `streamText` vẫn hoàn tất **bình thường** và trả về một bộ message nửa vời. Nếu
- * ta tin vào đó thì REPL ghi chuỗi hở xuống transcript — và một lần Esc sẽ làm mọi
- * lượt sau của phiên đó bị provider từ chối.
- *
- * Nên hỏi lại chính tín hiệu sau khi stream kết thúc, bất kể nó kết thúc thế nào.
- * Giá của kiểm tra này: một lượt chạy xong đúng khoảnh khắc bấm Esc thì bị coi là
- * đã hủy — chấp nhận được, vẫn tốt hơn transcript hỏng.
- */
-if (opts.signal?.aborted) throw new Error('LENH DA BI CAT');
+    /* KHÔNG TIN `abortSignal` LUÔN ĐÚNG LÚC.
+   *
+   * Đo 2026-10-19: khi stub (và nhiều provider/gateway) không nghe tín hiệu dừng,
+   * `streamText` vẫn hoàn tất **bình thường** và trả về một bộ message nửa vời. Nếu
+   * ta tin vào đó thì REPL ghi chuỗi hở xuống transcript — và một lần Esc sẽ làm mọi
+   * lượt sau của phiên đó bị provider từ chối.
+   *
+   * Nên hỏi lại chính tín hiệu sau khi stream kết thúc, bất kể nó kết thúc thế nào.
+   * Giá của kiểm tra này: một lượt chạy xong đúng khoảnh khắc bấm Esc thì bị coi là
+   * đã hủy — chấp nhận được, vẫn tốt hơn transcript hỏng.
+   */
+  if (opts.signal?.aborted) {
+    const e = new Error('LENH DA BI CAT');
+    /* Tool đã chạy xong TRƯỚC lúc bị Esc thì vẫn phải ghi — nó đã thay đổi máy. */
+    const partial = buildPartialMessages(toolEvents);
+    if (partial.length) messagesHoanThanh.set(e, partial);
+    throw e;
+  }
 
 const usage = await result.usage;
 /* `response.messages` là thứ AI SDK sinh ra TRONG lượt này: assistant gọi tool,

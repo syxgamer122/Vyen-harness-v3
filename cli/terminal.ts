@@ -77,16 +77,33 @@ export function createTerminal(opts: TerminalOptions): Terminal {
   const rl = taoInterface(stdin, output);
 
   /**
+   * Đang chờ người dùng trả lời câu hỏi duyệt.
+   *
+   * Cần để `Esc` trong lúc đó **không** bị hiểu là yêu cầu dừng lượt: người dùng
+   * đang trả lời câu hỏi, Esc ở đây là "tôi không biết" chứ không phải "dừng lại".
+   */
+  let dangHoi = false;
+
+  /**
    * Hỏi một câu bất kỳ. Dùng cho cổng duyệt tool.
    *
    * `rl.question` NÉM "readline was closed" khi hết dòng — đo thật 2026-10-19.
    * Không bắt thì `Ctrl+D` in một dòng lỗi rác thay vì thoát sạch.
    */
   async function hoi(cauHoi: string): Promise<string | null> {
+    /* Cổng duyệt hỏi GIỮA lúc lượt đang chạy ⇒ `watchInterrupt` đã bật raw mode.
+     * Tắt ra để người dùng gõ dòng bình thường (Enter = `\n`, có echo), rồi bật lại
+     * sau khi hỏi xong — lượt vẫn đang chạy nên phải giữ raw cho phím Esc. */
+    const truoc = stdin.isRaw;
+    if (truoc) stdin.setRawMode?.(false);
+    dangHoi = true;
     try {
       return (await rl.question(cauHoi)) ?? null;
     } catch {
       return null;
+    } finally {
+      dangHoi = false;
+      if (truoc) stdin.setRawMode?.(true);
     }
   }
 
@@ -147,6 +164,8 @@ export function createTerminal(opts: TerminalOptions): Terminal {
     const truoc = stdin.isRaw;
     stdin.setRawMode?.(true);
     const onData = (b: Buffer) => {
+      /* Đang hỏi duyệt thì Esc là CÂU TRẢ LỜI, không phải yêu cầu dừng lượt. */
+      if (dangHoi) return;
       // `0x1b` = Esc. Có `0x1b 0x5b` là chuỗi phím mũi tên — nuốt luôn để người
       // dùng bấm mũi tên giữa lúc chờ không bị cắt nhầm lượt.
       if (b[0] === 0x1b && b[1] === 0x5b) return;

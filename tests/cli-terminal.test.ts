@@ -142,3 +142,60 @@ describe('terminal — lời hứa 3: listener keypress gỡ sau mỗi lần ch�
     await expect(t.hoiDong(new TaoLichSu())).resolves.toBeNull();
   });
 });
+
+
+/* ============ CỔNG DUYỆT TRONG LÚC LƯỢT ĐANG CHẠY ============
+ *
+ * Lượt đang chạy thì `watchInterrupt` đã bật raw mode (để bắt `0x1b` thô của
+ * phím Esc). Nhưng cổng duyệt tool hỏi người dùng **trong lúc đó** ⇒ phải trả
+ * terminal về chế độ bình thường, hỏi xong thì bật lại.
+ *
+ * Và trong lúc đang hỏi, Esc là **câu trả lời** chứ không phải yêu cầu dừng lượt:
+ * người dùng đang trả lời "cho pép chạy lệnh này?", Esc ở đó nghĩa là "tôi không
+ * biết" — không phải "dừng lại".
+ */
+describe('terminal — cổng duyệt trong lúc lượt đang chạy', () => {
+  it('hoi() tắt raw mode rồi bật lại sau khi hỏi', async () => {
+    const stdin = new FakeStdin();
+    const { rl, state } = fakeInterface();
+    state.traVe = ['y'];
+    const t = createTerminal({ stdin: stdin as never, taoInterface: () => rl });
+
+    const dung = t.watchInterrupt(() => {});
+    expect(stdin.isRaw, 'watchInterrupt phai bat raw mode').toBe(true);
+
+    await t.hoi('cho phep chay? (y/N)');
+    expect(stdin.rawModeCalls, 'phai tat raw de hoi, roi bat lai').toEqual([true, false, true]);
+
+    dung();
+    t.close();
+  });
+
+  it('Esc khi đang hỏi duyệt thì KHÔNG dừng lượt', async () => {
+    const stdin = new FakeStdin();
+    /* `question` treo tới khi ta báo — để ta bắn phím Esc ĐÚNG LÚC đang hỏi. */
+    let hien = () => {};
+    const rl = {
+      question: async () =>
+        new Promise<string>((resolve) => {
+          hien = () => resolve('');
+        }),
+      write: () => true,
+      close: () => undefined,
+    };
+    const t = createTerminal({ stdin: stdin as never, taoInterface: () => rl as never });
+
+    let biDung = 0;
+    t.watchInterrupt(() => {
+      biDung += 1;
+    });
+
+    const cho = t.hoi('cho phep chay? (y/N)');
+    stdin.emit('data', Buffer.from([0x1b]));
+    hien();
+    await cho;
+
+    expect(biDung, 'Esc khi dang hoi duyet khong duoc hieu la yeu cau dung luot').toBe(0);
+    t.close();
+  });
+});

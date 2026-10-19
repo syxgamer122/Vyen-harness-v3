@@ -54,6 +54,9 @@
  *
  *   /exit    thoát. Mọi thứ đã ghi xuống đĩa, mở lại là đọc tiếp.
  *   /new     bắt đầu phiên mới (lịch sử cũ vẫn còn trên đĩa, không bị xoá).
+ *   /compact nén ngữ cảnh: gọi model tóm tắt phần hội thoại cũ, giữ lại phần gần
+ *            đây. Bản tóm tắt nằm trong system prompt và **được ghi xuống đĩa**, nên
+ *            mở lại phiên vẫn còn. Dùng khi hội thoại dài và bắt đầu tràn context.
  *
  *   ↑ / ↓     gọi lại lệnh đã gõ trong phiên này. Không có nó thì sửa câu lệnh
  *             phải tự gõ lại từ đầu — và tự gõ lại dễ là **khác** câu cũ, mà với
@@ -98,6 +101,10 @@
  *   VYEN_MAX_TOKENS trần token đầu ra, mặc định 2048. **Đừng bỏ trống** — xem
  *                  ghi chú cạnh chỗ dùng: gateway tính credit sẽ từ chối vì
  *                  trần mặc định của provider quá lớn.
+ *   VYEN_CONTEXT_WINDOW cửa sổ ngữ cảnh của model (số token), dùng để tính lúc
+ *                  nén ngữ cảnh. Bỏ trống thì dùng 200.000 — cùng giá trị opencode
+ *                  dùng cho model không khai cửa sổ. Model của bạn có cửa sổ nhỏ
+ *                  hơn (ví dụ 32.000) thì khai đúng, nếu không CLI nén muộn.
  *   VYEN_WORKSPACE thư mục dự án mà tool được phép chạm vào. Bỏ trống thì dùng
  *                  thư mục hiện tại. `createNodeHost` TỪ CHỐI thư mục rộng (gốc
  *                  ổ đĩa, home) và thư mục không tồn tại — nếu bị từ chối thì CLI
@@ -148,7 +155,7 @@ import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
 import { createConsoleApprover, createAutoApprover } from './approve';
 import { buildModelConfigs, createCompactionRunner, statusCodeOf } from './compaction';
 import { runAgentTurn } from './agent-turn';
-import { runRepl } from './repl';
+import { runRepl, type ReplOptions } from './repl';
 import { openSession } from './session';
 import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
 import { TaoLichSu } from './history';
@@ -261,6 +268,51 @@ async function chayMotLuot(opts: {
       return;
     }
   }
+}
+
+/** Thứ REPL cần để chạy. */
+export interface ReplDeps {
+  model: Parameters<typeof runAgentTurn>[0]['model'];
+  /** Instance model RIÊNG cho lượt tóm tắt. */
+  modelNen: Parameters<typeof runAgentTurn>[0]['model'];
+  tools: ToolSet | undefined;
+  session: ReturnType<typeof openSession>;
+  system: string;
+  maxTokens: number;
+  windowTokens?: number;
+  initial?: string;
+  terminal: ReturnType<typeof createTerminal>;
+  lichSu: TaoLichSu;
+}
+
+/**
+ * Dựng options cho REPL — TÁCH RA HÀM EXPORT để tầng nối test được.
+ *
+ * ============ VÌ SAO PHẢI TÁCH ============
+ *
+ * `cli/index.ts` gọi `main()` ở module scope ⇒ **không import được trong test**.
+ * Mà mọi lời hứa ở tầng nối (như "Esc cắt lượt đang chạy") nằm đúng ở tầng nối.
+ * Đo 2026-10-20 (reviewer độc lập): `cli/index.ts` KHÔNG truyền `watchInterrupt` cho
+ * `runRepl` ⇒ `AbortController` không bao giờ được `abort()` ⇒ **bấm Esc không làm gì
+ * cả**, dù header của chính file quảng cáo Esc hoạt động.
+ */
+export function buildReplOptions(deps: ReplDeps): ReplOptions {
+  return {
+    model: deps.model,
+    modelNen: deps.modelNen,
+    tools: deps.tools,
+    session: deps.session,
+    system: deps.system,
+    maxTokens: deps.maxTokens,
+    ...(deps.windowTokens !== undefined ? { windowTokens: deps.windowTokens } : {}),
+    ...(deps.initial ? { initial: deps.initial } : {}),
+    ask: async () => deps.terminal.hoiDong(deps.lichSu),
+    /* Nối phím Esc. Thiếu mối nối này thì Esc chỉ là lời hứa trong header. */
+    watchInterrupt: deps.terminal.watchInterrupt,
+    lichSu: deps.lichSu,
+    out: (s) => process.stdout.write(s),
+    note: (s) => console.error(s),
+  };
 }
 
 async function main(): Promise<void> {
@@ -484,28 +536,20 @@ async function main(): Promise<void> {
       return;
     }
 
-    await runRepl({
-      model: lm,
-      modelNen: lmNen,
-      tools,
-      session,
-      system: systemPrompt,
-      maxTokens,
-      ...(windowTokens !== undefined ? { windowTokens } : {}),
-      ...(prompt ? { initial: prompt } : {}),
-      // Một readline dùng cho CẢ hỏi duyệt lẫn nhận lệnh — nếu mở hai thì stdin
-      // bị hai tiến trình cùng chia, người dùng gõ một câu mà CLI lắng nghe hai
-      // lần, và kết quả là bản được xoá bởi bản kia.
-      //
-      // `rl.question` KHÔNG trả `null` khi hết dòng — nó **ném** lỗi kiểu
-      // "readline was closed". Đo thật 2026-10-19 bằng `... | npm run cli`:
-      // nếu không bắt, `Ctrl+D` (hay nối ống vào) là in ra một dòng lỗi rác
-      // thay vì thoát sạch. `null` ở đây là EOF.
-      ask: async () => terminal.hoiDong(lichSu),
-      lichSu,
-      out: (s) => process.stdout.write(s),
-      note: (s) => console.error(s),
-    });
+    await runRepl(
+      buildReplOptions({
+        model: lm,
+        modelNen: lmNen,
+        tools,
+        session,
+        system: systemPrompt,
+        maxTokens,
+        ...(windowTokens !== undefined ? { windowTokens } : {}),
+        ...(prompt ? { initial: prompt } : {}),
+        terminal,
+        lichSu,
+      }),
+    );
   } catch (err) {
     /* Chỉ bắt được lỗi CỐ Ý ném ra (ví dụ config sai lúc dựng model). Lỗi từ
      * provider đã được bắt và chẩn đoán ở `catch` bên trên. */
@@ -519,4 +563,13 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+/*
+ * Chỉ chạy khi file này được gọi TRỰC TIẾP (`npm run cli` ⇒ `tsx cli/index.ts`),
+ * KHÔNG chạy khi được import.
+ *
+ * Không có guard này thì `cli/index.ts` không import được trong test ⇒ mọi lời hứa ở
+ * tầng nối (như "Esc cắt lượt đang chạy") không test được.
+ */
+if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
+  main();
+}

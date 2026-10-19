@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { CoreMessage, LanguageModelV1, LanguageModelV1StreamPart } from 'ai';
 import { parseCommand, runRepl } from '@/cli/repl';
 import { openSession } from '@/cli/session';
+import { z } from 'zod';
 
 type StubPart = LanguageModelV1StreamPart | Record<string, unknown>;
 
@@ -379,6 +380,56 @@ describe('REPL — nén TỰ ĐỘNG (không cần /compact, không cần provid
       expect(session.compaction?.summary).toContain('TOM TAT');
       // LƯỢT ĐẦU TIÊN đã phải mang bản tóm tắt trong system prompt.
       expect(JSON.stringify(calls[0]), 'luot dau chua co tom tat').toContain('TOM TAT');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+
+/* ============ LƯỢT HỎNG GIỮA CHỪNG: REPL PHẢI GHI LẠI PHẦN ĐÃ CHẠY ============
+ *
+ * Test ở `tests/cli-agent-turn.test.ts` canh tầng dưới (`runAgentTurn` giữ được
+ * phần tool đã chạy). Test ở đây canh **tầng nối**: REPL thật sự ghi phần đó xuống
+ * transcript — vì nếu chỉ giữ trong RAM rồi quên, thì `fs_write` đã ghi file mà
+ * transcript không có dấu vết ⇒ model làm lại ở lượt sau.
+ */
+describe('REPL — lượt hỏng giữa chừng vẫn ghi lại phần tool đã chạy', () => {
+  it('tool đã chạy xong được ghi xuống transcript', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model } = stubChat([
+        [
+          { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+          { ...DONE, finishReason: 'tool-calls' },
+        ],
+        [{ type: 'text-delta', textDelta: 'xong' }, { type: 'error', error: new Error('500 no') }, DONE],
+      ]);
+      const session = openSession(state, dir);
+
+      await runRepl({
+        model,
+        modelNen: stubNen('TOM TAT').model,
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'NOI DUNG' }),
+          },
+        } as never,
+        session,
+        windowTokens: 32_000,
+        ask: reader('doc file a.txt', '/exit'),
+        out: () => {},
+      });
+
+      const chuoi = JSON.stringify(session.messages);
+      expect(chuoi, 'tool-call phai duoc ghi').toContain('fs_read');
+      expect(chuoi, 'ket qua tool phai duoc ghi').toContain('NOI DUNG');
+      // Và phải mở lại được (chuỗi hở thì provider từ chối mọi lượt sau).
+      const moi = openSession(state, dir);
+      expect(moi.messages.length).toBeGreaterThan(1);
+      moi.close();
     } finally {
       cleanup();
     }
