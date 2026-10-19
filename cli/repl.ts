@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Vòng lặp hội thoại — REPL của CLI.
  *
  * ============ CẤU TRÚC ============
@@ -66,6 +66,15 @@ export interface ReplOptions {
   initial?: string;
   /** Đọc một dòng. `null` = EOF. */
   ask: () => Promise<string | null>;
+  /**
+   * Bắt đầu lắng nghe yêu cầu dừng trong lúc lượt chạy. Trả về hàm dọn dẹp —
+   * **phải** gọi sau mỗi lượt, không thì phím Esc của lượt sau kích hoạt
+   * `cancel` của lượt đã xong và cắt nhầm.
+   *
+   * Tách ra thành tham số vì đây là phần gắn terminal: không test được nếu viết
+   * thẳng `process.stdin.on(...)` vào trong vòng lặp.
+   */
+  watchInterrupt?: (cancel: () => void) => () => void;
   /** In ra màn hình (stdout trong bản thật). */
   out: (text: string) => void;
   /** In ra phần trạng / cảnh báo (stderr trong bản thật). */
@@ -116,13 +125,20 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     messages.push({ role: 'user', content: cauHoi });
     opts.session.append({ role: 'user', content: cauHoi });
 
+    /* Dừng lượt: `AbortController` + listener do CLI truyền vào. Lý do tách `signal`
+   ra khỏi REPL là để test được: test truyền `watchInterrupt` giả và bấm "cắt"
+   đúng lúc, không cần terminal thật. */
+    const huy = new AbortController();
+    let nghePhim: (() => void) | undefined;
     try {
+      if (opts.watchInterrupt) nghePhim = opts.watchInterrupt(() => huy.abort());
       const turn = await runAgentTurn({
         model: opts.model,
         tools: opts.tools,
         messages,
         ...(opts.system ? { system: opts.system } : {}),
         ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+        signal: huy.signal,
         onToolCall: (name) => note(`[goi tool] ${name}`),
         onToolError: (name, msg) => note(`[tool that bai] ${name}: ${msg}`),
         onText: (delta) => out(delta),
@@ -134,10 +150,24 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       out('\n');
     } catch (e) {
       /* Lượt hỏng KHÔNG được làm sập cả REPL — nếu ném ra ngoài thì chỉ một lần
-       * lỗi 429 là mất trắng phiên làm việc, đúng lúc đang làm dở. */
-      const msg = e instanceof Error ? e.message : String(e);
-      note(`\n> LOI: ${msg}`);
-      note('> lich su van con. Thu lai.');
+       * lỗi 429 là mất trắng phiên làm việc, đúng lúc đang làm dở.
+       *
+       * Và tuyệt đối KHÔNG gì của lượt hỏng được ghi xuống đĩa ở đây: chuỗi
+       * message bị hở (assistant đã gọi tool, tool chưa trả kết quả) thì mọi
+       * lượt sau của phiên đều bị provider từ chối. Cắt một lượt không được phép
+       * để lại hậu quả là chết cả phiên. */
+      if (huy.signal.aborted) {
+        note('\n> da cat lenh.');
+        note('> phan tra loi chua xong khong duoc ghi vao lich su (truong hop khong dung).');
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        note(`\n> LOI: ${msg}`);
+        note('> lich su van con. Thu lai.');
+      }
+    } finally {
+      // Dọn listener TRƯỚC khi sang lượt sau. Bỏ sót thì phím Esc của lượt sau
+      // sẽ kích hoạt `cancel` của lượt đã xong.
+      nghePhim?.();
     }
   }
 }

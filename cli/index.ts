@@ -50,6 +50,17 @@
  *   /exit    thoát. Mọi thứ đã ghi xuống đĩa, mở lại là đọc tiếp.
  *   /new     bắt đầu phiên mới (lịch sử cũ vẫn còn trên đĩa, không bị xoá).
  *
+ * ============ PHÍM TẮT KHI LƯỢT ĐANG CHẠY ============
+ *
+ *   Esc      cắt lượt đang chạy. Phần trả lời dở **không** được ghi vào lịch sử —
+ *            ghi chuỗi hở sẽ làm provider từ chối mọi lượt sau của phiên.
+ *   Ctrl+C   thoát hẳn CLI (do terminal xử lý).
+ *
+ * ============ HƯỚNG DẪN DỰ ÁN ============
+ *
+ * CLI nạp `AGENTS.md` (và `CLAUDE.md`) ở gốc workspace vào system prompt, in ra
+ * lúc khởi động để bạn biết có nạp không. Không nạp file trong thư mục con.
+ *
  * ============ NHỚ LÀ GÌ ============
  *
  * Transcript lưu ở `~/.vyen/cli/sessions/<hash-thu-muc>.jsonl`, **một file cho mỗi
@@ -408,6 +419,35 @@ async function main(): Promise<void> {
         } catch {
           return null;
         }
+      },
+      /* Bắt `Esc` trong lúc lượt chạy.
+       *
+       * ============ VÌ SAO `raw` MÀ KHÔNG `readline` ============
+       *
+       * Giữa hai lượt thì `readline` đang chờ trong `rl.question()`. Nếu ta gắn
+       * thêm handler vào cùng readline thì nó **không** bắt được phím: readline đã
+       * nuốt phím và chờ một dòng hoàn chỉnh. Nên lúc lượt chạy, readline rảnh —
+       * bấm `Esc` lúc đó ra `0x1b` thô trên stdin. Đó là lý do dùng `raw`.
+       *
+       * `Ctrl+C` (\x03) thì để mặc định của terminal — thoát hẳn CLI. Chỉ `Esc`
+       * mới cắt lượt, để không lỡ tay mất cả phiên. */
+      watchInterrupt: (cancel) => {
+        const stdin = process.stdin;
+        const truoc = stdin.isRaw;
+        stdin.setRawMode?.(true);
+        stdin.resume();
+        const onData = (b: Buffer) => {
+          // `0x1b` = Esc. Có `0x1b 0x5b` là chuỗi phím mũi tên — nuốt luôn
+          // để người dùng bấm mũi tên giữa lúc chờ không bị cắt nhầm lượt.
+          if (b[0] === 0x1b && b[1] === 0x5b) return;
+          if (b[0] === 0x1b) cancel();
+        };
+        stdin.on('data', onData);
+        return () => {
+          stdin.off('data', onData);
+          stdin.setRawMode?.(truoc ?? false);
+          stdin.pause();
+        };
       },
       out: (s) => process.stdout.write(s),
       note: (s) => console.error(s),

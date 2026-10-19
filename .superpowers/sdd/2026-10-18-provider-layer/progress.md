@@ -667,4 +667,56 @@ Phần đó chưa được canh.
 
 - **Không rút gọn context**: đủ một buổi, không đủ cả ngày.
 - **Không tìm kiếm hội thoại**: JSONL không có chỉ mục. Muốn thì đổi sang SQLite.
-- **Không nạp `AGENTS.md` vào system prompt** — đáng làm, để sau.
+
+# Lượt 7 (2026-10-19) — nạp `AGENTS.md` + Esc cắt lượt
+
+## Tôi hiểu sai opencode, và đọc mã thẳng đã đảo ngược kết luận
+
+Tôi nghĩ prompt của họ ngắn là **thiếu sót** của tôi. Đo `session/runner/prompt/
+system.txt`: prompt của họ **cố ý ngắn ~10 dòng**, còn toàn bộ bối cảnh dự án đến
+từ instruction file, định dạng 4 dòng `Instructions from: ${path}\n${content}`.
+
+Nên chỗ tôi yếu **không phải prompt ngắn — mà là không đọc file hướng dẫn**. Repo
+này có sẵn `AGENTS.md` chi tiết mà CLI của tôi phớt lờ.
+
+## Lỗi thiết kế đã sửa: hướng dẫn tool phải CÓ ĐIỀU KIỆN
+
+Bản cũ liệt kê cứng 14 tool kể cả khi tool **đã tắt**. Workspace không hợp lệ →
+không có tool nào, nhưng prompt vẫn bảo model "dùng `fs_write`" → model **bịa**
+công cụ không tồn tại rồi báo lỗi không hiểu. opencode làm `if (tools.includes(
+"shell"))`; nay làm y hệt, và prompt được dựng **sau** khi biết đã bật tool nào.
+
+Đo được: `buildSystemPrompt(undefined, cwd)` không chứa `fs_write`.
+
+## Esc cắt lượt — chỗ nguy hiểm nhất là HISTORY, không phải phím
+
+Cắt giữa chừng là chuỗi message **hở dở**: assistant đã gọi tool, tool chưa trả
+kết quả. Gửi chuỗi hở cho provider ở lượt sau là provider trả 400 — cắt **một**
+lượt, chết **cả phiên**.
+
+## Ba mutation ĐẦU TIÊN không bị bắt — và mỗi cái lộ ra một vấn đề
+
+| Mutation | Kết quả | Nguyên nhân |
+|---|---|---|
+| bỏ truyền `abortSignal` | xanh | lưới an toàn bên dưới che mất — dừng sớm vs dừng muộn **không quan sát được** |
+| bỏ phân biệt lỗi cắt | xanh | **test rỗng**: regex `/cat/i` khớp cả chuỗi `LENH DA BI CAT` |
+| "ghi cả khi bị cắt" | xanh | mutation **của tôi là no-op** (`appendAll([])` không đổi gì) |
+
+Sửa cả ba:
+1. Thêm test đo **số part đã sinh** — chứng minh `abortSignal` dừng SỚM thay vì
+   đợi model sinh hết rồi bỏ kết quả (bỏ = vẫn trả tiền token cho phần vứt).
+2. Đổi regex thành `toContain('da cat lenh')`.
+3. Thêm stub **`stubModelBoQuaDung`** — bỏ qua `abortSignal` đúng như provider
+   hỏng. Đo 2026-10-19 cho thấy khi provider không nghe, `streamText` **hoàn tất
+   bình thường** và trả về message nửa vời. Chỉ stub hỏng mới chứng minh được lưới
+   an toàn "kiểm tra `signal.aborted` sau khi stream xong" là cần.
+
+Sau khi sửa: **5/5 mutation đều bị bắt**. Đây là lần thứ hai trong phiên một test
+"xanh" hóa ra không canh gì.
+
+## Phím Esc gắn thế nào
+
+Giữa hai lượt thì `readline` đang chờ trong `rl.question()` và **nuốt phím** — gắn
+handler vào cùng readline thì không bắt được. Lúc lượt chạy readline rảnh, nên bấm
+`Esc` ra `0x1b` thô trên stdin → dùng `setRawMode`. Phím mũi tên (`0x1b 0x5b`) bị
+nuốt để không cắt nhầm. `Ctrl+C` để mặc định của terminal — chỉ `Esc` mới cắt.

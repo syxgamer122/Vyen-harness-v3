@@ -43,6 +43,15 @@ export interface AgentTurnOptions {
   messages: CoreMessage[];
   maxTokens?: number;
   maxSteps?: number;
+  /**
+   * Bấm Esc để cắt lượt đang chạy.
+   *
+   * Cắt giữa chừng là chuỗi message **hở dở** (assistant đã gọi tool nhưng tool
+   * chưa trả kết quả). Hàm này ném ra chứ KHÔNG trả về một `messages` nửa vời —
+   * người gọi chỉ ghi `messages` khi lượt thành công, nên một lần Esc giữ được
+   * transcript toàn vẹn.
+   */
+  signal?: AbortSignal;
   /** Gọi mỗi lần model định chạy tool — để người dùng thấy máy đang làm gì. */
   onToolCall?: (toolName: string) => void;
   onToolError?: (toolName: string, message: string) => void;
@@ -130,6 +139,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
           maxSteps: opts.maxSteps ?? DEFAULT_MAX_STEPS,
         }
       : {}),
+    ...(opts.signal ? { abortSignal: opts.signal } : {}),
     onError: ({ error }) => {
       streamError ??= error;
     },
@@ -172,17 +182,30 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
 
   if (streamError) throw streamError;
 
-  const usage = await result.usage;
-  /* `response.messages` là thứ AI SDK sinh ra TRONG lượt này: assistant gọi tool,
-   * message `tool` mang kết quả, assistant trả lời cuối. Đọc mã `ai@4` để chắc:
-   * nó ghi rõ "The response messages that were generated during the call". */
-  const { messages: generated } = await result.response;
-  return {
-    text,
-    messages: generated as CoreMessage[],
-    usage: {
-      promptTokens: usage.promptTokens ?? null,
-      completionTokens: usage.completionTokens ?? null,
-    },
-  };
+/* KHÔNG TIN `abortSignal` LUÔN ĐÚNG LÚC.
+ *
+ * Đo 2026-10-19: khi stub (và nhiều provider/gateway) không nghe tín hiệu dừng,
+ * `streamText` vẫn hoàn tất **bình thường** và trả về một bộ message nửa vời. Nếu
+ * ta tin vào đó thì REPL ghi chuỗi hở xuống transcript — và một lần Esc sẽ làm mọi
+ * lượt sau của phiên đó bị provider từ chối.
+ *
+ * Nên hỏi lại chính tín hiệu sau khi stream kết thúc, bất kể nó kết thúc thế nào.
+ * Giá của kiểm tra này: một lượt chạy xong đúng khoảnh khắc bấm Esc thì bị coi là
+ * đã hủy — chấp nhận được, vẫn tốt hơn transcript hỏng.
+ */
+if (opts.signal?.aborted) throw new Error('LENH DA BI CAT');
+
+const usage = await result.usage;
+/* `response.messages` là thứ AI SDK sinh ra TRONG lượt này: assistant gọi tool,
+ * message `tool` mang kết quả, assistant trả lời cuối. Đọc mã `ai@4` để chắc:
+ * nó ghi rõ "The response messages that were generated during the call". */
+const { messages: generated } = await result.response;
+return {
+  text,
+  messages: generated as CoreMessage[],
+  usage: {
+    promptTokens: usage.promptTokens ?? null,
+    completionTokens: usage.completionTokens ?? null,
+  },
+};
 }
