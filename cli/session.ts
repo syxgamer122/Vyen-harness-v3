@@ -239,7 +239,7 @@ export function openSession(stateDir: string, directory: string): SessionStore {
         ...(input.state ? { state: input.state } : {}),
         createdAt: new Date().toISOString(),
       };
-      appendLine(file, JSON.stringify(marker));
+      appendLine(file, JSON.stringify(redactSecretsDeep(marker)));
       markerHienTai = marker;
       dangDung = dangDung.slice(input.firstKept);
       return { kept: dangDung, throughCount };

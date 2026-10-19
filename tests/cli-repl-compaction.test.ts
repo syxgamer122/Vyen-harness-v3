@@ -354,3 +354,33 @@ describe('REPL — /new và tràn ngầm', () => {
     }
   });
 });
+
+
+describe('REPL — nén TỰ ĐỘNG (không cần /compact, không cần provider lỗi)', () => {
+  it('lượt đầu tiên đã đi qua nén tự động', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model, calls } = stubChat([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+      const { model: modelNen, seen } = stubNen('TOM TAT');
+      const session = openSession(state, dir);
+      for (const m of lichSuDai()) session.append(m);
+
+      await runRepl({
+        model,
+        modelNen,
+        tools: undefined,
+        session,
+        windowTokens: 32_000,
+        ask: reader('cau moi', '/exit'),
+        out: () => {},
+      });
+
+      expect(seen.length, 'nen tu dong phai goi model tom tat').toBeGreaterThan(0);
+      expect(session.compaction?.summary).toContain('TOM TAT');
+      // LƯỢT ĐẦU TIÊN đã phải mang bản tóm tắt trong system prompt.
+      expect(JSON.stringify(calls[0]), 'luot dau chua co tom tat').toContain('TOM TAT');
+    } finally {
+      cleanup();
+    }
+  });
+});

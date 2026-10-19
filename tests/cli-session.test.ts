@@ -636,3 +636,54 @@ describe('marker compaction trong JSONL', () => {
     }
   });
 });
+
+
+describe('marker nén — bí mật không được nằm trong file', () => {
+  it('bản tóm tắt ghi xuống đĩa phải ĐÃ che', () => {
+    const { state, dir, cleanup } = mk();
+    const KHOA = 'sk-abc123secret456789xyz';
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.append(userMsg('cau 2'));
+      // Bản tóm tắt sinh ra từ lịch sử CHƯA redact trong RAM (CLI chỉ che lúc
+      // ghi transcript) ⇒ nó có thể chứa khoá mà model vừa đọc từ .env.
+      s.compact({ firstKept: 2, summary: `khoa bi lo trong khoa la ${KHOA}` });
+      s.close();
+
+      const raw = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(raw, 'marker nen ghi ra khoa — transcript phai che moi noi dung').not.toContain(KHOA);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('state tích luỹ (yêu cầu người dùng) cũng phải được che', () => {
+    const { state, dir, cleanup } = mk();
+    const KHOA = 'sk-abc123secret456789xyz';
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('cau 1'));
+      s.append(asstMsg('tra loi 1'));
+      s.append(userMsg(`dung khoa ${KHOA} de test`));
+      s.compact({
+        firstKept: 2,
+        summary: 'TOM TAT',
+        state: {
+          filesRead: [],
+          filesWritten: [],
+          filesEdited: [],
+          completedRequests: [`dung khoa ${KHOA} de test`],
+          generation: 1,
+        },
+      });
+      s.close();
+
+      const raw = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(raw, 'state nen ghi ra khoa').not.toContain(KHOA);
+    } finally {
+      cleanup();
+    }
+  });
+});

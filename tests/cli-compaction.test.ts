@@ -19,7 +19,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { CoreMessage, LanguageModelV1 } from 'ai';
-import { chooseCut, compactConversation, withSummary, buildModelConfigs } from '@/cli/compaction';
+import {
+  chooseCut,
+  compactConversation,
+  withSummary,
+  buildModelConfigs,
+  createCompactionRunner,
+} from '@/cli/compaction';
 import { createNonStreamingFetch, nonStreamingFetch } from '@/lib/non-streaming-fetch';
 
 /** Model giả cho `generateText` — gọi `doGenerate`, ghi lại prompt đã nhận. */
@@ -246,5 +252,62 @@ describe('buildModelConfigs — HAI instance model', () => {
     });
     await spy('http://x', { method: 'POST', body: JSON.stringify({ model: 'm', stream: true }) });
     expect(bodies[0]).toContain('"stream":false');
+  });
+});
+
+
+describe('createCompactionRunner — debounce khi nén THẤT BẠI', () => {
+  it('ghi marker lỗi thì không gọi lại model ở lượt sau', async () => {
+    /* Tình huống thật: đĩa đầy / rút USB ⇒ `session.compact()` ném. Nếu mỗi lượt
+     * lại gọi model tóm tắt thì mỗi lượt đều tốn tiền mà không nén được gì. */
+    const { model, seen } = stubModel({ text: 'TOM TAT' });
+    /* Lịch sử phải VƯỢT ngưỡng (32.000 token cửa sổ ⇒ ngưỡng nén 16.000 token) và
+     * đủ dài để `splitForCompaction` không trả null (sàn 6 tin). 16 message, mỗi
+     * tool result 30.000 ký tự = 7.500 token ⇒ tổng 30.000 token. */
+    const lon: CoreMessage[] = [];
+    for (let i = 0; i < 4; i++) {
+      lon.push({ role: 'user', content: `cau ${i}` });
+      lon.push({
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: `t${i}`, toolName: 'fs_read', args: { path: `a${i}` } } as never],
+      });
+      lon.push({
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: `t${i}`,
+            toolName: 'fs_read',
+            result: { content: 'x'.repeat(30_000) },
+          },
+        ] as never,
+      });
+      lon.push({ role: 'assistant', content: 'xong' });
+    }
+    const fakeSession = {
+      header: { kind: 'header', sessionId: 's', directory: 'd', createdAt: '' },
+      messages: lon,
+      compaction: undefined,
+      append: () => {},
+      appendAll: () => {},
+      reset: () => {},
+      compact: () => {
+        throw new Error('het cho ghi marker');
+      },
+      close: () => {},
+    } as unknown as Parameters<typeof createCompactionRunner>[0]['session'];
+
+    const runner = createCompactionRunner({
+      session: fakeSession,
+      model,
+      system: 'SYSTEM',
+      windowTokens: 32_000,
+    });
+
+    const r1 = await runner.nen('auto');
+    const r2 = await runner.nen('auto');
+    expect(r1, 'ghi marker that bai ⇒ bao loi, khong ap dung').toBe(false);
+    expect(r2, 'luot sau phai bi debounce').toBe(false);
+    expect(seen.length, 'model khong duoc goi lai oan').toBe(1);
   });
 });

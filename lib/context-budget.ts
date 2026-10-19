@@ -13,7 +13,7 @@
  * phục hồi: nén xong thử lại đúng một lần.
  */
 
-import { TOOL_RESULT_ESTIMATE_CHARS } from '@/lib/tool-limits';
+import { TOOL_RESULT_ESTIMATE_CHARS, jsonLengthOf } from '@/lib/tool-limits';
 import { capabilityFor } from '@/lib/models';
 
 /**
@@ -140,16 +140,6 @@ function textLengthOf(content: unknown): number {
  * Re-export lại để caller cũ import từ module này vẫn chạy.
  */
 export { TOOL_RESULT_ESTIMATE_CHARS };
-
-function jsonLengthOf(value: unknown): number {
-  if (value == null) return 0;
-  if (typeof value === 'string') return value.length;
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return 0;
-  }
-}
 
 function toolInvocationChars(message: BudgetMessageLike): number {
   let chars = 0;

@@ -378,6 +378,10 @@ export function createCompactionRunner(opts: CompactionRunnerOptions): Compactio
 
       if (r.kind !== 'ok') {
         if (r.kind === 'failed') opts.note?.(`> nen that bai: ${r.error}`);
+        /* Debounce PHẢI tiến cả khi nén thất bại. Nếu không, một lỗi kéo dài
+         * (đĩa đầy, model không trả lời) ⇒ MỖI lượt lại gọi model tóm tắt và
+         * lại thất bại ⇒ mỗi lượt đều tốn tiền mà không nén được gì. */
+        if (r.kind === 'failed') lanNenGanNhat = Date.now();
         return false;
       }
 
@@ -387,6 +391,7 @@ export function createCompactionRunner(opts: CompactionRunnerOptions): Compactio
         opts.session.compact({ firstKept: r.firstKept, summary: r.summary, state: r.state });
       } catch (e) {
         opts.note?.(`> khong ghi duoc marker nen: ${e instanceof Error ? e.message : String(e)}`);
+        lanNenGanNhat = Date.now();
         return false;
       }
       summary = r.summary;

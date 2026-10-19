@@ -339,6 +339,92 @@ markdown thừa trong repo.
     **83/83 xanh** ⇒ xác nhận là flaky tải máy, không phải hồi quy.
 - **Task 8: complete (commits c443335..d187eb1, tests: npm run test → 229/230 file, 3637/3641 pass; 3 fail đều là flaky `secret-registry` đã ghi ở AGENTS.md §1)**
 
+## Lượt 2 — REVIEW ĐỘC LẬP CỦA TÔI (subagent `big-pickle`, review package 2712e79..e555301)
+
+Reviewer đọc diff và tự dựng script thử. Kết quả: **0 Critical, 3 Important, 6 Minor**.
+Tôi **tự kiểm chứng lại từng cái** bằng cách chạy code, không tin lời reviewer.
+
+### VỀ NHÁNH LẠI — có agent/session khác làm việc SONG SONG trong repo
+
+Trong lúc review chạy, repo có thêm commit của tôi **không** tự viết:
+`c592920` (trùng message với `c443335`), `0734251` (bỏ diff sinh ra khỏi tracking),
+`79676f4` ("sua 4 diem reviewer"). Trong đó có `scripts/if-1-plus-1.ts` — sinh ra từ
+dòng lệnh lạ của chủ repo lúc 22:17:58.
+
+⇒ Mọi phát hiện của reviewer tôi phải kiểm lại trên **trạng thái mới nhất**, không phải
+trên trạng thái lúc tôi giao. Và fix pass của session kia đã sửa 4 điểm (I-1 `/new`
+bỏ tóm tắt, I-2 bắt tràn ngầm, I-3 cap mảng, I-4 kết quả vừa đúng trần).
+
+### Important — đã sửa (bởi tôi, phiên này)
+
+**I-A: marker nén ghi xuống đĩa KHÔNG redact** — **ĐÃ SỬA**
+`cli/session.ts` ghi `JSON.stringify(marker)` thô, trong khi dòng message thì redact.
+Mà bản tóm tắt được sinh từ lịch sử CHƯA redact trong RAM (CLI chỉ che lúc ghi
+transcript) ⇒ một khoá đọc từ `.env` có thể nằm nguyên trong `~/.vyen/cli/sessions/*.jsonl`.
+Đây là hợp đồng mà chính repo đã ghi ở `cli/session.ts:33-47` ("redact trước khi ghi đĩa").
+Sửa: `JSON.stringify(redactSecretsDeep(marker))`.
+Test: 2 test mới trong `tests/cli-session.test.ts` (summary chứa khoá; `state.completedRequests`
+chứa khoá) — RED trước, GREEN sau.
+
+**I-B: debounce KHÔNG tiến khi nén thất bại** — **ĐÃ SỬA**
+`lanNenGanNhat` chỉ được đặt khi nén **thành công** ⇒ nếu nén cứ thất bại (đĩa đầy,
+model không trả lời) thì **mỗi lượt lại gọi lại model tóm tắt** ⇒ mỗi lượt đều tốn
+tiền mà không nén được gì. Sửa: đặt timestamp ở cả nhánh nén thất bại lẫn nhánh ghi
+marker lỗi.
+Test: dùng session giả có `compact()` ném ⇒ gọi `nen('auto')` hai lần ⇒ model chỉ được
+gọi **1** lần. Mutation (bỏ dòng timestamp) ⇒ đỏ ("expected 2 to be 1").
+
+**I-C: nén TỰ ĐỘNG không có test cô lập** — **ĐÃ SỬA**
+Xoá dòng `if (nen) await nen.nen('auto')` thì suite vẫn xanh ⇒ trigger chủ động chính
+có thể hỏng mà không ai thấy. Test mới: lịch sử vượt ngưỡng, **không** `/compact`,
+**không** provider lỗi ⇒ phải nén, và lượt ĐẦU đã phải mang summary trong system
+prompt. Mutation (tắt nén tự động) ⇒ đỏ ("expected 0 to be greater than 0").
+
+### Minor — đã sửa
+
+**M-4: BA bản sao của cùng một phép tính** — **ĐÃ SỬA**
+`jsonLengthOf` (private ở `lib/context-budget.ts`), `jsonLengthOf` (private ở
+`lib/tool-result-server.ts`) và `serializedLength` (private ở file đó) — ba bản giống
+hệt nhau. Đây là "hai nguồn sự thật" (`AGENTS.md` §6). Gộp về **một** hàm export
+`jsonLengthOf` trong `lib/tool-limits.ts` (chỉ phép tính thuần, không I/O ⇒ cả
+`lib/context-budget.ts` lẫn `lib/tool-result-server.ts` đều import được).
+
+### BÀI HỌC — tôi MẮC LẦM Ở M-4, và AGENTS.md ĐÃ SỬA ĐÚNG CHỖ
+
+Bản đầu tôi xoá `jsonLengthOf` ở `lib/tool-result-server.ts` vì reviewer nói "dead
+duplicate". Tôi **tin lời reviewer** mà chỉ grep **định nghĩa** (`function
+jsonLengthOf`) chứ **không** grep **chỗ dùng**. Kết quả: `tsc` báo 4 lỗi
+`Cannot find name 'jsonLengthOf'` — hàm đó **đang được dùng ở 4 chỗ** (trong code cắt
+mảng của fix pass session kia).
+
+Đây đúng là dạng lỗi `AGENTS.md` §2.4 + §6: "số 0 là kết quả đáng ngờ — kiểm lại **phép
+đo** chứ không phải kết quả". Tôi đã khôi phục hàm, rồi **gộp** cả ba bản về một chỗ
+một cách đúng đắn.
+
+**AGENTS.md đã được cập nhật trong lúc tôi làm** và thêm đúng hai luật cho đúng cái
+lỗi này:
+- §6.4 "Quét cả cây, không chỉ thư mục code" (ký hiệu còn sống có thể nằm trong
+  `tests/`, fixture, hay chỉ xuất hiện dưới dạng *chuỗi*).
+- §7.3 "Đổi hợp đồng thì grep mọi caller".
+
+⇒ Bài học cho lượt này: **mọi lời reviewer nói "hàm này chết" phải tự grep chỗ dùng
+trước khi xoá.** Đã tuân thủ từ đây.
+
+### Minor còn mở (ghi ra để chủ repo quyết)
+
+- **M-2**: `scripts/if-1-plus-1.ts` — file CỦA CHỦ REPO (tạo lúc 22:17:58 từ dòng lệnh
+  lạ), không phải test nào của repo sinh ra. **Không xoá file của chủ repo.** Nhưng nó
+  bị commit với message **trùng hệt** `c443335` (`c592920`) ⇒ lịch sử git khó đọc.
+  Không sửa được lịch sử đã có; lần sau đừng để hai commit trùng message.
+- **M-3**: khi thử lại sau tràn context, chữ đã stream của lượt hỏng vẫn nằm trên màn
+  hình và câu trả lời in ra lần hai. opencode cũng vậy.
+- **M-5**: đường `-p` (`chayMotLuot`) nằm sau `main()` ở module scope ⇒ **không import
+  được trong test** ⇒ các trigger của `-p` chưa có test. Cần tách `chayMotLuot` ra
+  module riêng thì mới test được.
+- **M-6**: `openSession` ném thì CLI in "chay tiep, chi khong nho duoc" rồi thoát mã 1 —
+  có sẵn từ trước, nhưng guard mới của `openSession` (message đầu là `tool`) khiến nó
+  dễ gặp hơn.
+
 ## Gate cuối toàn plan
 
 | Lệnh | Kết quả |

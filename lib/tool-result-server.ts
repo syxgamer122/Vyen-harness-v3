@@ -30,6 +30,7 @@ import {
   TOOL_RESULT_HEAD_RATIO,
   TOOL_RESULT_MAX_CHARS,
   TOOL_RESULT_TAIL_RATIO,
+  jsonLengthOf,
   truncateToolResult,
 } from '@/lib/tool-limits';
 import { redactSecretText } from '@/lib/secret-registry';
@@ -67,18 +68,6 @@ function spillRedacted(raw: string, name: string, saver?: SpillSaver): ReturnTyp
   const ghi = saver ?? saveSpillText;
   return ghi?.(redactSecretText(raw), name) ?? null;
 }
-
-/** Độ dài JSON của một giá trị — dùng để cắt mảng mà không phá hình dạng. */
-function jsonLengthOf(value: unknown): number {
-  if (value == null) return 0;
-  if (typeof value === 'string') return value.length;
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
 
 /** Serialize + cắt trần trong một bước. Không bao giờ ném. */
 export function serializeToolResult(
@@ -263,14 +252,14 @@ export function capToolValue(value: unknown, saver?: SpillSaver): unknown {
   }
 
   if (Array.isArray(value)) {
-    if (serializedLength(value) <= TOOL_RESULT_MAX_CHARS) return value;
+    if (jsonLengthOf(value) <= TOOL_RESULT_MAX_CHARS) return value;
     const spilled = spillRedacted(JSON.stringify(value) ?? '', 'tool-result.txt', saver);
     /* Chừa chỗ cho dấu phẩy, ngoặc vuông và mục đánh dấu. */
     const room = Math.max(0, TOOL_RESULT_MAX_CHARS - 2_000);
     const out: unknown[] = [];
     let used = 0;
     for (const item of value) {
-      const len = serializedLength(item);
+      const len = jsonLengthOf(item);
       if (used + len > room) break;
       out.push(item);
       used += len;
@@ -289,15 +278,4 @@ export function capToolValue(value: unknown, saver?: SpillSaver): unknown {
   }
 
   return value;
-}
-
-/** Độ dài JSON của một giá trị — dùng để cắt mảng mà không phá hình dạng. */
-function serializedLength(value: unknown): number {
-  if (value == null) return 0;
-  if (typeof value === 'string') return value.length;
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return 0;
-  }
 }

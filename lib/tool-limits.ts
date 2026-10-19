@@ -42,6 +42,32 @@
 export const TOOL_RESULT_MAX_CHARS = 24_000;
 
 /**
+ * Độ dài JSON của một giá trị — dùng để cắt mảng mà không phá hình dạng,
+ * và để ước lượng kích thước tool result.
+ *
+ * ============ VÌ SAO Ở ĐÂY ============
+ *
+ * Trước đây có BA bản sao: một private trong `lib/context-budget.ts`, một private
+ * trong `lib/tool-result-server.ts`, và một `serializedLength` y hệt trong file đó.
+ * Ba bản của cùng một phép tính là "hai nguồn sự thật" (`AGENTS.md` §6) — hôm nay
+ * khớp, ngày mai lệch, và người sau không biết phải sửa bản nào.
+ *
+ * File này là chỗ chung: `lib/context-budget.ts` (chạy được cả trong bundle trình
+ * duyệt) và `lib/tool-result-server.ts` (chỉ Node) đều import được, và ở đây chỉ
+ * có phép tính thuần, không I/O.
+ */
+export function jsonLengthOf(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'string') return value.length;
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+
+/**
  * Tỷ lệ giữ phần ĐẦU khi middle-truncate. Đầu thường là metadata/khai báo,
  * đuôi thường chứa kết luận — giữ cả hai, bỏ ruột.
  */
