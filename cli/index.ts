@@ -35,7 +35,12 @@
  *   > /exit
  *
  *   # Hỏi một câu rồi thoát luôn (đường cũ)
- *   npm run cli -p -- "xin chao"
+ *   npm run cli -- -p "xin chao"
+ *
+ *   ⚠ `-p` phải nằm SAU `--`. Đo 2026-10-19: `npm run cli -p -- "xin chao"`
+ *   chạy ra argv là `["xin chao"]` — **npm nuốt mất `-p`**, nên lệnh đó âm thầm
+ *   vào REPL chứ không chạy một lượt. Và nếu ghi `--print -- "x"` thì dấu `--`
+ *   trần lọt vào argv; `parseArgs` đã loại nó.
  *
  *   # Câu hỏi truyền qua argv là LƯỢT ĐẦU, rồi CLI vẫn ở lại để nói tiếp
  *   npm run cli -- "doc README.md"
@@ -203,7 +208,13 @@ async function hoiDong(
 function parseArgs(argv: string[]): { question?: string; print: boolean } {
   const goc = argv.filter((a) => !/^-p$|^--print$/.test(a));
   const print = goc.length !== argv.length;
-  const question = goc.join(' ').trim() || undefined;
+  // Bỏ dấu `--` trần. Đo 2026-10-19: `npm run cli -- --print -- "x"` đưa vào
+  // argv là `["--print","--","x"]`, nên không bỏ thì câu hỏi thành `"-- x"` và
+  // model nhận nhầm dấu gạch dọi.
+  const question = goc
+    .filter((a) => a !== '--')
+    .join(' ')
+    .trim() || undefined;
   return { question, print };
 }
 
@@ -349,16 +360,29 @@ async function main(): Promise<void> {
   // tìm thấy tên", và nếu tôi ép kiểu cho qua thì chạy lúc runtime vẫn lỗi.
   let rl: Interface | undefined;
   const lichSu = new TaoLichSu();
+
+  /* `readline` DỰNG NGOÀI `try` — và đây là lý do reviewer bắt được.
+   *
+   * Bản đầu đặt nó SAU `createNodeHost` trong cùng một `try`. Nên khi workspace
+   * không hợp lệ (thư mục không tồn tại, gốc ổ đĩa, home) thì `createNodeHost`
+   * ném trước khi `rl` kịp tạo ⇒ `ask` trả `null` ⇒ REPL **thoát ngay**. Nhưng
+   * dòng thông báo vừa in lại nói *"van chat binh thuong, chi khong dung duoc
+   * cong cu"* — nói một đằng làm một nẻo.
+   *
+   * Đọc dòng không cần workspace, nên tách nó ra khỏi phần dựng tool.
+   */
+  {
+    const rlMoi = createInterface({ input: process.stdin, output: process.stderr });
+    rl = rlMoi;
+    closeStdin = () => rlMoi.close();
+    docDong = (q: string) => rlMoi.question(q);
+  }
   try {
     const host = createNodeHost({ workspaceRoot: workspace, userDataDir });
     disposeHost = host.dispose;
 
     // Cổng duyệt: hỏi trên console, trừ khi người dùng tự bật YOLO — và khi
     // bật thì PHẢI in ra, vì đó là lúc bỏ hết lớp bảo vệ giữa người và máy.
-    const rlMoi = createInterface({ input: process.stdin, output: process.stderr });
-    rl = rlMoi;
-    closeStdin = () => rlMoi.close();
-    docDong = (q: string) => rlMoi.question(q);
     const approve = yolo
       ? (() => {
           console.error('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
@@ -490,8 +514,7 @@ async function main(): Promise<void> {
         return dong;
       },
       lichSu,
-      /* Bắt `Esc` trong lúc lượt chạy.
-       *
+      /*
        * ============ VÌ SAO `raw` MÀ KHÔNG `readline` ============
        *
        * Giữa hai lượt thì `readline` đang chờ trong `rl.question()`. Nếu ta gắn
@@ -500,12 +523,28 @@ async function main(): Promise<void> {
        * bấm `Esc` lúc đó ra `0x1b` thô trên stdin. Đó là lý do dùng `raw`.
        *
        * `Ctrl+C` (\x03) thì để mặc định của terminal — thoát hẳn CLI. Chỉ `Esc`
-       * mới cắt lượt, để không lỡ tay mất cả phiên. */
+       * mới cắt lượt, để không lỡ tay mất cả phiên.
+       *
+       * ============ VÌ SAO KHÔNG `resume()`/`pause()` stdin ============
+       *
+       * Bản đầu tôi gọi `stdin.resume()` khi bắt đầu lượt và `stdin.pause()` khi
+       * kết thúc. **Cả hai là sai**, và cái thứ hai treo cả REPL:
+       *
+       * - `resume()` thừa — gắn listener `'data'` đã tự khôi phục chế độ chảy.
+       * - `pause()` **phá**. `readline` chỉ gọi `input.resume()` lại trong
+       *   `Interface.resume()`, mà hàm đó thoát sớm nếu cờ `rl.paused` chưa bật —
+       *   cờ đó CHỈ `Interface.pause()` mới bật. Gọi `stdin.pause()` (dừng stream)
+       *   không bật cờ, nên lượt sau `rl.question()` không bao giờ khởi động lại
+       *   stdin ⇒ prompt hiện ra rồi nuốt mọi phím, và chỉ còn cách giết tiến
+       *   trình. Không lỗi, không stack — chỉ treo.
+       *
+       * Đo 2026-10-19: `echo | npm run cli` **không** bắt được, vì dữ liệu đã nằm
+       * sẵn trong bộ đệm nên vẫn đọc được. Chỉ terminal thật mới lộ. Vì vậy ở đây
+       * **không** đụng trạng thái chảy của stdin nữa — `readline` là bên sở hữu nó. */
       watchInterrupt: (cancel) => {
         const stdin = process.stdin;
         const truoc = stdin.isRaw;
         stdin.setRawMode?.(true);
-        stdin.resume();
         const onData = (b: Buffer) => {
           // `0x1b` = Esc. Có `0x1b 0x5b` là chuỗi phím mũi tên — nuốt luôn
           // để người dùng bấm mũi tên giữa lúc chờ không bị cắt nhầm lượt.
@@ -516,7 +555,7 @@ async function main(): Promise<void> {
         return () => {
           stdin.off('data', onData);
           stdin.setRawMode?.(truoc ?? false);
-          stdin.pause();
+          /* KHÔNG `stdin.pause()` ở đây — xem ghi chú dưới. */
         };
       },
       out: (s) => process.stdout.write(s),

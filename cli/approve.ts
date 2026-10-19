@@ -80,10 +80,17 @@ export function createConsoleApprover(ask: Ask): (tool: string, args: Record<str
 /**
  * Duyệt hết không hỏi. **Chỉ dùng khi người dùng tự bật `VYEN_YOLO=1`** — và
  * việc bật phải được in ra console, vì đây là lúc bỏ hết lớp bảo vệ.
+ *
+ * ============ VÌ SAO `on` PHẢI ĐƯỢC DÙNG ============
+ *
+ * Bản đầu nhận `_on` rồi **bỏ qua**, tức `createAutoApprover(false)` cũng duyệt
+ * hết. Một tham số chết ở đây là thứ đáng sợ: đây là cờ bỏ lớp bảo vệ, và lần
+ * gọi sai là xoá file không hỏi. Tham số trả về là mặc định an toàn — không
+ * phải nơi dựa vào để truyền cờ.
  */
-export function createAutoApprover(_on: boolean): (
+export function createAutoApprover(on: boolean): (
   tool: string,
   args: Record<string, unknown>,
 ) => Promise<boolean> {
-  return async () => true;
+  return async () => on;
 }

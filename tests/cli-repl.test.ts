@@ -302,6 +302,30 @@ describe('runRepl — nhiều lượt trong một tiến trình', () => {
     }
   });
 
+  /* Test trước chỉ kiểm `parseCommand('/xyz')` — xoá hẳn nhánh `unknown` ở
+   * `cli/repl.ts` thì nó vẫn xanh (reviewer bắt đúng). Nên phải kiểm ở mức REPL:
+   * lệnh lạ KHÔNG được chạy tới model. */
+  it('lệnh `/...` lạ thì báo và KHÔNG gửi cho model', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model, calls } = stubModel([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+      const session = openSession(state, dir);
+      const noiDung: string[] = [];
+      await runRepl({
+        model,
+        tools: undefined,
+        session,
+        ask: reader('/xyz', 'cau that', '/exit'),
+        out: () => {},
+        note: (s) => noiDung.push(s),
+      });
+      expect(calls.length, 'lenh la bi gui cho model').toBe(1);
+      expect(noiDung.join('\n'), 'khong bao cho nguoi dung biet lenh sai').toContain('xyz');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('in chữ của model ra stdout khi có', async () => {
     const { state, dir, cleanup } = mk();
     try {

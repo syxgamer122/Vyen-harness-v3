@@ -90,7 +90,17 @@ describe('createConsoleApprover — chỉ "y" mới cho qua', () => {
 });
 
 describe('createAutoApprover — chỉ dùng khi người dùng tự bật', () => {
-  it('VYEN_YOLO bật thì duyệt hết, nhưng vẫn ghi lại là đã bỏ qua duyệt', async () => {
+  /* Tên test bản đầu nói "vẫn ghi lại là đã bỏ qua duyệt" nhưng không khẳng định
+   * điều gì như vậy, và `createAutoApprover(_on)` **bỏ qua tham số** — nên
+   * `createAutoApprover(false)` cũng duyệt hết. Tham số chết là thứ đáng sợ ở
+   * đây: đó là cờ bỏ lớp bảo vệ, và một lần gọi sai là xoá file không hỏi. */
+  it('tắt thì KHÔNG duyệt gì cả', async () => {
+    const { createAutoApprover } = await import('@/cli/approve');
+    expect(await createAutoApprover(false)('shell_run', { command: 'rm -rf x' })).toBe(false);
+    expect(await createAutoApprover(false)('fs_write', { path: 'a', content: 'b' })).toBe(false);
+  });
+
+  it('bật thì duyệt hết', async () => {
     const { createAutoApprover } = await import('@/cli/approve');
     const approve = createAutoApprover(true);
     expect(await approve('shell_run', { command: 'rm -rf x' })).toBe(true);

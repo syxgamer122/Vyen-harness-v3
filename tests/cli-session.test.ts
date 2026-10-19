@@ -238,6 +238,72 @@ describe('file hỏng ở GIỮA — phải nói chứ không nuốt', () => {
   });
 });
 
+/* ============ CHE BÍ MẬT KHI GHI ĐĨA ============
+ *
+ * Kết quả `fs_read` nằm trong lịch sử, tức nằm trong JSONL. Đọc một `.env` là
+ * key của mọi thứ khác rơi thẳng vào file đó. Đây là đường lưu duy nhất trong
+ * repo không che trước khi ghi — `lib/db.ts`, `lib/tool-result-server.ts`,
+ * `lib/audit-log.ts` đều đã che, và spec §7 yêu cầu rõ.
+ */
+describe('che bí mật trước khi ghi đĩa', () => {
+  const KHOA = 'sk-abc123secret456789xyz';
+
+  it('khóa trong kết quả đọc file KHÔNG xuất hiện nguyên văn trong file JSONL', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append({
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 't1',
+            toolName: 'fs_read',
+            result: { content: `DATABASE_URL=postgres://a\nOPENAI=${KHOA}` },
+          },
+        ],
+      } as CoreMessage);
+      s.close();
+      const raw = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(raw, 'khoa bi ghi nguyen van xuong dia').not.toContain(KHOA);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('khoá xuất hiện trong NỘI DUNG lịch sử nạp lại cũng phải che', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append({
+        role: 'tool',
+        content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'x', result: { k: KHOA } }],
+      } as CoreMessage);
+      s.close();
+      const moi = openSession(state, dir);
+      const chuoi = JSON.stringify(moi.messages);
+      expect(chuoi, 'nap lai van thay khoa').not.toContain(KHOA);
+      moi.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('không che nhầm nội dung thường', () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const s = openSession(state, dir);
+      s.append(userMsg('sua ham parseConfig trong lib/provider/adapter.ts'));
+      s.close();
+      const moi = openSession(state, dir);
+      expect(moi.messages[0]).toEqual(userMsg('sua ham parseConfig trong lib/provider/adapter.ts'));
+      moi.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe('tính toàn vẹn của một lượt', () => {
   /* Tool call mà không có kết quả đi kèm thì provider trả 400. Nếu chỉ lưu "mọi
    * thứ" thì một lượt hỏng làm hỏng **mọi** lượt sau. */

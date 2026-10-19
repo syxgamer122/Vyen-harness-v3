@@ -27,6 +27,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { CoreMessage } from 'ai';
+import { redactSecretsDeep } from '@/lib/secret-registry';
+
+/**
+ * Che bí mật trước khi ghi xuống đĩa.
+ *
+ * ============ VÌ SAO BẮT BUỘC ============
+ *
+ * Kết quả `fs_read` nằm trong lịch sử hội thoại, tức sẽ nằm trong JSONL ở
+ * `~/.vyen/cli/sessions/`. Đọc một `.env` là key của mọi thứ khác rơi vào đó.
+ *
+ * Đây là đường lưu duy nhất trong repo **không** che trước khi ghi: `lib/db.ts`,
+ * `lib/tool-result-server.ts`, `lib/audit-log.ts` đều đã che, và spec §7 yêu cầu
+ * rõ "redact trước khi ghi đĩa".
+ *
+ * Chỉ che lúc **ghi**, không che trong RAM: người dùng không nhìn thấy transcript
+ * nên không mất gì, còn nếu che cả trong RAM thì lượt nối tiếp sẽ gửi chuỗi đã
+ * bị che đi cho model.
+ */
+function che(message: CoreMessage): CoreMessage {
+  // `redactSecretsDeep` đi đệ quy cả object lẫn chuỗi, và trả về **cùng kiểu**.
+  // Bản đầu tôi stringify rồi parse lại — làm hỏng mọi `undefined` trong message.
+  return redactSecretsDeep(message);
+}
 
 export interface SessionHeader {
   kind: 'header';
@@ -101,8 +124,16 @@ export function openSession(stateDir: string, directory: string): SessionStore {
    *
    * Đo được khi test: file có 2 bản ghi + dòng cụt, `append` thêm một dòng, mở lại
    * thì chỉ còn 1 message. Bỏ trong RAM thôi là **mất bản ghi ngay sau khi ghi**.
+   *
+   * ============ VÌ SAO `!== null` MÀ KHÔNG `if (canhBoi)` ============
+   *
+   * `canhBoi` là **byte offset**, và 0 là offset hợp lệ: dòng đầu tiên hỏng, không
+   * có `\n` nào sau nó. Bản đầu viết `if (canhBoi)` nên offset 0 bị đọc thành
+   * "file sạch" ⇒ không cắt ⇒ dòng hỏng sống dai ⇒ `append` tiếp dính liền vào
+   * nó ⇒ lần mở sau ném `Transcript ... hong o dong 1` và CLI **từ chối khởi động**,
+   * với thông báo không hề nói rằng xoá file là khỏi.
    */
-  if (canhBoi) catFile(file);
+  if (canhBoi !== null) catFile(file);
   let seq = messages.length;
 
   return {
@@ -110,14 +141,14 @@ export function openSession(stateDir: string, directory: string): SessionStore {
     messages,
     append(message: CoreMessage): void {
       messages.push(message);
-      appendLine(file, JSON.stringify({ seq: ++seq, message }));
+      appendLine(file, JSON.stringify({ seq: ++seq, message: che(message) }));
     },
     appendAll(batch: CoreMessage[]): void {
       if (batch.length === 0) return;
       // Ghi **một** lần cho cả lô: lô tool-call + tool-result phải vào đĩa cùng
       // nhau, nếu không thì crash giữa lô là mất cặp đôi và provider từ chối cả
       // lượt sau (tool_use không có tool_result).
-      const phan = batch.map((m) => ({ seq: ++seq, message: m }));
+      const phan = batch.map((m) => ({ seq: ++seq, message: che(m) }));
       appendLine(file, phan.map((p) => JSON.stringify(p)).join('\n'));
       messages.push(...batch);
     },

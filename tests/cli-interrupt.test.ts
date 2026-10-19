@@ -87,7 +87,9 @@ function stubModelNhanh(script: StubPart[][]) {
       });
     },
   };
-  return { model };
+  // Bộ đếm phải đếm ở TRONG `doStream`, không phải trong test — bản đầu tôi đặt
+  // `soLanGoi: () => lan++` ở test, thì gọi nó cũng làm nó tăng: xanh vô nghĩa.
+  return { model, soLanGoi: () => i };
 }
 
 function tools() {
@@ -396,10 +398,13 @@ describe('runRepl — Esc cắt lượt', () => {
     }
   });
 
+  /* Bản đầu viết `expect(true).toBe(true)` — reviewer bắt đúng. Nó không bắt
+   * được gì: test chỉ "không ném" chứ không khẳng định lượt đã chạy. */
   it('không có watchInterrupt thì vẫn chạy bình thường', async () => {
     const { state, dir, cleanup } = mk();
     try {
-      const { model } = stubModelNhanh([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+      const { model, soLanGoi } = stubModelNhanh([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+      const truoc = soLanGoi();
       const session = openSession(state, dir);
       const dong = ['cau 1', '/exit'];
       let lan = 0;
@@ -410,7 +415,7 @@ describe('runRepl — Esc cắt lượt', () => {
         ask: async () => dong[lan++] ?? null,
         out: () => {},
       });
-      expect(true).toBe(true);
+      expect(soLanGoi() - truoc, 'luot khong chay').toBe(1);
     } finally {
       cleanup();
     }

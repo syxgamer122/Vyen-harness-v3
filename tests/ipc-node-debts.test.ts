@@ -161,6 +161,50 @@ describe('fs_write ghi đè file tồn tại thì phải kèm hash lúc đọc',
     }
   });
 
+  /* `fs_edit` **đọc lại** file rồi áp khối lên nội dung HIỆN TẠI, nên thay đổi của
+   * người khác được giữ. Đo thật 2026-10-19:
+   *   đọc "dong 1/dong 2/dong 3" → người khác sửa thành
+   *   "dong 1/NGUOI KHAC SUA/dong 3/dong 4" → `fs_edit` sửa "dong 1" →
+   *   "DONG MOT/NGUOI KHAC SUA/dong 3/dong 4" — **không mất gì** của họ.
+   *
+   * Nên reviewer's I3 ("ghi đè mất nội dung mới") **sai**, đo bác bỏ. Nhưng phần
+   * còn lại thì đúng: trước khi sửa, `fs_edit` không nhớ hash lúc đọc nên không
+   * gửi `expectedBaseHash` ⇒ máy chống TOCTOU của `ipc.cjs` **không bao giờ
+   * chạy** cho tool này, tức lớp bảo vệ có sẵn bị bỏ không. */
+  it('fs_edit GIỮ NGUYÊN thay đổi của người sửa file ngoài phiên', async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      await t.fs_read.execute({ path: 'a.txt' });
+      writeFileSync(path.join(dir, 'a.txt'), 'dong 1\nNGUOI KHAC SUA\ndong 3\n', 'utf8');
+      await t.fs_edit.execute({
+        path: 'a.txt',
+        blocks: '<<<<<<< SEARCH\ndong 1\n=======\nDONG MOT\n>>>>>>> REPLACE',
+      });
+      const sau = readFileSync(path.join(dir, 'a.txt'), 'utf8');
+      expect(sau, 'mat thay doi cua nguoi khac').toContain('NGUOI KHAC SUA');
+      expect(sau).toContain('DONG MOT');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
+  it('fs_edit khi file KHÔNG đổi thì vẫn ghi bình thường', async () => {
+    const { dir, tools, hostOf, cleanup } = mk();
+    try {
+      const t = tools();
+      await t.fs_edit.execute({
+        path: 'a.txt',
+        blocks: '<<<<<<< SEARCH\ndong 2\n=======\nHAI\n>>>>>>> REPLACE',
+      });
+      expect(readFileSync(path.join(dir, 'a.txt'), 'utf8')).toBe('dong 1\nHAI\ndong 3\n');
+    } finally {
+      hostOf().dispose();
+      cleanup();
+    }
+  });
+
   it('file MỚI thì không cần hash — không có gì để đối chiếu', async () => {
     const { dir, tools, hostOf, cleanup } = mk();
     try {
