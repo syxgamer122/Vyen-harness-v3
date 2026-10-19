@@ -24,8 +24,8 @@
  * cần terminal — mà đây đúng là chỗ hỏng thì mất hết công việc của người dùng.
  */
 import type { CoreMessage, LanguageModelV1, ToolSet } from 'ai';
-import { isContextOverflowError } from '@/lib/context-budget';
-import { createCompactionRunner, statusCodeOf } from './compaction';
+import { evaluateUsageTrigger, isContextOverflowError } from '@/lib/context-budget';
+import { CLI_DEFAULT_CONTEXT_WINDOW, createCompactionRunner, statusCodeOf } from './compaction';
 import { runAgentTurn } from './agent-turn';
 import type { SessionStore } from './session';
 import type { TaoLichSu } from './history';
@@ -141,6 +141,9 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       // File cũ GIỮ NGUYÊN. Xoá hẳn thì lịch sử cũ mất vĩnh viễn, và người dùng
       // không có cách nào lấy lại — `/new` là "quên đi", không phải "xoá đi".
       opts.session.reset();
+      /* `/new` = "quên đi" ⇒ bản tóm tắt của phiên cũ cũng phải đi. Giữ lại thì
+       * phiên mới vẫn mang theo việc làm của phiên cũ. */
+      nen?.reset();
       note('> da bat dau phien moi. Lich su cu con nguyen tren dia.');
       continue;
     }
@@ -191,6 +194,23 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
         // Ghi lệch pha là provider từ chối mọi lượt sau của phiên.
         opts.session.appendAll(turn.messages);
         out('\n');
+        /* TRÀN NGẦM — provider KHÔNG báo lỗi, nên không có gì để bắt qua
+         * `isContextOverflowError`. Chỉ usage mới phản lộ:
+         *   - `finishReason="stop"` nhưng `promptTokens > window` ⇒ gateway đã
+         *     cắt bớt input mà vẫn trả 200;
+         *   - `finishReason="length"` mà `completionTokens = 0` ⇒ input bị cắt
+         *     tới mức model không sinh được token nào.
+         * Cả hai đều KHÔNG sinh lỗi ⇒ không có đường nào khác để biết. */
+        const quyetDinh = evaluateUsageTrigger({
+          promptTokens: turn.usage.promptTokens ?? 0,
+          completionTokens: turn.usage.completionTokens ?? 0,
+          ...(turn.usage.finishReason ? { finishReason: turn.usage.finishReason } : {}),
+          windowTokens: opts.windowTokens ?? CLI_DEFAULT_CONTEXT_WINDOW,
+        });
+        if (quyetDinh.kind !== 'skip') {
+          note(`> ${quyetDinh.kind} — dang nen lai...`);
+          await nen?.nen('tran-ngam');
+        }
       } catch (e) {
         /* Lượt hỏng KHÔNG được làm sập cả REPL — nếu ném ra ngoài thì chỉ một lần
          * lỗi 429 là mất trắng phiên làm việc, đúng lúc đang làm dở.

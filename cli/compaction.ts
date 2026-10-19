@@ -320,9 +320,18 @@ export interface CompactionRunnerOptions {
 
 export interface CompactionRunner {
   /** Nén nếu cần. `true` = lịch sử trong RAM đã thay đổi. */
-  nen(reason: 'auto' | 'manual' | 'overflow'): Promise<boolean>;
+  nen(reason: 'auto' | 'manual' | 'overflow' | 'tran-ngam'): Promise<boolean>;
   /** System prompt hiện tại — đã kèm bản tóm tắt của lần nén gần nhất. */
   system(): string;
+  /**
+   * Bỏ bản tóm tắt và state tích luỹ — dùng khi lệnh `/new`.
+   *
+   * Vì sao: `/new` nghĩa là "quên đi". Nếu giữ bản tóm tắt cũ thì phiên mới
+   * vẫn mang theo những gì phiên cũ đã làm — model tưởng nó vừa sửa file của
+   * phiên trước ⇒ hành động theo ngữ cảnh cũ. Đây là mâu thuẫn hiển nhiên với
+   * người dùng.
+   */
+  reset(): void;
 }
 
 /** Giữa hai lần nén tự động, không gọi lại model. */
@@ -350,7 +359,11 @@ export function createCompactionRunner(opts: CompactionRunnerOptions): Compactio
 
   return {
     system: () => withSummary(opts.system, summary),
-    async nen(reason: 'auto' | 'manual' | 'overflow'): Promise<boolean> {
+    reset(): void {
+      summary = undefined;
+      state = undefined;
+    },
+    async nen(reason: 'auto' | 'manual' | 'overflow' | 'tran-ngam'): Promise<boolean> {
       if (reason === 'auto' && Date.now() - lanNenGanNhat < DEBOUNCE_MS) return false;
 
       const r = await compactConversation({
@@ -360,7 +373,7 @@ export function createCompactionRunner(opts: CompactionRunnerOptions): Compactio
         ...(opts.windowTokens !== undefined ? { windowTokens: opts.windowTokens } : {}),
         ...(summary ? { previousSummary: summary } : {}),
         ...(state ? { previousState: state } : {}),
-        force: reason === 'overflow',
+        force: reason === 'overflow' || reason === 'tran-ngam',
       });
 
       if (r.kind !== 'ok') {
@@ -368,7 +381,14 @@ export function createCompactionRunner(opts: CompactionRunnerOptions): Compactio
         return false;
       }
 
-      opts.session.compact({ firstKept: r.firstKept, summary: r.summary, state: r.state });
+      /* Ghi marker xuống đĩa có thể HỎNG (hết chỗ, rút USB…) — lỗi I/O thì
+       * không được làm sập cả CLI. Báo ra và bỏ lần nén này. */
+      try {
+        opts.session.compact({ firstKept: r.firstKept, summary: r.summary, state: r.state });
+      } catch (e) {
+        opts.note?.(`> khong ghi duoc marker nen: ${e instanceof Error ? e.message : String(e)}`);
+        return false;
+      }
       summary = r.summary;
       state = r.state;
       lanNenGanNhat = Date.now();

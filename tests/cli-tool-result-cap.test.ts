@@ -83,3 +83,30 @@ describe('CLI — mọi tool đều đi qua cắt trần', () => {
     }
   });
 });
+
+
+describe('capToolResult — giới hạn thật, không chỉ field chuỗi', () => {
+  it('object có field MẢNG cũng bị cắt — GIỮ HÌNH DẠNG, bỏ mục cuối', () => {
+    const arr = Array.from({ length: 3_000 }, (_, i) => ({ i, name: `file-${i}` }));
+    const out = capToolResult({ rows: arr }) as Record<string, unknown>;
+    /* Phải còn là MẢNG và ngắn hơn — không được đổi thành object khác, vì model
+     * đọc kết quả này theo đúng hình dạng nó vừa gọi. */
+    expect(Array.isArray(out.rows)).toBe(true);
+    expect((out.rows as unknown[]).length).toBeLessThan(arr.length);
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(TOOL_RESULT_MAX_CHARS + 2_000);
+    expect(out.truncated).toBe(true);
+  });
+
+  it('kết quả VỪA ĐÚNG trần thì KHÔNG bị báo đã cắt và KHÔNG spill', () => {
+    // `fs_read` trả `{content: 24.000 ký tự, size, truncated:false}` — JSON dài
+    // hơn trần ~45 ký tự vì overhead của chính nó, nhưng KHÔNG có gì bị cắt.
+    // Báo `truncated: true` ở đây khiến model đọc lại file ⇒ đúng cái lãng phí
+    // token mà `lib/tools/ipc-node.ts` đã ghi chú là bug.
+    const out = capToolResult({ content: 'x'.repeat(24_000), size: 24_000, truncated: false }) as Record<
+      string,
+      unknown
+    >;
+    expect(out.truncated).not.toBe(true);
+    expect('spillNotice' in out).toBe(false);
+  });
+});

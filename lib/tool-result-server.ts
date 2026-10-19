@@ -155,21 +155,81 @@ export function capToolResult(
   }
   if (raw.length <= TOOL_RESULT_MAX_CHARS) return result;
 
-  /* Ghi đĩa TRƯỚC khi cắt. Best-effort: hỏng thì rơi về cắt trần như cũ,
-     KHÔNG ném — lỗi lưu không được biến tool call thành lỗi (ipc.cjs:736). */
-  const spilled = spillRedacted(raw, 'tool-result', saver);
-
   const out: Record<string, unknown> = {};
   let remaining = TOOL_RESULT_MAX_CHARS;
+  let daCat = false;
+
   for (const [key, value] of Object.entries(result)) {
-    if (typeof value === 'string' && value.length > remaining) {
-      out[key] = `${value.slice(0, Math.max(0, remaining))}\n…[đã cắt bớt vì quá dài]`;
-      remaining = 0;
-    } else {
-      out[key] = value;
-      if (typeof value === 'string') remaining -= value.length;
+    if (typeof value === 'string') {
+      if (value.length > remaining) {
+        out[key] = `${value.slice(0, Math.max(0, remaining))}\n…[đã cắt bớt vì quá dài]`;
+        remaining = 0;
+        daCat = true;
+      } else {
+        out[key] = value;
+        remaining -= value.length;
+      }
+      continue;
+    }
+    if (Array.isArray(value)) {
+      /* Field MẢNG cũng phải bị cắt — không chỉ field chuỗi.
+       *
+       * Vì sao: `git_status` trả `{branch, entries:[…]}` và `bg_status` trả
+       * `{jobs:[…]}` — mảng nằm ở CẤP TRÊN. Nếu chỉ cắt field chuỗi thì kết quả
+       * vẫn dài hơn trần, trong khi phép ước lượng (`estimateContextTokens`) luôn
+       * cắt ở 24.000 ký tự ⇒ thiếu tới 3,7× ⇒ compaction không kích hoạt đúng
+       * lúc. */
+      const giu: unknown[] = [];
+      let used = 0;
+      for (const item of value) {
+        const len = jsonLengthOf(item);
+        if (used + len > remaining) break;
+        giu.push(item);
+        used += len;
+      }
+      const bo = value.length - giu.length;
+      if (bo > 0) {
+        giu.push({ truncated: true, note: `Đã cắt bớt ${bo} mục.` });
+        daCat = true;
+      }
+      out[key] = giu;
+      remaining -= used;
+      continue;
+    }
+    out[key] = value;
+    remaining -= jsonLengthOf(value);
+  }
+
+  /* KHÔNG cắt được gì mà kết quả vẫn dài hơn trần.
+   *
+   * Hai khả năng:
+   * 1. Chênh lệch chỉ là overhead của chính JSON (ví dụ `fs_read` trả 24.000 ký tự
+   *    nội dung + vài chữ khoá) ⇒ KHÔNG có gì bị mất ⇒ trả nguyên kết quả. Báo
+   *    `truncated: true` ở đây khiến model đọc lại file ⇒ đúng cái lãng phí token
+   *    mà `lib/tools/ipc-node.ts` đã ghi chú là bug.
+   * 2. Phần dư nằm trong cấu trúc lồng (object con) mà vòng trên không đụng tới
+   *    ⇒ phải thay bằng con trỏ tới bản spill, nếu không thì vẫn vượt trần. */
+  const conLai = jsonLengthOf(out);
+  if (!daCat && conLai <= TOOL_RESULT_MAX_CHARS + 500) return result;
+
+  const spilled = spillRedacted(raw, 'tool-result', saver);
+
+  if (!daCat) {
+    for (const key of Object.keys(out)) {
+      const v = out[key];
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        out[key] = { truncated: true, note: 'Xem spillNotice để đọc phần đầy đủ.' };
+      }
+    }
+    if (jsonLengthOf(out) > TOOL_RESULT_MAX_CHARS + 500) {
+      return {
+        truncated: true,
+        ...(spilled ? { spillNotice: spilled.notice } : {}),
+        note: 'Kết quả quá dài — đọc bản đầy đủ trong file spill.',
+      };
     }
   }
+
   out.truncated = true;
   if (spilled) out.spillNotice = spilled.notice;
   return out;

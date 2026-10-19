@@ -95,19 +95,6 @@ function hostOf(url: string): string | null {
   }
 }
 
-/**
- * Ghi chú về `capToolResult` — hàm này **đã chuyển** sang
- * `lib/tool-result-server.ts` và được import từ đó.
- *
- * Lý do: đường CLI (`lib/tools/ipc-node.ts`) cần đúng cách cắt này, và viết bản thứ
- * hai là "hai nguồn sự thật" (`AGENTS.md` §6). Hành vi giữ nguyên: cắt trên từng trường
- * string dài, spill trước khi cắt, thêm `truncated` + `spillNotice`.
- *
- * Khác duy nhất: bản ở `lib/tool-result-server.ts` redact thêm lần nữa trước khi ghi
- * đĩa — ở đường server thì nội dung đã redact sẵn (xem `guarded`) nên không có gì để
- * che, còn ở đường CLI thì đây là chốt chặn duy nhất.
- */
-
 function stableKey(name: string, args: unknown): string {
   let raw: string;
   try {

@@ -139,6 +139,21 @@ describe('parseCommand — lệnh /compact', () => {
   });
 });
 
+/**
+ * Lịch sử NHỎ: 14 tin ngắn, tổng ước lượng dưới ngưỡng nén.
+ *
+ * Dùng để cô lập nhánh TRÀN NGẦM: nếu ước lượng đã vượt ngưỡng thì nén tự động
+ * nén trước, và test không chứng minh được gì về nhánh usage.
+ */
+function lichSuNho(): CoreMessage[] {
+  const out: CoreMessage[] = [];
+  for (let i = 0; i < 7; i += 1) {
+    out.push({ role: 'user', content: `cau ${i}` });
+    out.push({ role: 'assistant', content: `tra loi ${i}` });
+  }
+  return out;
+}
+
 describe('REPL — nén context', () => {
   it('/compact nén và lượt sau NHẬN bản tóm tắt trong system prompt', async () => {
     const { state, dir, cleanup } = mk();
@@ -244,6 +259,96 @@ describe('REPL — nén context', () => {
 
       expect(calls.length, 'khong duoc thu lai khi loi khong phai tran context').toBe(1);
       expect(session.compaction, 'khong nen khi loi khong phai tran context').toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+
+describe('REPL — /new và tràn ngầm', () => {
+  it('/new BỎ bản tóm tắt của phiên cũ — phiên mới không được thừa hưởng nó', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model, calls } = stubChat([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+      const { model: modelNen } = stubNen('TOM TAT');
+      const session = openSession(state, dir);
+      for (const m of lichSuDai()) session.append(m);
+
+      await runRepl({
+        model,
+        modelNen,
+        tools: undefined,
+        session,
+        windowTokens: 32_000,
+        ask: reader('/compact', '/new', 'cau moi', '/exit'),
+        out: () => {},
+      });
+
+      // Lượt CUỐI (sau `/new`) không được mang bản tóm tắt của phiên cũ.
+      const guiLuotCuoi = JSON.stringify(calls[calls.length - 1]);
+      expect(guiLuotCuoi, 'phien moi phai quen phien cu').not.toContain('TOM TAT');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('tràn ngầm (usage vượt cửa sổ mà finishReason vẫn "stop") thì nén lại', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model } = stubChat([
+        [
+          { type: 'text-delta', textDelta: 'ok' },
+          { ...DONE, usage: { promptTokens: 300_000, completionTokens: 10 } },
+        ],
+      ]);
+      const { model: modelNen, seen } = stubNen('TOM TAT');
+      const session = openSession(state, dir);
+      /* Lịch sử NHỎ: ước lượng phải DƯỚI ngưỡng, nếu không nén tự động đã nén
+       * trước rồi và test này không cô lập được nhánh tràn ngầm. Mà vẫn đủ dài
+       * để có chỗ cắt (≥ 6 tin trước ranh giới). */
+      for (const m of lichSuNho()) session.append(m);
+
+      await runRepl({
+        model,
+        modelNen,
+        tools: undefined,
+        session,
+        windowTokens: 32_000,
+        ask: reader('cau moi', '/exit'),
+        out: () => {},
+      });
+
+      expect(seen.length, 'phai nen khi tran ngam — provider KHONG bao loi gi').toBeGreaterThan(0);
+      expect(session.compaction?.summary).toContain('TOM TAT');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('sau khi thử lại lần nữa, lịch sử vẫn nguyên vẹn — không mất, không lặp', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model, calls } = stubChat([[{ type: 'text-delta', textDelta: 'ok' }, DONE]], 'prompt is too long');
+      const { model: modelNen } = stubNen('TOM TAT');
+      const session = openSession(state, dir);
+      for (const m of lichSuDai()) session.append(m);
+
+      await runRepl({
+        model,
+        modelNen,
+        tools: undefined,
+        session,
+        windowTokens: 32_000,
+        ask: reader('cau moi', '/exit'),
+        out: () => {},
+      });
+
+      expect(calls.length).toBe(2);
+      // Câu hỏi của người dùng phải xuất hiện **đúng một lần** trong lịch sử.
+      const soLan = session.messages.filter((m) => m.content === 'cau moi').length;
+      expect(soLan, 'cau hoi bi ghi lap hoac mat').toBe(1);
+      expect(session.messages[0].role, 'lich su phai bat dau bang user').toBe('user');
     } finally {
       cleanup();
     }

@@ -349,3 +349,77 @@ markdown thừa trong repo.
 | `npm run build` | exit 0 |
 | `npm run docs:check` | OK — 10 tài liệu, 589 file |
 | BOM | 0 file nguồn có BOM (`tests/repo-hygiene.test.ts` canh) |
+
+
+# FINAL REVIEW — reviewer độc lập (subagent, đọc review package 2712e79..d187eb1)
+
+Reviewer tự dựng script thử, fuzz `chooseCut` trên **160.000** lịch sử ngẫu nhiên, và đối
+chiếu từng mục Review Focus. Kết quả: **0 Critical**, **4 Important**, **6 Minor**.
+
+Đã tự kiểm chứng lại từng phát hiện bằng cách chạy code, không tin lời reviewer.
+
+## Important — đã sửa
+
+### I-1: `/new` không bỏ bản tóm tắt của phiên cũ — **ĐÃ SỬA**
+`createCompactionRunner` giữ `summary`/`state` trong RAM; `session.reset()` chỉ xoá mảng
+lịch sử ⇒ phiên MỚI vẫn mang bản tóm tắt của phiên CŨ (và cả khối "đã đọc file
+này"). Model tưởng nó vừa sửa file của phiên trước ⇒ hành động theo ngữ cảnh cũ.
+Sửa: thêm `reset()` cho `CompactionRunner`; lệnh `/new` gọi nó.
+Chi phí nếu sai: model hành động theo ngữ cảnh của phiên đã kết thúc.
+
+### I-2: `finishReason` chưa ai dùng — nhánh "tràn ngầm" chưa có — **ĐÃ SỬA**
+Đây là một bước của plan (Task 7, Step 4, mục 3) mà tôi **đã bỏ sót**. `evaluateUsageTrigger`
+chỉ được gọi ở đường web ⇒ `finishReason` là field chết ⇒ lời hứa trong comment không có
+test đỏ (`AGENTS.md` §2.1).
+Sửa: REPL kiểm `evaluateUsageTrigger` sau MỖI lượt thành công; `kind !== 'skip'` ⇒ nén
+(`nen('tran-ngam')` — ép cắt, không debounce). Test: usage báo `promptTokens=300.000` với
+`windowTokens=32.000` và `finishReason='stop'` ⇒ phải nén, **dù provider không báo lỗi gì**.
+
+### I-3: cap không bound object có field MẢNG — **ĐÃ SỬA**
+`capToolResult` chỉ cắt field **chuỗi**. `git_status` trả `{branch, entries:[…]}` và
+`bg_status` trả `{jobs:[…]}` — mảng nằm ở cấp trên ⇒ kết quả 88.072 ký tự vượt trần
+24.000, trong khi ước lượng luôn cắt ở 24.000 ⇒ thiếu 3,7× ⇒ compaction không kích hoạt
+đúng lúc. Sửa: cắt field mảng (bỏ mục cuối, thêm mục đánh dấu) + nhánh dự phòng thay
+cấu trúc lồng bằng con trỏ tới bản spill.
+
+### I-4: kết quả VỪA ĐÚNG trần bị báo "đã cắt" + spill thừa — **ĐÃ SỬA**
+`fs_read` trả `{content: 24.000 ký tự, …}` ⇒ JSON dài hơn trần ~45 ký tự vì overhead của
+chính nó ⇒ cap chạy ⇒ model bị báo `truncated: true` ⇒ **đọc lại file** ⇒ đúng cái lãng
+phí token mà `lib/tools/ipc-node.ts` đã ghi chú là bug. Sửa: chỉ đánh dấu "đã cắt" và
+spill khi **thật sự cắt được gì**; chênh lệch chỉ do overhead thì trả nguyên kết quả.
+
+### Minor đã sửa
+- **M-2**: xoá comment lơ lửng mô tả `capToolResult` cũ trong `lib/agent-tools-server.ts`.
+- **M-4**: `session.compact()` ghi đĩa lỗi thì làm sập CLI với lỗi thô → bọc `try/catch`
+  trong runner, báo ra và bỏ lần nén đó.
+- **M-5**: thêm test "sau khi thử lại, lịch sử vẫn nguyên vẹn" (câu hỏi xuất hiện đúng
+  một lần, lịch sử bắt đầu bằng `user`).
+- **M-1 + vệ sinh repo**: `scripts/if-1-plus-1.ts` là file CỦA CHỦ REPO (tạo lúc
+  22:17:58, không phải test nào của repo sinh ra) bị lệch vào commit vì lệnh `git commit`
+  của tôi bị chạy hai lần. **Không xoá file của chủ repo** — chỉ báo lại.
+  Ngoài ra `review-package.diff` (1,18 MB, diff sinh ra) bị commit nhầm cùng lệnh `git add`
+  thư mục workspace ⇒ đã `git rm --cached` + thêm `.superpowers/sdd/*/review-*.diff` vào
+  `.gitignore` để không tái diễn.
+
+### Minor hoãn (ghi ra để chủ repo quyết)
+- **M-3**: khi thử lại sau tràn context, chữ đã stream của lượt hỏng vẫn nằm trên màn
+  hình và câu trả lời in ra lần hai. opencode cũng vậy. Không sửa trong lượt này.
+- **M-6**: `openSession` ném thì CLI in "chay tiep, chi khong nho duoc" rồi thoát mã 1 —
+  có sẵn từ trước, nhưng guard mới của `openSession` khiến nó dễ gặp hơn.
+
+## Mutation của lượt sửa review — tất cả đều bị bắt
+
+| Mutation | Kết quả |
+|---|---|
+| Tắt nhánh bắt tràn ngầm (`quyetDinh.kind !== 'skip'`) | 1 đỏ |
+| Bỏ `nen?.reset()` ở lệnh `/new` | 1 đỏ |
+| Tắt nhánh cắt field mảng trong `capToolResult` | 1 đỏ |
+
+**Hai mutation ĐẦU TIÊN không bị bắt lần đầu** — test chưa cô lập được nhánh:
+- "tràn ngầm": dùng lịch sử NẶNG ⇒ nén **tự động** đã nén trước ⇒ test xanh dù đã tắt
+  nhánh. Sửa: dùng lịch sử NHỎ (ước lượng dưới ngưỡng) nhưng usage báo vượt.
+- "cap mảng": nhánh dự phòng cũng bound được kết quả ⇒ test chỉ kiểm kích thước thì xanh
+  dù đã tắt nhánh. Sửa: kiểm **hình dạng** (mảng còn là mảng và ngắn hơn).
+
+Đây là lần thứ hai trong phiên này một test "xanh" hoá ra không canh gì — và lần này
+mutation KHÔNG áp dụng vào code sai, mà test đơn giản là chưa đủ sắc.
