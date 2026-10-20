@@ -521,7 +521,12 @@ async function main(): Promise<void> {
           console.error('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
           return createAutoApprover(true);
         })()
-      : createConsoleApprover((q) => terminal.hoi(q).then((a) => a ?? ''));
+      : createConsoleApprover((q) => terminal.hoi(q), {
+          /* Lý do từ chối phải ra cho người dùng thấy — đặc biệt khi CLI chạy
+           * headless (stdin là pipe): lúc đó không đọc được câu trả lời, và báo
+           * "người dùng không duyệt" là đổ lỗi oan. */
+          note: (s) => console.error(s),
+        });
     const built = buildIpcTools(host, { approve });
     // `buildIpcTools` trả `Record<string, unknown>` vì hình dạng tool của AI SDK
     // rộng hơn thứ lớp cầu biết. Ép kiểu ở đây là ranh giới duy nhất; nếu để

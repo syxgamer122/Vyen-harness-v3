@@ -41,6 +41,44 @@ describe('describeToolCall — trình bày để người dùng quyết', () => 
   });
 });
 
+describe('createConsoleApprover — khi KHÔNG đọc được câu trả lời (EOF)', () => {
+  /* Đo 2026-10-20 (chạy CLI thật): cổng duyệt báo *"Nguoi dung KHONG duyet"*
+   * trong khi người dùng **chưa hề được hỏi** — vì stdin không phải terminal
+   * (pipe) và dòng trả lời đã bị readline nuốt mất trước khi có câu hỏi.
+   *
+   * EOF (null) KHÁC với "người dùng bấm Enter" (chuỗi rỗng): Enter là câu
+   * trả lời "không" có chủ đích, còn EOF là "không hỏi được" ⇒ phải báo đúng
+   * lý do, không đổ lỗi cho người dùng. */
+  it('EOF thì từ chối NGAY (không hỏi lại 3 lần)', async () => {
+    let soLanHoi = 0;
+    const duyet = createConsoleApprover(async () => {
+      soLanHoi++;
+      return null;
+    });
+    expect(await duyet('fs_write', { path: 'a.ts' })).toBe(false);
+    expect(soLanHoi, 'hết dòng rồi thì hỏi thêm cũng vô ích').toBe(1);
+  });
+
+  it('báo rõ lý do từ chối (không phải "người dùng từ chối")', async () => {
+    const ghiChu: string[] = [];
+    const duyet = createConsoleApprover(async () => null, {
+      note: (s) => ghiChu.push(s),
+    });
+    await duyet('fs_write', { path: 'a.ts' });
+    expect(ghiChu.join('\n')).toMatch(/stdin|terminal/i);
+  });
+
+  it('Enter trống thì VẪN hỏi lại một lần (không phải EOF)', async () => {
+    let soLanHoi = 0;
+    const duyet = createConsoleApprover(async () => {
+      soLanHoi++;
+      return '';
+    });
+    expect(await duyet('fs_write', { path: 'a.ts' })).toBe(false);
+    expect(soLanHoi, 'Enter trống = câu trả lời "không" có chủ đích ⇒ hỏi lại cho chắc').toBe(2);
+  });
+});
+
 describe('createConsoleApprover — chỉ "y" mới cho qua', () => {
   const ask = (answer: string) => createConsoleApprover(async () => answer);
 

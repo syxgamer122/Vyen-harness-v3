@@ -16,8 +16,8 @@
  */
 import { redactSecretText } from '@/lib/secret-registry';
 
-/** Trả lời của người dùng cho một câu hỏi. */
-export type Ask = (question: string) => Promise<string>;
+/** Trả lời của người dùng cho một câu hỏi. `null` = KHÔNG đọc được (EOF). */
+export type Ask = (question: string) => Promise<string | null>;
 
 /** Số ký tự tối đa in ra cho một giá trị tham số. */
 const MAX_VALUE_CHARS = 400;
@@ -61,16 +61,51 @@ function isYes(answer: string): boolean {
   return /^(y|yes|co|c)$/i.test(answer.trim());
 }
 
-export function createConsoleApprover(ask: Ask): (tool: string, args: Record<string, unknown>) => Promise<boolean> {
+/**
+ * Cổng duyệt trên console.
+ *
+ * ============ EOF KHÁC "NGƯỜI DÙNG TỪ CHỐI" ============
+ *
+ * `null` = không đọc được câu trả lời (stdin hết dòng, hoặc stdin không phải
+ * terminal và dữ liệu đã bị nuốt trước khi có câu hỏi). Đo 2026-10-20: cổng
+ * duyệt báo *"Nguoi dung KHONG duyet"* trong khi người dùng **chưa hề được
+ * hỏi** — đổ lỗi oan cho người dùng và khiến lỗi thật (CLI chạy headless)
+ * bị giấu. Nên EOF ⇒ từ chối NGAY và nói rõ là không đọc được.
+ *
+ * Còn chuỗi rỗng (Enter) là câu trả lời "không" CÓ CHỦ ĐÍCH ⇒ hỏi lại một lần
+ * rồi mới từ chối.
+ */
+export function createConsoleApprover(
+  ask: Ask,
+  opts?: { note?: (s: string) => void },
+): (tool: string, args: Record<string, unknown>) => Promise<boolean> {
   return async (tool, args) => {
     const shown = describeToolCall(tool, args);
     for (let lan = 0; lan <= MAX_ASKS; lan++) {
       const answer = await ask(`${shown}\nCho phep chay "${tool}" khong? [y/N] `);
+
+      /* Không đọc được câu trả lời ⇒ hỏi thêm cũng vô ích. */
+      if (answer === null) {
+        opts?.note?.(
+          `[approval] Khong doc duoc cau tra loi (stdin khong phai terminal hoac het dong) ` +
+            `⇒ tool "${tool}" bi TU CHOI. Hay chay CLI trong terminal that.`,
+        );
+        return false;
+      }
       if (isYes(answer)) return true;
+
       if (lan === 0 && !answer.trim()) {
-        // Enter trống ở lượt đầu: hỏi lại một lần cho chắc, chứ không tự coi là có.
+        /* Enter trống ở lượt đầu: hỏi lại một lần cho chắc, chứ không tự coi là có.
+         * Hỏi xong mà vẫn trống ⇒ coi là "không" và DỪNG (không hỏi vòng lặp vô ích). */
         const again = await ask(`Enter trong = KHONG cho phep. Xac nhan "${tool}"? [y/N] `);
+        if (again === null) {
+          opts?.note?.(
+            `[approval] Khong doc duoc cau tra loi ⇒ tool "${tool}" bi TU CHOI.`,
+          );
+          return false;
+        }
         if (isYes(again)) return true;
+        return false;
       }
     }
     return false;

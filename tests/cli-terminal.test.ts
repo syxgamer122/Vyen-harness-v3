@@ -59,6 +59,45 @@ function fakeInterface() {
   return { rl: rl as never, state };
 }
 
+describe('terminal — readline chỉ được tạo LÚC HỎI', () => {
+  /* Đo 2026-10-20 (chạy CLI thật): `echo y | npm run cli -p "..."` ⇒ cổng duyệt
+   * KHÔNG hỏi được và từ chối trong im lặng, dù "y" đã nằm sẵn trong pipe.
+   *
+   * Nguyên nhân đo được (probe trên `node:readline/promises`): interface tạo SỚM
+   * thì nó đọc và nuốt dòng "y" ngay khi dữ liệu tới, TRƯỚC khi có câu hỏi
+   * ⇒ `question()` không còn gì để trả về (null). Tạo interface LÚC HỎI thì
+   * dòng đó vẫn nằm trong bộ đệm và được trả về đúng ("y").
+   */
+  it('không tạo interface trước lần hỏi đầu tiên', async () => {
+    const stdin = new FakeStdin();
+    const { rl, state } = fakeInterface();
+    state.traVe = ['cau 1'];
+    let soLanTao = 0;
+    const t = createTerminal({
+      stdin: stdin as never,
+      taoInterface: () => {
+        soLanTao++;
+        return rl;
+      },
+    });
+
+    expect(soLanTao, 'tạo sớm thì readline nuốt mất input đã nằm sẵn trong pipe').toBe(0);
+
+    await t.hoiDong(new TaoLichSu());
+    expect(soLanTao, 'phải tạo interface khi hỏi').toBe(1);
+
+    await t.hoi('cau duyet');
+    expect(soLanTao, 'các lần hỏi sau dùng CHUNG một interface').toBe(1);
+  });
+
+  it('close() khi chưa hỏi gì thì không ném', () => {
+    const stdin = new FakeStdin();
+    const { rl } = fakeInterface();
+    const t = createTerminal({ stdin: stdin as never, taoInterface: () => rl });
+    expect(() => t.close()).not.toThrow();
+  });
+});
+
 describe('terminal — lời hứa 1: KHÔNG BAO GIỜ dừng stdin', () => {
   it('`stdin.pause()` không bao giờ được gọi', async () => {
     const stdin = new FakeStdin();

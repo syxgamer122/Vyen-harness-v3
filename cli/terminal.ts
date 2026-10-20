@@ -74,7 +74,21 @@ export function createTerminal(opts: TerminalOptions): Terminal {
   const taoInterface =
     opts.taoInterface ?? ((inp, out) => createInterface({ input: inp as never, output: out as never }));
 
-  const rl = taoInterface(stdin, output);
+  /* ============ READLINE TẠO LÚC HỎI, KHÔNG TẠO SỚM ============
+   *
+   * Đo 2026-10-20 (chạy CLI thật): `echo y | npm run cli -p "..."` ⇒ cổng duyệt
+   * KHÔNG hỏi được và từ chối trong im lặng, dù "y" đã nằm sẵn trong pipe.
+   *
+   * Nguyên nhân đo được (probe trên `node:readline/promises`): interface tạo
+   * **sớm** thì nó đọc và nuốt dòng "y" ngay khi dữ liệu tới — TRƯỚC khi có
+   * câu hỏi nào ⇒ `question()` không còn gì để trả về (null). Tạo interface
+   * **lúc hỏi** thì dòng đó vẫn nằm trong bộ đệm và được trả về đúng ("y").
+   *
+   * Nên: interface chỉ được tạo ở lần hỏi ĐẦU TIÊN, rồi dùng chung cho mọi
+   * lần hỏi sau (giữ nguyên hành vi "readline giữ stdin mở" của bản cũ).
+   */
+  let rl: Interface | null = null;
+  const layInterface = (): Interface => (rl ??= taoInterface(stdin, output));
 
   /**
    * Đang chờ người dùng trả lời câu hỏi duyệt.
@@ -91,6 +105,20 @@ export function createTerminal(opts: TerminalOptions): Terminal {
    * Không bắt thì `Ctrl+D` in một dòng lỗi rác thay vì thoát sạch.
    */
   async function hoi(cauHoi: string): Promise<string | null> {
+    /* stdin ĐÃ KẾT THÚC (EOF) ⇒ không còn câu trả lời nào nữa.
+     *
+     * Đo 2026-10-20 (chạy CLI thật): `("y" | npm run cli -p "...")` ⇒ **npm** đọc
+     * hết stdin rồi đóng ⇒ tới lúc cổng duyệt hỏi thì `stdin.readableEnded` đã
+     * là `true`. Nếu cứ hỏi, `rl.question()` không bao giờ resolve ⇒ event loop
+     * rỗng ⇒ **tiến trình thoát im lặng (code 0) giữa lượt** — báo thành công
+     * cho một lượt chưa xong.
+     *
+     * ⇒ Trả null NGAY (không hỏi) để cổng duyệt từ chối CÓ LÝ DO.
+     */
+    const s = stdin as unknown as { readableEnded?: boolean; destroyed?: boolean };
+    if (s.readableEnded === true || s.destroyed === true) {
+      return null;
+    }
     /* Cổng duyệt hỏi GIỮA lúc lượt đang chạy ⇒ `watchInterrupt` đã bật raw mode.
      * Tắt ra để người dùng gõ dòng bình thường (Enter = `\n`, có echo), rồi bật lại
      * sau khi hỏi xong — lượt vẫn đang chạy nên phải giữ raw cho phím Esc. */
@@ -98,7 +126,7 @@ export function createTerminal(opts: TerminalOptions): Terminal {
     if (truoc) stdin.setRawMode?.(false);
     dangHoi = true;
     try {
-      return (await rl.question(cauHoi)) ?? null;
+      return (await layInterface().question(cauHoi)) ?? null;
     } catch {
       return null;
     } finally {
@@ -117,9 +145,10 @@ export function createTerminal(opts: TerminalOptions): Terminal {
    */
   async function hoiDong(lichSu: TaoLichSu): Promise<string | null> {
     emitKeypressEvents(stdin as never);
+    const gocInterface = layInterface();
     const datLai = (noiDung: string) => {
-      rl.write(null, { ctrl: true, name: 'u' });
-      if (noiDung) rl.write(noiDung);
+      gocInterface.write(null, { ctrl: true, name: 'u' });
+      if (noiDung) gocInterface.write(noiDung);
     };
     const onPhim = (_str: string | undefined, key: Key | undefined) => {
       if (!key) return;
@@ -132,7 +161,7 @@ export function createTerminal(opts: TerminalOptions): Terminal {
     };
     stdin.on('keypress', onPhim as never);
     try {
-      const traVe = await rl.question('> ');
+      const traVe = await gocInterface.question('> ');
       return traVe ?? null;
     } catch {
       /* `rl.question` NÉM "readline was closed" khi hết dòng — đo thật 2026-10-19.
@@ -183,6 +212,7 @@ export function createTerminal(opts: TerminalOptions): Terminal {
     hoi,
     hoiDong,
     watchInterrupt,
-    close: () => rl.close(),
+    /* Chưa hỏi gì thì chưa có interface ⇒ không có gì để đóng. */
+    close: () => rl?.close(),
   };
 }
