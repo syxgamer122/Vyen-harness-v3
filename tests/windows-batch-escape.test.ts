@@ -1,78 +1,48 @@
-import { describe, it } from 'vitest';
-import assert from 'node:assert';
-import { escapeWindowsBatchArg, wrapWindowsBatchIfNeeded, ArgvPolicyError } from '../lib/safe-spawn';
+/**
+ * Escape arg trước khi đi qua `cmd.exe /d /c <wrapper.cmd>` (CVE-2024-27998).
+ *
+ * ============ TẠI SAO TEST Ở ĐÂY ============
+ *
+ * Bản đầu test này gọi `lib/safe-spawn.ts` — file ĐÃ BỊ XOÁ 2026-10-20 vì là
+ * code chết (grep toàn cây: chỉ test này dùng). Nhưng **hành vi** nó canh thì
+ * ĐANG CHẠY THẬT trong `lib/ipc.cjs` (`escapeBatchArg` — dùng cho mọi wrapper
+ * `.cmd`/`.bat`), nên phải chuyển test sang đó chứ không xoá luôn.
+ *
+ * Wrapper batch của pnpm/yarn/corepack nội suy `%*`, nên `&` hay `%VAR%` nằm trong
+ * arg THÔ sẽ bị cmd diễn giải thành lệnh thật (second-order expansion).
+ */
+import { describe, it, expect } from 'vitest';
+import { escapeBatchArg } from '@/lib/ipc.cjs';
 
-async function runTests() {
-  console.log('=== RUNNING WINDOWS BATCH ESCAPING TESTS (PHASE 4 BLIND SPOT 1) ===\n');
+describe('escapeBatchArg — chuẩn bị arg cho cmd.exe', () => {
+  it('TỪ CHỐI ký tự điều khiển (null byte, CR, LF)', () => {
+    expect(() => escapeBatchArg('hello\0world')).toThrow();
+    expect(() => escapeBatchArg('hello\rworld')).toThrow();
+    expect(() => escapeBatchArg('hello\nworld')).toThrow();
+  });
 
-  // 1. Control character rejection
-  console.log('--- 1. Control characters rejection (\\0, \\r, \\n) ---');
-  assert.throws(() => escapeWindowsBatchArg('hello\0world'), ArgvPolicyError);
-  assert.throws(() => escapeWindowsBatchArg('hello\rworld'), ArgvPolicyError);
-  assert.throws(() => escapeWindowsBatchArg('hello\nworld'), ArgvPolicyError);
-  console.log('✔ Correctly throws ArgvPolicyError on null bytes and newlines');
+  it('NHÂN ĐÔI % để chặn nội suy biến môi trường cmd.exe', () => {
+    expect(escapeBatchArg('%PATH%')).toBe('%%PATH%%');
+    expect(escapeBatchArg('echo %USERPROFILE%')).toBe('"echo %%USERPROFILE%%"');
+    expect(escapeBatchArg('%COMSPEC% & calc.exe')).toBe('"%%COMSPEC%% & calc.exe"');
+  });
 
-  // 2. Double percent signs for %VAR% expansion prevention
-  console.log('--- 2. %VAR% environment variable expansion prevention ---');
-  assert.strictEqual(escapeWindowsBatchArg('%PATH%'), '%%PATH%%');
-  assert.strictEqual(escapeWindowsBatchArg('echo %USERPROFILE%'), '"echo %%USERPROFILE%%"');
-  assert.strictEqual(escapeWindowsBatchArg('%COMSPEC% & calc.exe'), '"%%COMSPEC%% & calc.exe"');
-  console.log('✔ Correctly doubles % signs to prevent cmd.exe variable expansion');
+  it('BỌC DẤU NHÁY khi có khoảng trắng hoặc metacharacter', () => {
+    expect(escapeBatchArg('hello world')).toBe('"hello world"');
+    expect(escapeBatchArg('a\tb')).toBe('"a\tb"');
+    for (const ch of ['&', '|', '^', '<', '>', '(', ')']) {
+      expect(escapeBatchArg(`a${ch}b`)).toBe(`"a${ch}b"`);
+    }
+  });
 
-  // 3. Metacharacters and spaces quoting
-  console.log('--- 3. Metacharacters and whitespace double-quoting ---');
-  assert.strictEqual(escapeWindowsBatchArg('hello world'), '"hello world"');
-  assert.strictEqual(escapeWindowsBatchArg('a\tb'), '"a\tb"');
-  assert.strictEqual(escapeWindowsBatchArg('a&b'), '"a&b"');
-  assert.strictEqual(escapeWindowsBatchArg('a|b'), '"a|b"');
-  assert.strictEqual(escapeWindowsBatchArg('a^b'), '"a^b"');
-  assert.strictEqual(escapeWindowsBatchArg('a<b'), '"a<b"');
-  assert.strictEqual(escapeWindowsBatchArg('a>b'), '"a>b"');
-  assert.strictEqual(escapeWindowsBatchArg('(a)'), '"(a)"');
-  console.log('✔ Correctly quotes arguments with metacharacters or whitespace');
+  it('NHÂN ĐÔI dấu nháy kép bên trong', () => {
+    expect(escapeBatchArg('param"value')).toBe('"param""value"');
+    expect(escapeBatchArg('"already_quoted"')).toBe('"""already_quoted"""');
+  });
 
-  // 4. Double quote escaping
-  console.log('--- 4. Internal double quote escaping ---');
-  assert.strictEqual(escapeWindowsBatchArg('param"value'), '"param""value"');
-  assert.strictEqual(escapeWindowsBatchArg('"already_quoted"'), '"""already_quoted"""');
-  console.log('✔ Correctly doubles internal double quotes');
-
-  // 5. Alphanumeric simplicity
-  console.log('--- 5. Simple arguments unchanged ---');
-  assert.strictEqual(escapeWindowsBatchArg('build'), 'build');
-  assert.strictEqual(escapeWindowsBatchArg('--filter=package-a'), '--filter=package-a');
-  assert.strictEqual(escapeWindowsBatchArg('file_name.ts'), 'file_name.ts');
-  console.log('✔ Preserves plain safe arguments untouched');
-
-  // 6. wrapWindowsBatchIfNeeded on Windows
-  console.log('--- 6. wrapWindowsBatchIfNeeded wrapping ---');
-  const origPlatform = process.platform;
-  try {
-    Object.defineProperty(process, 'platform', { value: 'win32' });
-    const wrapped = wrapWindowsBatchIfNeeded('C:\\tools\\run.cmd', ['--arg', '%EVIL%', 'hello world']);
-    assert.ok(wrapped.bin.toLowerCase().includes('cmd.exe'));
-    assert.strictEqual(wrapped.args[0], '/d');
-    assert.strictEqual(wrapped.args[1], '/c');
-    assert.strictEqual(wrapped.args[2], 'C:\\tools\\run.cmd');
-    assert.strictEqual(wrapped.args[3], '--arg');
-    assert.strictEqual(wrapped.args[4], '%%EVIL%%');
-    assert.strictEqual(wrapped.args[5], '"hello world"');
-  } finally {
-    Object.defineProperty(process, 'platform', { value: origPlatform });
-  }
-
-  const normalWrapped = wrapWindowsBatchIfNeeded('C:\\tools\\node.exe', ['index.js']);
-  assert.strictEqual(normalWrapped.bin, 'C:\\tools\\node.exe');
-  assert.deepStrictEqual(normalWrapped.args, ['index.js']);
-  console.log('✔ wrapWindowsBatchIfNeeded wraps .cmd/.bat safely and ignores binaries');
-
-  console.log('\n======================================================');
-  console.log('ALL WINDOWS BATCH ESCAPING TESTS PASSED (100%)');
-  console.log('======================================================\n');
-}
-
-describe('Windows Batch Escaping & Safe Invocation', () => {
-  it('runs windows batch escaping checks', async () => {
-    await runTests();
+  it('KHÔNG đụng vào arg đơn giản', () => {
+    expect(escapeBatchArg('build')).toBe('build');
+    expect(escapeBatchArg('--filter=package-a')).toBe('--filter=package-a');
+    expect(escapeBatchArg('file_name.ts')).toBe('file_name.ts');
   });
 });
