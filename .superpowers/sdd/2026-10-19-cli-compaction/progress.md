@@ -962,3 +962,28 @@ lạm dụng thành "mọi luật đều phải có test".
 | `npm run docs:check` | OK — 10 tài liệu, 599 file, 0 lệch (sau khi sửa C1) |
 | `npm run build` | exit 0 |
 | `npm run test` | xem bên dưới |
+
+
+### Lượt 7b — cắt AGENTS.md (bài học về context)
+
+Chủ repo nói đúng: *"AGENTS.md chỉ là checklist hướng dẫn thô mà để tận 10.000 dòng trở
+lên thì AI ngu làm sao nổi"*. Đo thật:
+
+| Mốc | AGENTS.md |
+|---|---|
+| Trước lượt 7 | 16.993 byte (≈13.9k ký tự) |
+| Sau §2.5 (bản đầu) | 22.379 byte (18.265 ký tự) — **sát trần CLI** |
+| **Sau khi cắt (bản này)** | **14.905 byte (12.525 ký tự ≈ 3.1k token)** — nhỏ hơn bản gốc |
+
+⇒ 4 luật mới **không tốn token nào**: cắt được 5.700 ký tự truyện/dữ kiện để bù.
+
+Cách cắt: giữ **luật** + **bảng "lý do thường bỏ qua"** (mật độ cao, là thứ khiến agent
+tuân thủ); bỏ các đoạn kể chuyện dài ⇒ dữ kiện nằm ở ledger, mỗi lượt đọc **đúng phần
+lượt hiện tại**, không đọc cả file.
+
+Thêm vào đầu AGENTS.md: repo có hàng chục nghìn dòng plan/ledger/design doc — chúng là
+**lịch sử**, không phải đầu vào của lượt làm việc; một lượt chỉ cần file này + plan của
+lượt đang làm + spec liên quan.
+
+**Không di dời file lịch sử** (repo theo quy ước §4: giữ tại chỗ + dán nhãn; nhiều test
+trỏ tới đường dẫn plan cũ trong comment).
