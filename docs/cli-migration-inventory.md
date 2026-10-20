@@ -46,6 +46,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/approval-broker.ts`
 - `cli/tui-gate.ts`
 - `cli/tui/theme.ts`
+- `cli/tui/blocks.ts`
 - `cli/tui/entry.tsx`
 
 ## Bằng chứng dòng

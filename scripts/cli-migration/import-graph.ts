@@ -132,6 +132,7 @@ export const CORE_ENTRIES = [
   // guard (xem `tests/repo-hygiene.test.ts`).
   'cli/tui-gate.ts',
   'cli/tui/theme.ts',
+  'cli/tui/blocks.ts',
   'cli/tui/entry.tsx',
 ];
 
