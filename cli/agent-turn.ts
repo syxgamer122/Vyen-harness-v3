@@ -53,11 +53,49 @@ export interface AgentTurnOptions {
    */
   signal?: AbortSignal;
   /** Gọi mỗi lần model định chạy tool — để người dùng thấy máy đang làm gì. */
-  onToolCall?: (toolName: string) => void;
+  onToolCall?: (call: ToolCallEvent) => void;
+  /** Gọi khi một tool đã xong (thành công hay lỗi) — để đóng dòng đang chạy. */
+  onToolResult?: (result: ToolResultEvent) => void;
   onToolError?: (toolName: string, message: string) => void;
   /** Gọi mỗi lần chữ được sinh ra. */
   onText?: (delta: string) => void;
 }
+
+/**
+ * Sự kiện "model định gọi tool".
+ *
+ * ============ VÌ SAO CÓ `id` ============
+ *
+ * `streamText` phát `tool-result` theo lúc **từng lệnh xong**, không theo thứ tự
+ * gọi ⇒ hai tool cùng tên có thể về ngược thứ tự. Ghép theo tên cũng sai (hai
+ * lần gọi cùng tên là hai thứ khác nhau). Nên sự kiện mang `toolCallId` và UI
+ * ghép theo id.
+ */
+export interface ToolCallEvent {
+  id: string;
+  name: string;
+  /** Tham số lệnh. Ở đường native là object; ở đường giả lập là chuỗi tóm tắt. */
+  args: unknown;
+}
+
+/** Sự kiện "tool đã xong" — `id` khớp `ToolCallEvent.id` để ghép. */
+export interface ToolResultEvent {
+  id: string;
+  name: string;
+  result: unknown;
+}
+
+/**
+ * Tham số tool mà AI SDK đưa: **đã là object** (SDK tự parse JSON raw của
+ * provider trước khi phát part).
+ *
+ * Đo 2026-10-20: bản đầu ta tự parse lần nữa ("chuẩn hoá args") — mutation bỏ
+ * hàm đó thì test **vẫn xanh** ⇒ hàm thừa, đã xoá (AGENTS.md §6: code không
+ * cần thì xoá hẳn, đừng giữ "có thể sau này cần").
+ *
+ * Lưu ý hình dạng **khác nhau** giữa hai đường: native là object, giả lập là
+ * chuỗi tóm tắt (model trả text, không có JSON có cấu trúc).
+ */
 
 export interface AgentTurnResult {
   /** Toàn bộ chữ model sinh ra, đã ghép. */
@@ -297,7 +335,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
         }
         break;
       case 'tool-call':
-        if (p.toolName) opts.onToolCall?.(p.toolName);
+        if (p.toolName) {
+          opts.onToolCall?.({
+            id: p.toolCallId ?? '',
+            name: p.toolName,
+            args: p.args,
+          });
+        }
         if (p.toolCallId) {
           toolEvents.push({
             kind: 'call',
@@ -309,6 +353,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
         break;
       case 'tool-result':
         if (p.toolCallId) {
+          opts.onToolResult?.({
+            id: p.toolCallId,
+            name: p.toolName ?? 'tool',
+            result: p.result,
+          });
           toolEvents.push({
             kind: 'result',
             toolCallId: p.toolCallId,

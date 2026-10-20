@@ -346,6 +346,81 @@ describe('C1 — câu trả lời của lượt giả lập phải được GHI'
   });
 });
 
+/* ============ SỰ KIỆN TOOL Ở ĐƯỜNG GIẢ LẬP ============
+ *
+ * Đường giả lập khác đường native ở **hình dạng** dữ liệu, và TUI phải vẽ
+ * được cả hai mà không có hai đường dẫn riêng:
+ *   - native: `args` là **object** (đã chuẩn hoá từ chuỗi JSON của provider);
+ *   - giả lập: `args` là **chuỗi tóm tắt** (model trả text, không có JSON có
+ *     cấu trúc) — cùng `id` để ghép với kết quả. */
+describe('đường giả lập — sự kiện tool', () => {
+  it('tool call giả lập có id + args là chuỗi tóm tắt; kết quả ghép cùng id', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const model = {
+        specificationVersion: 'v1',
+        provider: 'stub',
+        modelId: 'stub-1',
+        defaultObjectGenerationMode: 'tool',
+        doGenerate: async () => ({
+          text: '<tool_call>{"name":"fs_read","args":{"path":"a.txt"}}</tool_call>',
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue({
+                  type: 'error',
+                  error: new Error('This model does not support tools'),
+                } as never);
+                ctrl.close();
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          }),
+      } as unknown as LanguageModelV1;
+
+      const session = openSession(state, dir);
+      const goi: unknown[] = [];
+      const ket: unknown[] = [];
+      await runRepl({
+        model,
+        modelNen: model,
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'x' }),
+          },
+        } as unknown as ToolSet,
+        session,
+        ask: reader('doc a.txt', '/exit'),
+        out: () => {},
+        onToolCall: (e) => goi.push(e),
+        onToolResult: (e) => ket.push(e),
+      });
+
+      expect(goi.length, 'duong gia lap phai phat su kien tool').toBeGreaterThan(0);
+      const e0 = goi[0] as { id: string; name: string; args: unknown };
+      expect(e0.name).toBe('fs_read');
+      expect(typeof e0.id, 'phai co id de ghep ket qua').toBe('string');
+      expect(
+        typeof e0.args,
+        'duong gia lap truyen args la chuoi tom tat, khong phai object',
+      ).toBe('string');
+      expect(ket.length, 'phai co su kien ket qua tool').toBeGreaterThan(0);
+      expect((ket[0] as { id: string }).id, 'ket qua phai ghep dung id cua loi goi').toBe(
+        e0.id,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 
 /* ============ B: LƯỢT GIẢ LẬP HỎNG GIỮA CHỪNG ============
  *

@@ -345,3 +345,131 @@ describe('runRepl — nhiều lượt trong một tiến trình', () => {
     }
   });
 });
+
+/* ============ SỰ KIỆN TOOL + MỨC ĐỘ NOTE ============
+ *
+ * Hai thứ TUI cần mà REPL cũ không có:
+ *   1. **sự kiện tool có id** — để vẽ `*` khi đang chạy, `✓` khi xong, ghép
+ *      theo id chứ không theo thứ tự (hai tool cùng tên về ngược thứ tự).
+ *   2. **mức độ của note** — để tô đỏ lỗi, vàng cảnh báo, xám thông báo.
+ *
+ * Luật bất di bất dịch: **không truyền callback thì hành vi phải y như cũ** —
+ * đường plain in `[goi tool]` đúng như trước, byte giống byte. */
+describe('runRepl — sự kiện tool và mức độ note', () => {
+  const goiTool = {
+    fs_read: {
+      description: 'doc file',
+      parameters: z.object({ path: z.string().optional() }),
+      execute: async () => ({ content: 'NOI DUNG' }),
+    },
+  } as unknown as Parameters<typeof runRepl>[0]['tools'];
+
+  const toolLoi = {
+    fs_read: {
+      description: 'tool hong',
+      parameters: z.object({ path: z.string().optional() }),
+      execute: async () => {
+        throw new Error('hong roi');
+      },
+    },
+  } as unknown as Parameters<typeof runRepl>[0]['tools'];
+
+  const scriptCoTool = () =>
+    stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [{ type: 'text-delta', textDelta: 'xong' }, DONE],
+    ]);
+
+  it('truyền onToolCall ⇒ KHÔNG còn dòng "[goi tool]", và sự kiện tới đúng id', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model } = scriptCoTool();
+      const session = openSession(state, dir);
+      const notes: string[] = [];
+      const goi: unknown[] = [];
+      await runRepl({
+        model,
+        tools: goiTool,
+        session,
+        ask: reader('doc a.txt', '/exit'),
+        out: () => {},
+        note: (s) => notes.push(s),
+        onToolCall: (e) => goi.push(e),
+      });
+      expect(notes.join('\n'), 'khi co su kien thi khong in dong [goi tool]').not.toContain(
+        '[goi tool]',
+      );
+      expect(goi).toEqual([{ id: 't1', name: 'fs_read', args: { path: 'a.txt' } }]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('KHÔNG truyền onToolCall ⇒ vẫn in "[goi tool]" — hành vi plain giữ nguyên', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model } = scriptCoTool();
+      const session = openSession(state, dir);
+      const notes: string[] = [];
+      await runRepl({
+        model,
+        tools: goiTool,
+        session,
+        ask: reader('doc a.txt', '/exit'),
+        out: () => {},
+        note: (s) => notes.push(s),
+      });
+      expect(notes.join('\n'), 'duong plain phai giu nguyen dong [goi tool]').toContain(
+        '[goi tool] fs_read',
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('onUsage nhận token của lượt', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model } = stubModel([[{ type: 'text-delta', textDelta: 'ok' }, DONE]]);
+      const session = openSession(state, dir);
+      const usage: unknown[] = [];
+      await runRepl({
+        model,
+        tools: undefined,
+        session,
+        ask: reader('cau hoi', '/exit'),
+        out: () => {},
+        onUsage: (u) => usage.push(u),
+      });
+      expect(usage).toHaveLength(1);
+      expect((usage[0] as { promptTokens: number }).promptTokens).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('tool lỗi ⇒ note mang mức "error" (TUI tô đỏ được)', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const { model } = scriptCoTool();
+      const session = openSession(state, dir);
+      const notes: Array<{ text: string; level?: string }> = [];
+      await runRepl({
+        model,
+        tools: toolLoi,
+        session,
+        ask: reader('doc a.txt', '/exit'),
+        out: () => {},
+        note: (s, level) => notes.push({ text: s, ...(level ? { level } : {}) }),
+      });
+      const loi = notes.find((n) => n.text.includes('[tool that bai]'));
+      expect(loi, 'phai bao loi tool').toBeDefined();
+      expect(loi!.level, 'loi tool phai co muc do error').toBe('error');
+    } finally {
+      cleanup();
+    }
+  });
+});

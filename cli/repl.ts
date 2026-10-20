@@ -28,6 +28,7 @@ import { evaluateUsageTrigger, isContextOverflowError } from '@/lib/context-budg
 import { CLI_DEFAULT_CONTEXT_WINDOW, createCompactionRunner, statusCodeOf } from './compaction';
 import { runTurn } from './emulated';
 import { runAgentTurn, messagesDaHoanThanh } from './agent-turn';
+import type { ToolCallEvent, ToolResultEvent } from './agent-turn';
 import type { SessionStore } from './session';
 import type { TaoLichSu } from './history';
 
@@ -103,11 +104,40 @@ export interface ReplOptions {
   lichSu?: TaoLichSu;
   /** In ra màn hình (stdout trong bản thật). */
   out: (text: string) => void;
-  /** In ra phần trạng / cảnh báo (stderr trong bản thật). */
-  note?: (text: string) => void;
+  /**
+   * In ra phần trạng / cảnh báo (stderr trong bản thật).
+   *
+   * ============ VÌ SAO CÓ MỨC ĐỘ ============
+   *
+   * TUI cần tô đỏ lỗi, vàng cảnh báo, xám thông báo. Nếu không có mức độ thì
+   * TUI phải **đoán** từ chuỗi ("LOI" trong text) — đúng kiể "so khớp chuỗi
+   * ngầm" mà AGENTS.md §2 cảnh báo. Mức độ là **tuỳ chọn** ⇒ đường plain gọi
+   * `note(text)` vẫn in y nguyên từng byte, không đổi gì.
+   */
+  note?: (text: string, level?: NoteLevel) => void;
+  /**
+   * Sự kiện tool — TUI vẽ dòng `*` khi đang chạy, `✓` khi xong.
+   *
+   * Không truyền thì REPL in `[goi tool] ...` như cũ (hành vi plain giữ nguyên).
+   */
+  onToolCall?: (call: ToolCallEvent) => void;
+  /** Tool xong — đóng dòng đang chạy, ghép theo `id`. */
+  onToolResult?: (result: ToolResultEvent) => void;
+  /** Tool lỗi — TUI tô đỏ dòng đó. */
+  onToolError?: (name: string, message: string) => void;
+  /** Token đã dùng của lượt — TUI cập nhật header. */
+  onUsage?: (usage: { promptTokens: number | null; completionTokens: number | null }) => void;
   system?: string;
   maxTokens?: number;
 }
+
+/**
+ * Mức độ của một dòng trạng thái.
+ *
+ * `error` = có việc người dùng phải xử lý (lỗi, từ chối) · `warn` = cần chú ý
+ * (nén context, lệnh bị cắt) · `info` = thông báo thường.
+ */
+export type NoteLevel = 'info' | 'warn' | 'error';
 
 export async function runRepl(opts: ReplOptions): Promise<void> {
   const out = opts.out;
@@ -203,18 +233,33 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
           ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
           signal: huy.signal,
           env: envEmulated,
-          onToolCall: (name) => note(`[goi tool] ${name}`),
-          onToolError: (name, msg) => note(`[tool that bai] ${name}: ${msg}`),
+          onToolCall: (e) => {
+            /* Có callback ⇒ TUI tự vẽ dòng tool ⇒ không in `[goi tool]`.
+               Không có ⇒ in như cũ, **y nguyên từng byte** (đường plain). */
+            if (opts.onToolCall) opts.onToolCall(e);
+            else note(`[goi tool] ${e.name}`);
+          },
+          onToolResult: (e) => opts.onToolResult?.(e),
+          onToolError: (name, msg) => {
+            if (opts.onToolError) opts.onToolError(name, msg);
+            else note(`[tool that bai] ${name}: ${msg}`, 'error');
+          },
           onText: (delta) => out(delta),
           onChuyenDuong: (lyDo) => {
             if (lyDo === 'model-che-tools') {
-              note('> model nay khong ho tro tool — chuyen sang duong gia lap.');
+              note('> model nay khong ho tro tool — chuyen sang duong gia lap.', 'warn');
             }
           },
         });
         // Ghi MỘT LẦN cho cả khối: tool-call và tool-result phải vào đĩa cùng nhau.
         // Ghi lệch pha là provider từ chối mọi lượt sau của phiên.
         opts.session.appendAll(turn.messages);
+        /* Báo token NGAY sau khi ghi transcript: TUI cập nhật header theo usage
+         * của lượt vừa xong, không phải đợi lượt sau. */
+        opts.onUsage?.({
+          promptTokens: turn.usage.promptTokens ?? null,
+          completionTokens: turn.usage.completionTokens ?? null,
+        });
         out('\n');
         /* TRÀN NGẦM — provider KHÔNG báo lỗi, nên không có gì để bắt qua
          * `isContextOverflowError`. Chỉ usage mới phản lộ:
@@ -230,7 +275,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
           windowTokens: opts.windowTokens ?? CLI_DEFAULT_CONTEXT_WINDOW,
         });
         if (quyetDinh.kind !== 'skip') {
-          note(`> ${quyetDinh.kind} — dang nen lai...`);
+          note(`> ${quyetDinh.kind} — dang nen lai...`, 'warn');
           await nen?.nen('tran-ngam');
         }
       } catch (e) {
@@ -245,7 +290,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
         const daHoanThanh = messagesDaHoanThanh(e);
         if (daHoanThanh.length > 0) {
           opts.session.appendAll(daHoanThanh);
-          note(`> ${daHoanThanh.length} message da hoan thanh truoc khi luot hong — da ghi lai.`);
+          note(`> ${daHoanThanh.length} message da hoan thanh truoc khi luot hong — da ghi lai.`, 'warn');
         }
         /* Lượt hỏng KHÔNG được làm sập cả REPL — nếu ném ra ngoài thì chỉ một lần
          * lỗi 429 là mất trắng phiên làm việc, đúng lúc đang làm dở.
@@ -263,10 +308,10 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
            * đúng MỘT lần — không có lưới an toàn nào khác. */
           if (!daThuLai && nen && isContextOverflowError(statusCodeOf(e), msg)) {
             daThuLai = true;
-            note('> het context, dang nen lai...');
+            note('> het context, dang nen lai...', 'warn');
             if (await nen.nen('overflow')) continue;
           }
-          note(`\n> LOI: ${msg}`);
+          note(`\n> LOI: ${msg}`, 'error');
           note('> lich su van con. Thu lai.');
         }
       } finally {

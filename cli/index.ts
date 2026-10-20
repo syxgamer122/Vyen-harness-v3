@@ -249,7 +249,7 @@ export async function chayMotLuot(opts: {
           ghiRa(delta);
           wroteAny = true;
         },
-        onToolCall: (name) => ghiChu(`\n[goi tool] ${name}`),
+        onToolCall: (e) => ghiChu(`\n[goi tool] ${e.name}`),
         onToolError: (name, msg) => ghiChu(`[tool that bai] ${name}: ${msg}`),
         onChuyenDuong: (lyDo) => {
           if (lyDo === 'model-che-tools') {

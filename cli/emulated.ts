@@ -29,6 +29,7 @@ import type { CoreMessage, LanguageModel, LanguageModelV1 } from 'ai';
 import type { ToolSet } from 'ai';
 import { messagesHoanThanhCuaEmu, runEmulatedLoop } from '@/lib/emulated-agent';
 import { ganMessagesHoanThanh, runAgentTurn, wrapTools } from './agent-turn';
+import type { ToolCallEvent, ToolResultEvent } from './agent-turn';
 import type { AgentToolSet } from '@/lib/agent-tools-server';
 import {
   isToolUnsupported,
@@ -106,7 +107,8 @@ export interface EmulatedTurnOptions {
   maxTokens?: number;
   signal?: AbortSignal;
   onText?: (text: string) => void;
-  onToolCall?: (name: string) => void;
+  onToolCall?: (call: ToolCallEvent) => void;
+  onToolResult?: (result: ToolResultEvent) => void;
   /** Tool lỗi ⇒ báo ra (giống đường native) để người dùng thấy lý do. */
   onToolError?: (name: string, message: string) => void;
 }
@@ -173,8 +175,19 @@ export async function runEmulatedTurn(opts: EmulatedTurnOptions): Promise<Emulat
     },
     onReasoningLine: () => {},
     onAnnotation: (payload) => {
-      const tool = payload.tool as { name?: string; phase?: string } | undefined;
-      if (tool?.phase === 'start' && tool.name) opts.onToolCall?.(tool.name);
+      /* Annotation của vòng lặp giả lập mang: `id`, `name`, `phase`
+       * ('start' | 'done'), `args` (chuỗi tóm tắt) và `summary` (kết quả rút
+       * gọn). Cùng `id` ở cả hai pha ⇒ UI ghép được như đường native. */
+      const tool = payload.tool as
+        | { id?: unknown; name?: string; phase?: string; args?: unknown; summary?: unknown }
+        | undefined;
+      if (!tool?.name) return;
+      const id = String(tool.id ?? '');
+      if (tool.phase === 'start') {
+        opts.onToolCall?.({ id, name: tool.name, args: tool.args });
+      } else if (tool.phase === 'done') {
+        opts.onToolResult?.({ id, name: tool.name, result: tool.summary });
+      }
     },
     onUsage: (u) => {
       usage = { promptTokens: u.promptTokens ?? 0, completionTokens: u.completionTokens ?? 0 };
@@ -218,7 +231,8 @@ export interface TurnOptions {
   /** Môi trường để tra cache "model này chê tools". */
   env: EmulatedEnv;
   onText?: (delta: string) => void;
-  onToolCall?: (name: string) => void;
+  onToolCall?: (call: ToolCallEvent) => void;
+  onToolResult?: (result: ToolResultEvent) => void;
   onToolError?: (name: string, message: string) => void;
   /** Gọi khi lượt chuyển sang đường giả lập — để báo người dùng biết. */
   onChuyenDuong?: (lyDo: 'ep' | 'model-che-tools') => void;
@@ -270,6 +284,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
       ...(opts.signal ? { signal: opts.signal } : {}),
       onText: opts.onText,
       onToolCall: opts.onToolCall,
+      onToolResult: opts.onToolResult,
       onToolError: opts.onToolError,
     });
     return {
@@ -300,6 +315,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
       ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
       onToolCall: opts.onToolCall,
+      onToolResult: opts.onToolResult,
       onToolError: opts.onToolError,
       onText: opts.onText,
     });

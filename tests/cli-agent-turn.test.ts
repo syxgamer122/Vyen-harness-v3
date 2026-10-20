@@ -137,7 +137,9 @@ describe('runAgentTurn — vòng lặp tool', () => {
       model,
       tools: tools(),
       messages: [user('p')],
-      onToolCall: (name) => seen.push(name),
+      /* `onToolCall` mang SỰ KIỆN (có id) chứ không phải tên — xem `ToolCallEvent`.
+         Test này vẫn thu **tên** tool như trước, chỉ đổi cách lấy. */
+      onToolCall: (e) => seen.push(e.name),
     });
     expect(seen).toEqual(['fs_read']);
   });
@@ -472,5 +474,59 @@ describe('runAgentTurn — lượt hỏng giữa chừng', () => {
         expect(coKetQua.has(p.toolCallId ?? ''), 'tool-call khong co tool-result').toBe(true);
       }
     }
+  });
+});
+
+/* ============ SỰ KIỆN TOOL CÓ ID ============
+ *
+ * TUI cần biết tool nào **đang chạy** và tool nào **xong**, để vẽ dòng `*` → `✓`.
+ * Ghép bằng thứ tự là sai: `streamText` phát `tool-result` theo lúc từng lệnh
+ * xong, nên hai tool cùng tên có thể về theo thứ tự ngược. Ghép bằng tên cũng
+ * sai: hai tool cùng tên là hai lần gọi khác nhau. Vậy nên sự kiện phải mang
+ * `id` (toolCallId) và UI ghép theo id.
+ *
+ * `args` phải là **object** khi có thể: provider thô đưa chuỗi JSON, UI cần
+ * đọc được tham số, không phải parse lần nữa. */
+describe('sự kiện tool', () => {
+  it('tool call có id + args chuẩn hoá; tool result ghép đúng id', async () => {
+    const goi: unknown[] = [];
+    const ket: unknown[] = [];
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [{ type: 'text-delta', textDelta: 'xong' }, DONE],
+    ]);
+    await runAgentTurn({
+      model,
+      tools: tools([]),
+      messages: [user('doc a.txt')],
+      onToolCall: (e) => goi.push(e),
+      onToolResult: (e) => ket.push(e),
+    });
+
+    expect(goi, 'phai co dung mot su kien tool call').toEqual([
+      { id: 't1', name: 'fs_read', args: { path: 'a.txt' } },
+    ]);
+    expect(ket).toHaveLength(1);
+    expect((ket[0] as { id: string }).id).toBe('t1');
+    expect((ket[0] as { name: string }).name).toBe('fs_read');
+  });
+
+  it('không truyền callback thì vẫn chạy, không lỗi (hành vi plain giữ nguyên)', async () => {
+    const { model } = stubModel([
+      [
+        { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+        { ...DONE, finishReason: 'tool-calls' },
+      ],
+      [{ type: 'text-delta', textDelta: 'xong' }, DONE],
+    ]);
+    const r = await runAgentTurn({
+      model,
+      tools: tools([]),
+      messages: [user('doc a.txt')],
+    });
+    expect(r.text).toBe('xong');
   });
 });
