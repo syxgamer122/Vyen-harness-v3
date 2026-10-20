@@ -433,10 +433,17 @@ export async function importBackup(
     mode,
   };
 
-  await db.transaction('rw', db.chats, db.messages, async () => {
+  await db.transaction('rw', db.chats, db.messages, db.wsSnapshots, async () => {
     if (mode === 'overwrite') {
       await db.messages.clear();
       await db.chats.clear();
+      /* ẢNH CHỤP WORKSPACE cũng phải xoá.
+       *
+       * `wsSnapshots` lưu nội dung file TRƯỚC khi agent ghi (dùng để "khôi
+       * phục"), gắn theo `chatId`. Giữ lại ⇒ ảnh chụp cũ vẫn khớp `chatId` của
+       * chat vừa nạp ⇒ thao tác "Khôi phục" có thể ghi nội dung file CŨ xuống
+       * đĩa người dùng. Xoá chat rồi mà giữ ảnh chụp là nửa vời. */
+      await db.wsSnapshots.clear();
     }
 
     const existingIds = new Set(
