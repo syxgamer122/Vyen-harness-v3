@@ -390,6 +390,34 @@ export async function invokeBridgeChannel(channel: string, payload?: unknown): P
  */
 export function isSafeLocalHostOrIp(hostOrUrl: string): boolean {
   if (!hostOrUrl) return false;
+  const hostname = extractHostname(hostOrUrl);
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '0.0.0.0'
+  );
+}
+
+/**
+ * CHẶT HƠN `isSafeLocalHostOrIp`: **không** chấp nhận `0.0.0.0`.
+ *
+ * Dùng cho `Origin`/`Referer` — hai header này do BÊN GỬI gửi ⇒ nội dung nằm
+ * ngoài kiểm soát của ta. `http://0.0.0.0:3000` không phải "trang trên máy
+ * này", nó là một trang bất kỳ tự khai là vậy.
+ *
+ * `Host` thì KHÔNG dùng hàm này: `0.0.0.0` là địa chỉ bind của chính server
+ * (launcher có thể mở app tại `http://0.0.0.0:port`) và trình duyệt không cho
+ * giả mạo Host ⇒ giữ nguyên `isSafeLocalHostOrIp` cho Host.
+ */
+export function isSafeLocalOrigin(originOrUrl: string): boolean {
+  if (!originOrUrl) return false;
+  const hostname = extractHostname(originOrUrl);
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+/** Tách hostname từ URL hoặc chuỗi `host:port` (bỏ dấu ngoặc IPv6). */
+function extractHostname(hostOrUrl: string): string {
   const val = hostOrUrl.trim();
   let hostname = '';
   try {
@@ -401,8 +429,7 @@ export function isSafeLocalHostOrIp(hostOrUrl: string): boolean {
   } catch {
     hostname = val.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
   }
-  hostname = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0';
+  return hostname.replace(/^\[|\]$/g, '').toLowerCase();
 }
 
 /**
@@ -424,13 +451,14 @@ export function isLocalRequest(req: Request): boolean {
     return false;
   }
 
-  // Origin nếu có phải là local
-  if (origin && !isSafeLocalHostOrIp(origin)) {
+  // Origin nếu có phải là local — CHẶT HƠN Host (xem `isSafeLocalOrigin`):
+  // Origin do bên gửi gửi ⇒ không tin được ⇒ `0.0.0.0` bị loại.
+  if (origin && !isSafeLocalOrigin(origin)) {
     return false;
   }
 
-  // Referer nếu có phải là local
-  if (referer && !isSafeLocalHostOrIp(referer)) {
+  // Referer nếu có phải là local — cùng lý do với Origin.
+  if (referer && !isSafeLocalOrigin(referer)) {
     return false;
   }
 
