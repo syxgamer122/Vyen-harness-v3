@@ -291,25 +291,76 @@ function appendLine(file: string, text: string): void {
   fs.appendFileSync(file, `${text}\n`, 'utf8');
 }
 
+/**
+ * Nạp (hoặc dựng) header của transcript.
+ *
+ * ============ VÌ SAO DỰNG LẠI ĐẦU FILE, KHÔNG NỐI VÀO CUỐI ============
+ *
+ * Bản đầu khi dòng 1 hỏng thì **nối** một header mới vào CUỐI file ⇒ dòng 1 vẫn
+ * hỏng ⇒ `readMessages` ném ở **mọi** lần mở ⇒ phiên chết vĩnh viễn, và mỗi
+ * lần chạy lại còn nối thêm một dòng rác ⇒ file phình dần.
+ *
+ * Đo 2026-10-20 (probe trên đúng hàm này): file có header cắt cụt + 2 message
+ * hợp lệ ⇒ 3 lần mở ⇒ 3 lần ném "Transcript … hong o dong 1", file tích thêm
+ * header mỗi lần.
+ *
+ * Nay: dựng lại **đầu** file (header mới ở dòng 1) bằng file tạm + `rename`
+ * (nguyên tắc atomic của `catFile`), giữ nguyên phần còn lại.
+ *
+ * Dòng 1 cũ bị BỎ chỉ khi nó **không parse được JSON** (rác ⇒ không cứu được
+ * gì). Nếu nó parse được mà không phải header (file cũ không có header) thì
+ * GIỮ LẠI như một bản ghi bình thường.
+ */
 function readOrCreateHeader(file: string, directory: string): SessionHeader {
-  if (fs.existsSync(file)) {
-    const dong = fs.readFileSync(file, 'utf8').split('\n')[0] ?? '';
-    try {
-      const h = JSON.parse(dong) as SessionHeader;
-      if (h?.kind === 'header' && h.sessionId && h.directory) return h;
-    } catch {
-      /* Header hỏng = file hỏng từ đầu. Dựng lại header mới nhưng GIỮ file cũ:
-       * xoá nó là mất lịch sử, mà ta còn chưa biết nó có giá trị gì. */
-    }
-  }
-  const h: SessionHeader = {
+  const header: SessionHeader = {
     kind: 'header',
     sessionId: crypto.randomUUID(),
     directory,
     createdAt: new Date().toISOString(),
   };
-  appendLine(file, JSON.stringify(h));
-  return h;
+
+  if (!fs.existsSync(file)) {
+    appendLine(file, JSON.stringify(header));
+    return header;
+  }
+
+  const raw = fs.readFileSync(file, 'utf8');
+  const dong = raw.split('\n');
+  try {
+    const h = JSON.parse(dong[0] ?? '') as SessionHeader;
+    if (h?.kind === 'header' && h.sessionId && h.directory) return h;
+  } catch {
+    /* Header hỏng = file hỏng ở đầu. Dựng lại header mới nhưng GIỮ file cũ:
+     * xoá nó là mất lịch sử, mà ta còn chưa biết nó có giá trị gì. */
+  }
+
+  /* Bỏ phần tử rỗng cuối (file kết thúc bằng `\n`) — nó không phải dòng nào. */
+  if (dong.length > 1 && dong[dong.length - 1] === '') dong.pop();
+
+  const phanConLai = dong.slice(1);
+  let giuDongDauCu = false;
+  try {
+    JSON.parse(dong[0] ?? '');
+    giuDongDauCu = true;
+  } catch {
+    giuDongDauCu = false;
+  }
+
+  const noiDung = [
+    JSON.stringify(header),
+    ...(giuDongDauCu ? [dong[0] as string] : []),
+    ...phanConLai,
+  ].join('\n');
+  const tam = `${file}.tmp`;
+  fs.writeFileSync(tam, `${noiDung}\n`, 'utf8');
+  fs.renameSync(tam, file);
+
+  /* Nói ra chứ đừng âm thầm: dòng 1 cũ bị bỏ là MẤT DỮ LIỆU (dù nó là rác). */
+  console.warn(
+    `[session] Header transcript hong o dong 1 — da dung lai header, phan con lai giu nguyen.` +
+      (giuDongDauCu ? '' : ' Dong 1 cu khong parse duoc JSON nen da bo.'),
+  );
+  return header;
 }
 
 /**
