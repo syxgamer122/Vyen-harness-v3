@@ -9,7 +9,10 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    /* `.tsx` vì component của TUI là JSX (đảo `cli/tui/`). Không có mục này thì
+       file test JSX bị coi là "không tồn tại" ⇒ test không hề chạy, và xanh
+       một cách vô nghĩa. */
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     /* Dọn env backend tìm kiếm trước mỗi file — nếu không, key thật trên máy
        dev đổi thứ tự engine và làm test đỏ (xem tests/setup-env.ts). */
     setupFiles: ['./tests/setup-env.ts'],

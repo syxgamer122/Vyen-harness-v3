@@ -133,6 +133,12 @@ export const CORE_ENTRIES = [
   'cli/tui-gate.ts',
   'cli/tui/theme.ts',
   'cli/tui/blocks.ts',
+  'cli/tui/header.tsx',
+  'cli/tui/transcript.tsx',
+  'cli/tui/composer.tsx',
+  'cli/tui/approval.tsx',
+  'cli/tui/footer.tsx',
+  'cli/tui/app.tsx',
   'cli/tui/entry.tsx',
 ];
 
