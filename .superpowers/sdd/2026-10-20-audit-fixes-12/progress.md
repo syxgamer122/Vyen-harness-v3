@@ -59,6 +59,27 @@ Review độc lập (subagent, có probe end-to-end) trả về: **1 Critical + 
 - [x] Task 11: Xoá export chết + test quét cây nguồn — commit e2488f0
 - [x] Task 12: Cổng chất lượng + review độc lập — review xong (1 Critical + 3 Important + 8 Minor), fix pass commit 3b0cafe
 
+## Vòng 2 — kiểm chứng cổng duyệt thật + dọn code chết (sau khi đã merge/push vòng 1)
+
+Vòng 1 đã merge (`d157e72`) + push. Vòng 2 làm phần "kiểm chứng chuỗi ghi file thật" mà báo cáo audit chưa chạm tới.
+
+**Phát hiện mới (do chạy thật, không phải đọc code):** cổng duyệt của CLI **hỏi vào hư không** khi stdin là pipe.
+- Đo: `("y" | npm run cli -p "…")` ⇒ npm đọc hết stdin rồi đóng ⇒ tới lúc cổng duyệt hỏi thì `stdin.readableEnded === true` (đo bằng log tạm) ⇒ `rl.question()` không bao giờ resolve ⇒ event loop rỗng ⇒ **tiến trình thoát im lặng code 0 giữa lượt**.
+- Trước fix: câu hỏi không bao giờ hiện ra, tool bị từ chối với thông điệp "Nguoi dung KHONG duyet" — **đổ lỗi oan cho người dùng**.
+- Sửa: (1) `cli/terminal.ts` tạo readline interface **lúc hỏi** (đo trên `node:readline/promises`: tạo sớm ⇒ `question()` trả null; tạo lúc hỏi ⇒ trả đúng "y"); (2) `hoi()` trả `null` ngay nếu stdin đã EOF ⇒ approver từ chối **có lý do** (`note`) và lượt không bị cắt; (3) `cli/approve.ts` phân biệt EOF (`null`) với Enter trống (`''`): Enter ⇒ hỏi lại đúng 1 lần rồi dừng (trước đó hỏi tới 5 lần).
+- Task 13 trong plan + test đỏ trước (4 ca).
+
+**Dọn code chết (Task 14):** `lib/safe-spawn.ts` (chỉ test gọi) bị xoá. Nhưng `tests/windows-batch-escape.test.ts` + `tests/windows-node-bypass.test.ts` cũng trỏ vào nó ⇒ `npm run typecheck` **bắt được** (grep đầu tôi bị cắt) ⇒ chuyển 2 file test sang canh hành vi **đang chạy thật** (`escapeBatchArg`, `resolveSpawnTarget` trong `lib/ipc.cjs` — export ra cho test). ⇒ Coverage bảo mật (escape `%`/`&` cho cmd.exe, bypass node cho npm/npx) **không bị mất**.
+
+**Kiểm chứng thật (fake provider OpenAI-compatible cục bộ ⇒ không tốn credit, không phụ thuộc quota model free):**
+| Tình huống | Kết quả |
+|---|---|
+| pipe, không có terminal | câu hỏi duyệt hiện ra; tool bị **từ chối có lý do**; lượt **không bị cắt**; file không được tạo |
+| `VYEN_YOLO=1`, ghi trong workspace | file thật được ghi: `ket-qua.txt = [HELLO VYEN]` ✓ |
+| `VYEN_YOLO=1`, ghi **ngoài** workspace | path-guard chặn: "Duong dan tuyệt doi bi cam trong workspace"; file đích **không** tồn tại ✓ |
+
+**Cổng cuối:** typecheck 0 · lint 0 lỗi (8 warning baseline) · test 245/246 file xanh (đỏ duy nhất: `tests/secret-registry.test.ts` — flaky đã biết) · docs:check OK · plan-traceability 16/16.
+
 ## Cổng chất lượng cuối (sau fix pass)
 
 | Cổng | Kết quả |
