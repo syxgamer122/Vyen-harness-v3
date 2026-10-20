@@ -264,21 +264,28 @@ export async function chayMotLuot(opts: {
       );
       return;
     } catch (e) {
-      /* Tràn context: provider TỪ CHỐI, không phải lỗi của ta. Nén lại rồi thử
-       * đúng MỘT lần — không có lưới an toàn nào khác. */
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!daThuLai && isContextOverflowError(statusCodeOf(e), msg)) {
-        daThuLai = true;
-        ghiChu('> het context, dang nen lai...');
-        if (await nen.nen('overflow')) continue;
-      }
-
       /* Phần ĐÃ HOÀN THÀNH trước khi lượt hỏng vẫn phải ghi lại — Y HỆT đường
-       * REPL (`cli/repl.ts`).
+       * REPL (`cli/repl.ts`): ghi TRƯỚC, rồi mới xử lý nhánh tràn context.
        *
-       * Không ghi thì `fs_write` đã ghi file mà transcript không có dấu vết ⇒
+       * Thứ tự này quan trọng: nhánh tràn context `continue` để thử lại ⇒ nếu
+       * ghi SAU thì lượt thử lại chạy với lịch sử KHÔNG có kết quả tool ⇒ model
+       * phát lại đúng tool call đó ⇒ **ghi file hai lần**. Và transcript mất
+       * dấu vết file nào vừa bị sửa ⇒ `/compact` không biết.
+       *
+       * Không gì thì `fs_write` đã ghi file mà transcript không có dấu vết ⇒
        * `/compact` không biết file nào vừa bị sửa, và đường `overflow` thử lại
        * ⇒ model LÀM LẠI đúng các tool call đó ⇒ ghi file hai lần.
+       *
+       * Chỉ phần ĐẦY ĐỦN mới được ghi (tool-call có tool-result tương ứng) —
+       * ghi chuỗi hở làm provider từ chối MỌI lượt sau của phiên.
+       */
+      /* Phần ĐÃ HOÀN THÀNH trước khi lượt hỏng vẫn phải ghi lại — Y HỆT đường
+       * REPL (`cli/repl.ts`): ghi TRƯỚC, rồi mới xử lý nhánh tràn context.
+       *
+       * Thứ tự này quan trọng: nhánh tràn context `continue` để thử lại ⇒ nếu
+       * ghi SAU thì lượt thử lại chạy với lịch sử KHÔNG có kết quả tool ⇒ model
+       * phát lại đúng tool call đó ⇒ **ghi file hai lần**. Và transcript mất
+       * dấu vết file nào vừa bị sửa ⇒ `/compact` không biết.
        *
        * Chỉ phần ĐẦY ĐỦN mới được ghi (tool-call có tool-result tương ứng) —
        * ghi chuỗi hở làm provider từ chối MỌI lượt sau của phiên.
@@ -287,6 +294,15 @@ export async function chayMotLuot(opts: {
       if (daHoanThanh.length > 0) {
         session.appendAll(daHoanThanh);
         ghiChu(`> ${daHoanThanh.length} message da hoan thanh truoc khi luot hong — da ghi lai.`);
+      }
+
+      /* Tràn context: provider TỪ CHỐI, không phải lỗi của ta. Nén lại rồi thử
+       * đúng MỘT lần — không có lưới an toàn nào khác. */
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!daThuLai && isContextOverflowError(statusCodeOf(e), msg)) {
+        daThuLai = true;
+        ghiChu('> het context, dang nen lai...');
+        if (await nen.nen('overflow')) continue;
       }
 
       /* Chuyển lỗi thô thành chẩn đoán có nghĩa (spec §7).

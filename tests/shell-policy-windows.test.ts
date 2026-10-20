@@ -39,6 +39,18 @@ describe('tokenizer — đường dẫn Windows phải tới nguyên vẹn', () 
     expect(tokenizeCommandLine('cat a\\ b', { windows: false })).toEqual(['cat', 'a b']);
   });
 
+  it('mặc định theo nền tảng máy (caller gọi không truyền options)', () => {
+    /* `lib/safe-spawn.ts` gọi `tokenizeCommandLine(command)` — không có options.
+     * Nếu mặc định là POSIX thì trên Windows `\` vẫn bị nuốt ở đường đó ⇒
+     * đúng bug mà lần này sửa vẫn còn sống ở một caller khác. */
+    const kq = tokenizeCommandLine('dir src\\components');
+    if (process.platform === 'win32') {
+      expect(kq).toEqual(['dir', 'src\\components']);
+    } else {
+      expect(kq).toEqual(['dir', 'srccomponents']);
+    }
+  });
+
   it('compileShellCommand truyền xuống chế độ Windows', () => {
     const compiled = compileShellCommand('dir src\\components', { windows: true });
     expect(compiled.args).toEqual(['src\\components']);
@@ -54,6 +66,16 @@ describe('tokenizer — biến môi trường kiểu %VAR% bị từ chối', ()
 
   it('không chặn nhầm định dạng printf', () => {
     expect(compileShellCommand('printf %s', { windows: true }).bin).toBe('printf');
+  });
+
+  it('không chặn nhầm placeholder của git (--format=%h%n%s)', () => {
+    /* `git log --format=%h%n%s` là lệnh git HỢP LỆ. Placeholder của git không
+     * phải biến môi trường của cmd.exe — chỉ `dir`/`echo` mới chạy qua
+     * cmd.exe (xem `resolveSpawnTarget` ở `lib/ipc.cjs`) nên chỉ hai binary đó
+     * mới bị chặn. */
+    const compiled = compileShellCommand('git log --format=%h%n%s', { windows: true });
+    expect(compiled.bin).toBe('git');
+    expect(compiled.args).toEqual(['log', '--format=%h%n%s']);
   });
 });
 

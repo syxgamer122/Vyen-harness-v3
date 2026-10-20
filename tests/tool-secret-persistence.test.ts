@@ -48,6 +48,20 @@ describe('bí mật không nằm trong IndexedDB', () => {
 
     expect(JSON.stringify(out)).toContain('export const tong = 42;');
   });
+
+  it('bí mật nằm SÂU hơn giới hạn đệ quy vẫn không lọt vào DB', () => {
+    /* `redactDeep` dừng ở `DEEP_REDACT_MAX_DEPTH = 12` ⇒ kết quả lồng sâu hơn
+     * vẫn giữ bí mật nếu chỉ dựa vào deep-redact. Che trên CHUỖI JSON đã
+     * serialize không có giới hạn độ sâu. */
+    let goc: Record<string, unknown> = { content: `token=${KHOA}` };
+    for (let i = 0; i < 15; i += 1) goc = { [`k${i}`]: goc };
+
+    const out = sanitizeToolInvocations([
+      { toolCallId: 'call_3', toolName: 'fs_read', state: 'result', result: goc },
+    ]);
+
+    expect(JSON.stringify(out), 'khoá sâu 15 tầng cũng không được lọt').not.toContain(KHOA);
+  });
 });
 
 describe('bí mật không nằm trong file sao lưu xuất ra', () => {

@@ -123,10 +123,6 @@ export async function desktopFsRead(rawPath: string, options: number | FsReadOpt
   const opts = typeof options === 'number' ? { maxChars: options } : options;
   const maxChars = opts.maxChars ?? MAX_READ_CHARS;
 
-  /* Egress Guard (A5): nội dung file workspace là dữ liệu KHÔNG ĐÁNG TIN →
-     đánh dấu lượt đã nhiễm (xem lib/auto-pilot.ts Egress Guard). */
-  noteUntrustedToolResult(null, 'fs_read', r.content, { path: rawPath });
-
   /* Cắt cửa sổ ở MỘT chỗ dùng chung (`lib/fs-read-window.ts`) — cùng công thức
      với CLI và web. Trước đây bản này tự tính `endLine` theo cách riêng ⇒ file
      có dấu xuống dòng cuối thì báo dòng nhiều hơn thực tế, và không đọc tiếp
@@ -137,6 +133,14 @@ export async function desktopFsRead(rawPath: string, options: number | FsReadOpt
     ...(opts.lineCount !== undefined ? { lineCount: opts.lineCount } : {}),
     ...(opts.startChar !== undefined ? { startChar: opts.startChar } : {}),
   });
+
+  /* Egress Guard (A5): nội dung file workspace là dữ liệu KHÔNG ĐÁNG TIN →
+     đánh dấu lượt đã nhiễm (xem lib/auto-pilot.ts Egress Guard).
+     *
+     * Truyền `win.content` (phần THẬT sự đưa cho model), không phải cả file:
+     * payload đo bằng ký tự ⇒ đưa cả file 10 MB làm mỗi lần đọc tốn thêm một
+     * chuỗi 10 MB, và số byte "nhiễm" báo ra lệch với cái model thật sự nhận. */
+  noteUntrustedToolResult(null, 'fs_read', win.content, { path: rawPath });
 
   return {
     path: rawPath,

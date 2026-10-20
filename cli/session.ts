@@ -334,6 +334,12 @@ function readOrCreateHeader(file: string, directory: string): SessionHeader {
      * xoá nó là mất lịch sử, mà ta còn chưa biết nó có giá trị gì. */
   }
 
+  /* File RỖNG (0 byte) — không mất gì cả: chỉ cần ghi header vào. */
+  if (raw.trim() === '') {
+    fs.writeFileSync(file, `${JSON.stringify(header)}\n`, 'utf8');
+    return header;
+  }
+
   /* Bỏ phần tử rỗng cuối (file kết thúc bằng `\n`) — nó không phải dòng nào. */
   if (dong.length > 1 && dong[dong.length - 1] === '') dong.pop();
 
@@ -355,11 +361,15 @@ function readOrCreateHeader(file: string, directory: string): SessionHeader {
   fs.writeFileSync(tam, `${noiDung}\n`, 'utf8');
   fs.renameSync(tam, file);
 
-  /* Nói ra chứ đừng âm thầm: dòng 1 cũ bị bỏ là MẤT DỮ LIỆU (dù nó là rác). */
-  console.warn(
-    `[session] Header transcript hong o dong 1 — da dung lai header, phan con lai giu nguyen.` +
-      (giuDongDauCu ? '' : ' Dong 1 cu khong parse duoc JSON nen da bo.'),
-  );
+  /* Nói ra chứ đừng âm thầm — nhưng CHỈ khi thật sự mất dữ liệu (dòng 1 cũ bị
+   * bỏ vì rác). Dòng 1 parse được mà không phải header (file cũ không có
+   * header) thì KHÔNG mất gì ⇒ không cảnh báo. */
+  if (!giuDongDauCu) {
+    console.warn(
+      `[session] Header transcript hong o dong 1 — da dung lai header, phan con lai giu nguyen.` +
+        ` Dong 1 cu khong parse duoc JSON nen da bo.`,
+    );
+  }
   return header;
 }
 

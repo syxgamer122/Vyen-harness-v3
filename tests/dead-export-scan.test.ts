@@ -57,12 +57,25 @@ function duyet(dir: string, ra: string[] = []): string[] {
   return ra;
 }
 
+/** File cấu hình ở THƯ MỤC GỐC (`next.config.ts`, `vitest.config.ts`…) — không
+ * khai báo export nào nhưng CÓ thể dùng tên export ⇒ phải tính vào tần suất,
+ * nếu không thì export dùng ở đó bị flag oan. */
+function duvetThuMucGoc(goc: string): string[] {
+  try {
+    return readdirSync(goc)
+      .filter((n) => /\.(ts|tsx|cjs|mjs|js)$/.test(n))
+      .map((n) => path.join(goc, n));
+  } catch {
+    return [];
+  }
+}
+
 describe('cây nguồn không có export chết', () => {
   it('mọi export đều được dùng ở đâu đó', () => {
     const goc = process.cwd();
     const fileNguon = THU_MUC_NGUON.flatMap((d) => duyet(path.join(goc, d)));
     const fileTest = THU_MUC_TEST.flatMap((d) => duyet(path.join(goc, d)));
-    const fileTatCa = [...fileNguon, ...fileTest];
+    const fileTatCa = [...fileNguon, ...fileTest, ...duvetThuMucGoc(goc)];
     const tapNguon = new Set(fileNguon);
 
     /* Đếm số lần xuất hiện của MỌI mã định danh trong toàn cây. */

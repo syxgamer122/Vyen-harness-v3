@@ -61,6 +61,25 @@ function stubModel(script: StubPart[][]) {
   return model;
 }
 
+/** Model giả cho lượt TÓM TẮT — `doGenerate` (dùng khi nén context). */
+function stubNen(text = 'TOM TAT'): LanguageModelV1 {
+  return {
+    specificationVersion: 'v1',
+    provider: 'stub',
+    modelId: 'stub-nen',
+    defaultObjectGenerationMode: 'tool',
+    doGenerate: async () => ({
+      text,
+      finishReason: 'stop',
+      usage: { promptTokens: 1, completionTokens: 1 },
+      rawCall: { rawPrompt: null, rawSettings: {} },
+    }),
+    doStream: () => {
+      throw new Error('stub khong ho tro doStream');
+    },
+  } as unknown as LanguageModelV1;
+}
+
 function mk() {
   const state = mkdtempSync(path.join(tmpdir(), 'vyen-onep-'));
   const dir = mkdtempSync(path.join(tmpdir(), 'vyen-du-an-'));
@@ -83,6 +102,86 @@ const TOOLS = {
 } as unknown as ToolSet;
 
 describe('đường -p — lượt hỏng vẫn ghi được phần đã hoàn thành', () => {
+  it('lượt hỏng vì TRÀN CONTEXT cũng phải gữ phần tool đã hoàn thành', async () => {
+    /* Đây là ca mà đường `-p` khác REPL: REPL ghi phần đã hoàn thành TRƯỚC khi
+     * xử lý nhánh tràn context (`cli/repl.ts`), còn `-p` xử lý tràn context
+     * TRƯỚC rồi mới ghi ⇒ `continue` bỏ qua lệnh ghi ⇒ phần tool đã chạy xong
+     * biến mất khỏi transcript ⇒ lượt thử lại chạy lại đúng tool call đó ⇒
+     * **ghi file hai lần** (đúng cái hậu quả mà comment của đường REPL nêu). */
+    const { state, dir, cleanup } = mk();
+    const exitCodeTruoc = process.exitCode;
+    try {
+      /* Lịch sử phải ĐỦ DÀI và NẶNG để nén được (cùng cách dựng của
+       * `tests/cli-repl-compaction.test.ts`): nếu lịch sử nhẹ thì
+       * `splitForCompaction` trả null ⇒ nén không thành ⇒ nhánh `overflow`
+       * không `continue` ⇒ test không phân biệt được thứ tự ghi. */
+      const session = openSession(state, dir);
+      for (let i = 0; i < 5; i += 1) {
+        session.append({ role: 'user', content: `cau ${i}` });
+        session.append({ role: 'assistant', content: `tra loi ${i}` });
+        session.append({
+          role: 'assistant',
+          content: [
+            { type: 'tool-call', toolCallId: `t${i}`, toolName: 'fs_read', args: { path: `a${i}.txt` } },
+          ] as never,
+        });
+        session.append({
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: `t${i}`,
+              toolName: 'fs_read',
+              result: { content: 'x'.repeat(30_000) },
+            },
+          ] as never,
+        });
+      }
+
+      const model = stubModel([
+        [
+          { type: 'tool-call', toolCallId: 't1', toolName: 'fs_read', args: '{"path":"a.txt"}' },
+          { ...DONE, finishReason: 'tool-calls' },
+        ],
+        [
+          /* Lượt 2: provider TỪ CHỐI vì tràn context (lỗi nằm TRONG stream —
+           * đúng dạng lỗi mà `runAgentTurn` gắn phần tool đã chạy xong vào). */
+          { type: 'error', error: new Error('prompt is too long') },
+          DONE,
+        ],
+        [
+          /* Lượt 3: lượt THỬ LẠI sau khi nén — thành công. */
+          { type: 'text-delta', textDelta: 'xong roi' },
+          DONE,
+        ],
+      ]);
+
+      const modelNen = stubNen('TOM TAT');
+      await chayMotLuot({
+        lm: model,
+        lmNen: modelNen,
+        session,
+        question: 'doc file a.txt',
+        tools: TOOLS,
+        maxTokens: 100,
+        apiKey: 'sk-test',
+        model: 'stub-1',
+        system: 'SYSTEM',
+        windowTokens: 32_000,
+        out: () => {},
+        note: () => {},
+      });
+
+      expect(
+        JSON.stringify(session.messages),
+        'kết quả tool đã chạy xong phải còn trong transcript (không được mất)',
+      ).toContain('NOI DUNG');
+    } finally {
+      process.exitCode = exitCodeTruoc;
+      cleanup();
+    }
+  });
+
   it('transcript phải chứa phần tool ĐÃ chạy xong trước khi lượt hỏng', async () => {
     const { state, dir, cleanup } = mk();
     const exitCodeTruoc = process.exitCode;
@@ -150,9 +249,13 @@ describe('đường -p — lượt hỏng vẫn ghi được phần đã hoàn t
 
       expect(noteLines.join('\n').trim(), 'phải có chẩn đoán qua note').not.toBe('');
       expect(
+        noteLines.join('\n'),
+        'chẩn đoán phải nói rõ cần đổi key hay không',
+      ).toContain('phai doi key');
+      expect(
         spy.mock.calls.flat().join('\n'),
         'không được in chẩn đoán thẳng ra console.error',
-      ).not.toContain('LOI');
+      ).not.toContain('phai doi key');
     } finally {
       spy.mockRestore();
       process.exitCode = exitCodeTruoc;

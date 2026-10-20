@@ -83,10 +83,13 @@ export function applyReadWindow(
   }
 
   const rawStartChar = options.startChar;
+  /* `start_char = 0` CÓ NGHĨA LÀ "đọc từ đầu" (và bỏ qua start_line/line_count) —
+   * không phải "không có start_char". Schema cho phép 0 (min(0)) nên hợp đồng
+   * phải nói đúng: có `start_char` thì nó quyết định. */
   const hasStartChar =
     typeof rawStartChar === 'number' &&
     Number.isFinite(rawStartChar) &&
-    rawStartChar > 0;
+    rawStartChar >= 0;
 
   if (hasStartChar) {
     const startChar = Math.min(Math.floor(rawStartChar as number), raw.length);

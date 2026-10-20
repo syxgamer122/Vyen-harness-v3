@@ -112,4 +112,17 @@ describe('fs_read — đọc tiếp không mất ký tự nào của dòng dài'
       cleanup();
     }
   });
+
+  it('start_char = 0 nghĩa là đọc TỪ ĐẦU (không phải bỏ qua)', async () => {
+    const { dir, tools, cleanup } = mk();
+    try {
+      const dong = noiDungNgan(5_000);
+      writeFileSync(path.join(dir, 'min.txt'), dong, 'utf8');
+      const out = await tools.fs_read.execute({ path: 'min.txt', start_char: 0, start_line: 500 });
+      expect(out.content, 'start_char có mặt thì start_line bị bỏ qua').toBe(dong);
+      expect(out.startLine).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
 });

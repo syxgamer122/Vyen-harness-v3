@@ -377,21 +377,37 @@ export function sanitizeToolInvocations(
        * LƯU `.json` mà người dùng xuất ra để chia sẻ. Người dùng không thấy
        * khoá trong chat (đã che ở tầng gửi) ⇒ rò rỉ không có dấu vết.
        *
-       * Che ở tầng lưu ⇒ mọi đường đọc kết quả tool về sau (kể cả export)
-       * đều đã sạch. Chi phí: một lần redact sâu mỗi invocation khi ghi.
+       * ============ VÌ SAO CHE TRÊN CHUỖI JSON, KHÔNG PHẢI DEEP-REDACT ============
+       *
+       * `redactDeep` dừng ở `DEEP_REDACT_MAX_DEPTH = 12` ⇒ kết quả lồng sâu
+       * hơn vẫn giữ bí mật (đo: 15 tầng ⇒ lọt). Che trên chuỗi JSON đã
+       * serialize thì KHÔNG có giới hạn độ sâu.
+       *
+       * Và chỉ MỘT lượt regex trên chuỗi: trước đây là deep-redact (mỗi
+       * chuỗi con một lượt) + stringify + redact lần nữa trên JSON ⇒ tốn gấp
+       * đôi trên payload lớn (đo: 400 KB ⇒ ~1,4 s đồng bộ mỗi lần ghi).
        */
-      result = redactSecretsDeep(inv.result);
-      /* Redact TRƯỚC khi cắt: cắt trước thì một khoá nằm vắt qua ranh giới cắt
-         sẽ chỉ còn nửa chuỗi và không khớp rule nào nữa → lọt bí mật vào DB (và
-         từ đó vào ngữ cảnh lượt sau). Đúng thứ tự serializeToolResult dùng ở
-         lib/tool-limits.ts:66 — giữ hai đường cùng một thứ tự. */
-      const raw = redactSecretText(JSON.stringify(result ?? null) ?? 'null');
+      const json = JSON.stringify(result ?? null) ?? 'null';
+      const raw = redactSecretText(json);
       if (raw.length > STORED_TOOL_RESULT_CHARS) {
+        /* Cắt SAU khi che: cắt trước thì một khoá nằm vắt qua ranh giới cắt
+         * sẽ chỉ còn nửa chuỗi và không khớp rule nào nữa → lọt bí mật vào DB
+         * (và từ đó vào ngữ cảnh lượt sau). Đúng thứ tự serializeToolResult
+         * dùng ở lib/tool-limits.ts:66 — giữ hai đường cùng một thứ tự. */
         result = {
           truncated: true,
           note: `[kết quả ${raw.length} ký tự đã bị cắt khi lưu — gọi lại công cụ nếu cần đầy đủ]`,
           preview: raw.slice(0, STORED_TOOL_RESULT_CHARS),
         };
+      } else {
+        /* Lưu BẢN ĐÃ CHE (parse lại JSON đã che) ⇒ bí mật ở MỌI độ sâu đều
+         * không còn trong DB. Parse lỗi (không xảy ra với JSON do chính ta
+         * serialize) ⇒ rơi về deep-redact. */
+        try {
+          result = JSON.parse(raw);
+        } catch {
+          result = redactSecretsDeep(inv.result);
+        }
       }
     } catch {
       // Kết quả không serialize được (circular/BigInt) → không thể persist.
