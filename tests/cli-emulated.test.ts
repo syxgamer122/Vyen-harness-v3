@@ -16,6 +16,7 @@ import {
   shouldUseEmulated,
 } from '@/cli/emulated';
 import { resetToolSupportCache } from '@/lib/tool-support-cache';
+import { messagesDaHoanThanh } from '@/cli/agent-turn';
 import { runRepl } from '@/cli/repl';
 import { openSession, sessionFileFor } from '@/cli/session';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -341,5 +342,122 @@ describe('C1 — câu trả lời của lượt giả lập phải được GHI'
     } finally {
       cleanup();
     }
+  });
+});
+
+
+/* ============ B: LƯỢT GIẢ LẬP HỎNG GIỮA CHỪNG ============
+ *
+ * Root cause: `runEmulatedLoop` ném lỗi (upstream/abort) ⇒ mảng `messages` CỤC BỘ
+ * của vòng lặp bị mất ⇒ CLI không biết tool nào ĐÃ chạy xong.
+ *
+ * Hậu quả (đúng lý do file `cli/repl.ts` đã cảnh báo): `fs_write` đã ghi file mà
+ * transcript không có dấu vết ⇒ đường `overflow` thử lại ⇒ model LÀM LẠI đúng các
+ * tool call đó ⇒ ghi file hai lần.
+ */
+describe('B — lượt giả lập hỏng giữa chừng', () => {
+  /** Model: vòng 1 trả tool_call, vòng 2 ném lỗi upstream. */
+  function modelHongGiuaChung() {
+    let i = 0;
+    return {
+      specificationVersion: 'v1' as const,
+      provider: 'stub',
+      modelId: 'stub-1',
+      defaultObjectGenerationMode: 'tool' as const,
+      doGenerate: async () => {
+        i += 1;
+        if (i === 1) {
+          return {
+            text: KHOI_TOOL_CALL,
+            finishReason: 'stop',
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        }
+        throw new Error('upstream 500');
+      },
+      doStream: () => {
+        throw new Error('stub khong ho tro doStream');
+      },
+    } as unknown as LanguageModelV1;
+  }
+
+  const toolThatChay = () => ({
+    fs_read: {
+      description: 'doc file',
+      parameters: z.object({ path: z.string().optional() }),
+      execute: async () => ({ content: 'NOI DUNG' }),
+    },
+  }) as unknown as ToolSet;
+
+  it('lỗi mang theo phần tool ĐÃ chạy xong (lấy lại được qua messagesDaHoanThanh)', async () => {
+    let loi: unknown = null;
+    try {
+      await runEmulatedTurn({
+        model: modelHongGiuaChung(),
+        tools: toolThatChay(),
+        messages: [{ role: 'user', content: 'doc file a.txt' }],
+        system: 'SYSTEM',
+      });
+    } catch (e) {
+      loi = e;
+    }
+    expect(loi, 'luot phai that bai').not.toBeNull();
+    const daHoanThanh = messagesDaHoanThanh(loi);
+    expect(daHoanThanh.length, 'phai lay lai duoc phan da chay xong').toBeGreaterThan(0);
+    expect(JSON.stringify(daHoanThanh)).toContain('TOOL_RESULT');
+  });
+
+  it('REPL: lượt giả lập hỏng giữa chừng vẫn ghi được phần đã chạy xong xuống đĩa', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const session = openSession(state, dir);
+      const model = {
+        ...modelHongGiuaChung(),
+        /* Native path phải chết ngay với lỗi "không hỗ trợ tools" để lượt đi
+         * sang đường giả lập; vong giả lập 1 thì gọi tool, vong 2 thì lỗi. */
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue({
+                  type: 'error',
+                  error: new Error('This model does not support tools'),
+                } as never);
+                ctrl.close();
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          }),
+      } as unknown as LanguageModelV1;
+
+      await runRepl({
+        model,
+        modelNen: model,
+        tools: toolThatChay(),
+        session,
+        ask: reader('doc file a.txt', '/exit'),
+        out: () => {},
+      });
+
+      const jsonl = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(jsonl, 'phan da chay xong phai duoc ghi vao dia').toContain('TOOL_RESULT');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('B — usage + finishReason của đường giả lập', () => {
+  it('trả về usage và finishReason của round cuối', async () => {
+    const r = await runEmulatedTurn({
+      model: stubModel(['Chào bạn.']),
+      tools: {} as unknown as ToolSet,
+      messages: [{ role: 'user', content: 'xin chào' }],
+      system: 'SYSTEM',
+    });
+    expect(r.usage.promptTokens, 'phai co promptTokens de bat tran ngam').toBe(1);
+    expect(r.usage.completionTokens).toBe(1);
+    expect(r.finishReason, 'finishReason la thu lưới tran ngam can').toBe('stop');
   });
 });

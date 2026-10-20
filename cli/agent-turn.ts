@@ -107,7 +107,7 @@ export interface AgentTurnResult {
  * dòng lỗi. Nên bắt ở đây và trả `{ ok: false, error }` — model đọc được lỗi và
  * tự sửa.
  */
-function wrapTools(
+export function wrapTools(
   tools: ToolSet,
   onToolError?: (toolName: string, message: string) => void,
 ): ToolSet {
@@ -170,6 +170,17 @@ const messagesHoanThanh = new WeakMap<object, CoreMessage[]>();
 export function messagesDaHoanThanh(e: unknown): CoreMessage[] {
   if (!e || typeof e !== 'object') return [];
   return messagesHoanThanh.get(e) ?? [];
+}
+
+/**
+ * Gắn phần message ĐÃ HOÀN THÀNH vào lỗi — để `messagesDaHoanThanh` lấy ra được.
+ *
+ * Dùng bởi đường giả lập (`cli/emulated.ts`): vòng lặp giả lập giữ transcript
+ * trong mảng cục bộ, nên lỗi ném ra không mang theo phần tool đã chạy xong.
+ */
+export function ganMessagesHoanThanh(e: unknown, msgs: CoreMessage[]): void {
+  if (!e || typeof e !== 'object' || !msgs.length) return;
+  messagesHoanThanh.set(e, msgs);
 }
 
 /**

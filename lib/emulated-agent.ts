@@ -338,6 +338,34 @@ export interface EmulatedLoopResult {
    * sau mất ngữ cảnh tool vừa chạy và màn hình không phản ánh điều agent đã làm.
    */
   messages: CoreMessage[];
+  /**
+   * `finishReason` của round CUỐI (`stop` | `length` | …).
+   *
+   * Cần cho lưới an toàn "tràn ngầm" (`lib/context-budget.ts`):
+   * `finishReason='stop'` mà `promptTokens > window` ⇒ gateway đã cắt bớt input
+   * mà vẫn trả 200 — tín hiệu KHÔNG nào khác lộ ra.
+   */
+  finishReason?: string;
+}
+
+/**
+ * Lỗi lượt → phần message ĐÃ HOÀN THÀNH trước lúc hỏng.
+ *
+ * ============ VÌ SAO CẦN ============
+ *
+ * Cùng ý với `cli/agent-turn.ts` (`messagesDaHoanThanh`): tool đã chạy xong
+ * (`fs_write` đã ghi file!) mà transcript không có dấu vết ⇒ đường `overflow` thử
+ * lại ⇒ model LÀM LẠI đúng các tool call đó ⇒ ghi file hai lần.
+ *
+ * WeakMap (không sửa lỗi) để không phá `diagnoseUpstreamError` — hàm đó đọc
+ * status code trên chính lỗi đó.
+ */
+const messagesHoanThanh = new WeakMap<object, CoreMessage[]>();
+
+/** Phần message ĐÃ HOÀN THÀNH trước lúc lượt giả lập hỏng. */
+export function messagesHoanThanhCuaEmu(e: unknown): CoreMessage[] {
+  if (!e || typeof e !== 'object') return [];
+  return messagesHoanThanh.get(e) ?? [];
 }
 
 /**
@@ -359,20 +387,40 @@ export async function runEmulatedLoop(opts: EmulatedLoopOptions): Promise<Emulat
   const soDauVao = messages.length;
 
   let totalCalls = 0;
+  /* `finishReason` của round CUỐI — khai ngoài vòng lặp vì nhánh "hết lượt"
+   * nằm ngoài `for`. */
+  let finishReason: string | undefined;
 
   for (let round = 0; round < maxRounds; round++) {
     const isFinalRound = round === maxRounds - 1;
-    const { text, usage } = await generateText({
-      model: opts.model,
-      messages,
-      system:
-        opts.system +
-        '\n\n' +
-        (isFinalRound ? FINAL_ROUND_NUDGE : protocol),
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-      ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
-      abortSignal: opts.abortSignal,
-    });
+    /* `finishReason` của round — cần cho lưới an toàn "tràn ngầm" ở CLI
+     * (`evaluateUsageTrigger`): `finishReason='stop'` mà `promptTokens > window`
+     * ⇒ gateway đã cắt bớt input mà vẫn trả 200. */
+    let text = '';
+    let usage: { promptTokens?: number; completionTokens?: number } | undefined;
+    try {
+      const r = await generateText({
+        model: opts.model,
+        messages,
+        system:
+          opts.system +
+          '\n\n' +
+          (isFinalRound ? FINAL_ROUND_NUDGE : protocol),
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+        abortSignal: opts.abortSignal,
+      });
+      text = r.text ?? '';
+      usage = r.usage;
+      finishReason = r.finishReason;
+    } catch (e) {
+      /* Lượt hỏng giữa chừng ⇒ phần tool ĐÃ chạy xong phải lấy lại được (I5). */
+      const partial = messages.slice(soDauVao);
+      if (partial.length && typeof e === 'object' && e !== null) {
+        messagesHoanThanh.set(e, partial);
+      }
+      throw e;
+    }
     if (usage && opts.onUsage) {
       opts.onUsage({
         promptTokens: usage.promptTokens ?? 0,
@@ -408,7 +456,7 @@ export async function runEmulatedLoop(opts: EmulatedLoopOptions): Promise<Emulat
        * Push đúng `answer` (đã strip markup), không phải `text` thô: đó là đúng
        * thứ người dùng đã thấy và đúng thứ model nên nhớ ở lượt sau. */
       if (answer) messages.push({ role: 'assistant', content: answer });
-      return { status: 'done', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao) };
+      return { status: 'done', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao), finishReason };
     }
 
     if (preamble) opts.onReasoningLine(preamble);
@@ -551,7 +599,7 @@ if (opts.clientTools?.has(call.name)) {
           toolName: call.name,
           args: call.args,
         });
-        return { status: 'pending-client', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao) };
+        return { status: 'pending-client', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao), finishReason };
       }
 
       const id = `emu-${round}-${totalCalls}`;
@@ -596,5 +644,5 @@ if (opts.clientTools?.has(call.name)) {
     });
   }
 
-  return { status: 'done', roundsUsed: maxRounds, totalCalls, messages: messages.slice(soDauVao) };
+  return { status: 'done', roundsUsed: maxRounds, totalCalls, messages: messages.slice(soDauVao), finishReason };
 }

@@ -27,7 +27,8 @@
  */
 import type { CoreMessage, LanguageModel, LanguageModelV1 } from 'ai';
 import type { ToolSet } from 'ai';
-import { runEmulatedLoop } from '@/lib/emulated-agent';
+import { messagesHoanThanhCuaEmu, runEmulatedLoop } from '@/lib/emulated-agent';
+import { ganMessagesHoanThanh } from './agent-turn';
 import type { AgentToolSet } from '@/lib/agent-tools-server';
 import {
   isToolUnsupported,
@@ -114,6 +115,26 @@ export interface EmulatedTurnResult {
   messages: CoreMessage[];
   totalCalls: number;
   roundsUsed: number;
+  /**
+   * Usage của round CUỐI.
+   *
+   * ============ VÌ SAO ROUND CUỐI, KHÔNG PHẢI TỔNG ============
+   *
+   * Lưới an toàn "tràn ngầm" (`evaluateUsageTrigger`) so `promptTokens` với cửa
+   * sổ ngữ cảnh. Ở đường native, `promptTokens` là kích thước của MỘT request ⇒
+   * đúng bằng kích thước ngữ cảnh lúc đó. Ở đường giả lập có N round, mỗi vòng
+   * gửi lại TOÀN BỘ lịch sử ⇒ TỔNG sẽ vượt cửa sổ ngay cả khi ngữ cảnh thật còn
+   * nhỏ ⇒ báo nén oan.
+   *
+   * Web làm đúng thứ này: giữ round cuối cho ngưỡng nén theo ngữ cảnh
+   * (`app/api/chat/route.ts` — `lastStepUsage`).
+   */
+  usage: { promptTokens: number; completionTokens: number };
+  /**
+   * `finishReason` của round cuối — cần cho ca "tràn ngầm"
+   * (`finishReason='stop'` mà `promptTokens > window`).
+   */
+  finishReason?: string;
 }
 
 /**
@@ -124,7 +145,11 @@ export interface EmulatedTurnResult {
  */
 export async function runEmulatedTurn(opts: EmulatedTurnOptions): Promise<EmulatedTurnResult> {
   let text = '';
-  const result = await runEmulatedLoop({
+  /* Usage của round CUỐI — `onUsage` được gọi MỘT LẦN mỗi round, nên gán đè
+   * là đúng "giữ round cuối" (khác với cộng dồn). */
+  let usage = { promptTokens: 0, completionTokens: 0 };
+  try {
+    const result = await runEmulatedLoop({
     model: opts.model as unknown as LanguageModel,
     messages: [...opts.messages],
     system: opts.system,
@@ -140,13 +165,26 @@ export async function runEmulatedTurn(opts: EmulatedTurnOptions): Promise<Emulat
       const tool = payload.tool as { name?: string; phase?: string } | undefined;
       if (tool?.phase === 'start' && tool.name) opts.onToolCall?.(tool.name);
     },
-    onUsage: () => {},
+    onUsage: (u) => {
+      usage = { promptTokens: u.promptTokens ?? 0, completionTokens: u.completionTokens ?? 0 };
+    },
   });
 
-  return {
-    text,
-    messages: result.messages,
-    totalCalls: result.totalCalls,
-    roundsUsed: result.roundsUsed,
-  };
+    return {
+      text,
+      messages: result.messages,
+      totalCalls: result.totalCalls,
+      roundsUsed: result.roundsUsed,
+      usage,
+      ...(result.finishReason ? { finishReason: result.finishReason } : {}),
+    };
+  } catch (e) {
+    /* Lượt hỏng giữa chừng: vòng lặp giả lập giữ transcript trong mảng CỤC BỘ
+     * ⇒ lỗi ném ra không mang phần tool đã chạy xong. Chuyển sang cơ chế của
+     * CLI (`messagesDaHoanThanh`) để REPL ghi được xuống đĩa — nếu không thì
+     * `fs_write` đã ghi file mà transcript không có dấu vết ⇒ lượt sau làm lại. */
+    const daHoanThanh = messagesHoanThanhCuaEmu(e);
+    if (daHoanThanh.length) ganMessagesHoanThanh(e, daHoanThanh);
+    throw e;
+  }
 }
