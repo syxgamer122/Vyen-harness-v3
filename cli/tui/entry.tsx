@@ -21,6 +21,18 @@ import type { ApprovalBroker } from '../approval-broker.ts';
 import { createTuiStore, type TuiStore } from './bridge.ts';
 import { App } from './app.tsx';
 
+declare global {
+  interface ImportMeta {
+    /**
+     * Node ≥ 24.2: `true` khi module này là **điểm vào của tiến trình**.
+     *
+     * `@types/node` của repo là bản 20 nên chưa khai báo thuộc tính này, mà
+     * runtime là Node 26 ⇒ khai báo tại chỗ, thay vì ép kiểu ở nơi dùng.
+     */
+    readonly main?: boolean;
+  }
+}
+
 export interface TuiCreateOptions {
   /** Tên thư mục làm việc (đã rút gọn). */
   workspace: string;
