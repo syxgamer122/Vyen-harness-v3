@@ -124,6 +124,8 @@ export const CORE_ENTRIES = [
   'cli/compaction.ts',
   // Lượt GIẢ LẬP cho model không hỗ trợ function calling (spec §7).
   'cli/emulated.ts',
+  // Cổng duyệt cho TUI: hàng đợi hỏi, mặc định từ chối (xem file của nó).
+  'cli/approval-broker.ts',
   // Đảo TUI của CLI. Đây là thư mục ESM (có `package.json` riêng) vì
   // `@opentui/core` chỉ nạp được bằng ESM — nhưng nó vẫn là **nguồn** của CLI,
   // nên vẫn phải nằm trong đồ thị lõi: file không khai ở đây thì nằm ngoài mọi

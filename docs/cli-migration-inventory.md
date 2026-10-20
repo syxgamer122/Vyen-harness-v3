@@ -43,6 +43,7 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/context-adapter.ts`
 - `cli/compaction.ts`
 - `cli/emulated.ts`
+- `cli/approval-broker.ts`
 - `cli/tui-gate.ts`
 - `cli/tui/theme.ts`
 - `cli/tui/entry.tsx`
