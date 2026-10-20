@@ -160,6 +160,7 @@ import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
 import { createConsoleApprover, createAutoApprover } from './approve';
 import { buildModelConfigs, createCompactionRunner, statusCodeOf } from './compaction';
 import { runAgentTurn } from './agent-turn';
+import { runTurn } from './emulated';
 import { runRepl, type ReplOptions } from './repl';
 import { openSession } from './session';
 import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
@@ -197,7 +198,7 @@ function parseArgs(argv: string[]): { question?: string; print: boolean } {
 }
 
 /** Chạy một lượt rồi thoát — đường dùng khi có `-p`. */
-async function chayMotLuot(opts: {
+export async function chayMotLuot(opts: {
   lm: Parameters<typeof runAgentTurn>[0]['model'];
   /** Instance model RIENG cho luot tom tat. */
   lmNen: Parameters<typeof runAgentTurn>[0]['model'];
@@ -209,8 +210,14 @@ async function chayMotLuot(opts: {
   model: string;
   system: string;
   windowTokens?: number;
+  /** Ghi ra stdout (mặc định `process.stdout.write`) — để test bắt được. */
+  out?: (s: string) => void;
+  /** Ghi ra stderr (mặc định `console.error`) — để test bắt được. */
+  note?: (s: string) => void;
 }): Promise<void> {
   const { lm, lmNen, session, question, tools, maxTokens, apiKey, model, system } = opts;
+  const ghiChu = opts.note ?? ((s: string) => console.error(s));
+  const ghiRa = opts.out ?? ((s: string) => process.stdout.write(s));
   const nen = createCompactionRunner({
     session,
     model: lmNen,
@@ -224,21 +231,31 @@ async function chayMotLuot(opts: {
   for (;;) {
     try {
       if (!daThuLai) await nen.nen('auto');
-      const turn = await runAgentTurn({
+      const turn = await runTurn({
         model: lm,
-        tools,
+        modelNen: lmNen,
+        ...(tools ? { tools } : {}),
         messages: [...session.messages],
         system: nen.system(),
         maxTokens,
+        env: {
+          providerBase: process.env.VYEN_BASE_URL ?? '',
+          modelId: process.env.VYEN_MODEL ?? '',
+        },
         onText: (delta) => {
-          process.stdout.write(delta);
+          ghiRa(delta);
           wroteAny = true;
         },
-        onToolCall: (name) => console.error(`\n[goi tool] ${name}`),
-        onToolError: (name, msg) => console.error(`[tool that bai] ${name}: ${msg}`),
+        onToolCall: (name) => ghiChu(`\n[goi tool] ${name}`),
+        onToolError: (name, msg) => ghiChu(`[tool that bai] ${name}: ${msg}`),
+        onChuyenDuong: (lyDo) => {
+          if (lyDo === 'model-che-tools') {
+            ghiChu('> model nay khong ho tro tool — chuyen sang duong gia lap.');
+          }
+        },
       });
       session.appendAll(turn.messages);
-      if (wroteAny) process.stdout.write('\n');
+      if (wroteAny) ghiRa('\n');
       console.error(
         `\n> xong. token: vao ${turn.usage.promptTokens ?? '?'} / ra ${turn.usage.completionTokens ?? '?'}`,
       );

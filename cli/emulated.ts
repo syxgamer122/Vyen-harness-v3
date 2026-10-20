@@ -28,7 +28,7 @@
 import type { CoreMessage, LanguageModel, LanguageModelV1 } from 'ai';
 import type { ToolSet } from 'ai';
 import { messagesHoanThanhCuaEmu, runEmulatedLoop } from '@/lib/emulated-agent';
-import { ganMessagesHoanThanh } from './agent-turn';
+import { ganMessagesHoanThanh, runAgentTurn, wrapTools } from './agent-turn';
 import type { AgentToolSet } from '@/lib/agent-tools-server';
 import {
   isToolUnsupported,
@@ -107,6 +107,8 @@ export interface EmulatedTurnOptions {
   signal?: AbortSignal;
   onText?: (text: string) => void;
   onToolCall?: (name: string) => void;
+  /** Tool lỗi ⇒ báo ra (giống đường native) để người dùng thấy lý do. */
+  onToolError?: (name: string, message: string) => void;
 }
 
 export interface EmulatedTurnResult {
@@ -153,7 +155,16 @@ export async function runEmulatedTurn(opts: EmulatedTurnOptions): Promise<Emulat
     model: opts.model as unknown as LanguageModel,
     messages: [...opts.messages],
     system: opts.system,
-    tools: opts.tools as unknown as Partial<AgentToolSet>,
+    /* Bọc tool GIỐNG hệt đường native (`wrapTools` của `cli/agent-turn.ts`):
+     * lỗi tool thành `{ok:false,error}` để model ĐỌC ĐƯỢC lý do.
+     *
+     * Không bọc thì vòng lặp giả lập nuốt lỗi thành "Công cụ tạm thời không khả
+     * dụng." ⇒ model không phân biệt được "bị từ chối" với "tool hỏng" ⇒ hỏi
+     * duyệt lặp lại mà người dùng không hiểu vì sao.
+     *
+     * Bọc Ở ĐÂY (trong hàm lượt giả lập) chứ không ở `runTurn` ⇒ mọi caller đều
+     * được, không phụ thuộc ai nhớ gọi. */
+    tools: wrapTools(opts.tools ?? {}, opts.onToolError) as unknown as Partial<AgentToolSet>,
     ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
     ...(opts.signal ? { abortSignal: opts.signal } : {}),
     onTextDelta: (delta) => {
@@ -185,6 +196,122 @@ export async function runEmulatedTurn(opts: EmulatedTurnOptions): Promise<Emulat
      * `fs_write` đã ghi file mà transcript không có dấu vết ⇒ lượt sau làm lại. */
     const daHoanThanh = messagesHoanThanhCuaEmu(e);
     if (daHoanThanh.length) ganMessagesHoanThanh(e, daHoanThanh);
+    throw e;
+  }
+}
+
+
+export interface TurnOptions {
+  /** Instance model cho đường NATIVE (streaming). */
+  model: LanguageModelV1;
+  /**
+   * Instance model RIÊNG cho đường giả lập — phải có `fetch: nonStreamingFetch`.
+   *
+   * Không có ⇒ không có đường giả lập (model chê tools thì lỗi báo ra như cũ).
+   */
+  modelNen?: LanguageModelV1;
+  tools?: ToolSet;
+  messages: CoreMessage[];
+  system?: string;
+  maxTokens?: number;
+  signal?: AbortSignal;
+  /** Môi trường để tra cache "model này chê tools". */
+  env: EmulatedEnv;
+  onText?: (delta: string) => void;
+  onToolCall?: (name: string) => void;
+  onToolError?: (name: string, message: string) => void;
+  /** Gọi khi lượt chuyển sang đường giả lập — để báo người dùng biết. */
+  onChuyenDuong?: (lyDo: 'ep' | 'model-che-tools') => void;
+}
+
+export interface TurnResult {
+  text: string;
+  /** Message sinh ra trong lượt này — caller ghi vào transcript. */
+  messages: CoreMessage[];
+  usage: {
+    promptTokens: number | null;
+    completionTokens: number | null;
+    finishReason?: string;
+  };
+  /** true nếu lượt này chạy đường giả lập. */
+  daGiaLap: boolean;
+}
+
+/**
+ * Chạy MỘT lượt — NATIVE trước, tự chuyển sang đường GIẢ LẬP nếu model chê tools.
+ *
+ * ============ VÌ SAO HÀM NÀY SỐNG Ở ĐÂY, VÌ SAO MỘT CHỖ ============
+ *
+ * Spec §7: "Model không hỗ trợ tool calling → rơi về `emulated-agent`". CLI trước đây
+ * không có đường đó: luôn gửi `tools` ⇒ provider từ chối ⇒ lỗi ⇒ phiên dừng. Với
+ * BYOK + model local thì đó là CHẾT CẢ SESSION.
+ *
+ * Trước bản sửa này, quyết định "native trước, giả lập khi bị chê" nằm RỜI ở REPL
+ * ⇒ đường `-p` (`chayMotLuot`) không có ⇒ `-p` vẫn chết. Một quyết định, một chỗ.
+ *
+ * ============ VÌ SAO DÙNG `modelNen` ============
+ *
+ * Đường giả lập dùng `generateText` (buffered) ⇒ phải dùng instance model RIÊNG có
+ * `fetch: nonStreamingFetch` (`modelNen`), nếu không gateway trả SSE và AI SDK ném
+ * "Invalid JSON response".
+ */
+export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
+  const chayGiaLap = async (): Promise<TurnResult> => {
+    if (!opts.modelNen) {
+      throw new Error('Thieu instance model khong streaming — khong chay duong gia lap duoc.');
+    }
+    const r = await runEmulatedTurn({
+      model: opts.modelNen,
+      /* Tool đã được bọc sẵn trong `runEmulatedTurn` (một chỗ duy nhất). */
+      tools: opts.tools ?? {},
+      messages: opts.messages,
+      system: opts.system ?? '',
+      ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      onText: opts.onText,
+      onToolCall: opts.onToolCall,
+      onToolError: opts.onToolError,
+    });
+    return {
+      text: r.text,
+      messages: r.messages,
+      usage: {
+        promptTokens: r.usage.promptTokens,
+        completionTokens: r.usage.completionTokens,
+        ...(r.finishReason ? { finishReason: r.finishReason } : {}),
+      },
+      daGiaLap: true,
+    };
+  };
+
+  /* Đã biết model này chê tools ⇒ đi thẳng đường giả lập, khỏi tốn một lượt
+   * native chết mỗi lượt. */
+  if (opts.modelNen && shouldUseEmulated(opts.env)) {
+    opts.onChuyenDuong?.('ep');
+    return chayGiaLap();
+  }
+
+  try {
+    const turn = await runAgentTurn({
+      model: opts.model,
+      ...(opts.tools ? { tools: opts.tools } : {}),
+      messages: opts.messages,
+      ...(opts.system ? { system: opts.system } : {}),
+      ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      onToolCall: opts.onToolCall,
+      onToolError: opts.onToolError,
+      onText: opts.onText,
+    });
+    return { text: turn.text, messages: turn.messages, usage: turn.usage, daGiaLap: false };
+  } catch (e) {
+    /* Model/gateway không nhận function calling ⇒ chuyển sang đường giả lập thay vì
+     * báo lỗi rồi dừng phiên. Ghi nhớ 10 phút để lượt sau khỏi thử lại. */
+    if (opts.modelNen && opts.tools && isToolsUnsupportedError(e)) {
+      markEmulated(opts.env);
+      opts.onChuyenDuong?.('model-che-tools');
+      return chayGiaLap();
+    }
     throw e;
   }
 }

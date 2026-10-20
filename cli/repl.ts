@@ -26,12 +26,7 @@
 import type { CoreMessage, LanguageModelV1, ToolSet } from 'ai';
 import { evaluateUsageTrigger, isContextOverflowError } from '@/lib/context-budget';
 import { CLI_DEFAULT_CONTEXT_WINDOW, createCompactionRunner, statusCodeOf } from './compaction';
-import {
-  isToolsUnsupportedError,
-  markEmulated,
-  runEmulatedTurn,
-  shouldUseEmulated,
-} from './emulated';
+import { runTurn } from './emulated';
 import { runAgentTurn, messagesDaHoanThanh } from './agent-turn';
 import type { SessionStore } from './session';
 import type { TaoLichSu } from './history';
@@ -190,86 +185,33 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       ...(opts.forceEmulated ? { force: true } : {}),
     };
 
-    /**
-     * Chạy một lượt: NATIVE trước, tự chuyển sang đường GIẢ LẬP nếu model chê tools.
-     *
-     * ============ VÌ SAO CẦN ============
-     *
-     * Spec §7: "Model không hỗ trợ tool calling → rơi về `emulated-agent`". CLI trước đây
-     * không có đường đó: luôn gửi `tools` ⇒ provider từ chối ⇒ lỗi ⇒ phiên dừng. Với
-     * BYOK + model local thì đó là CHẾT CẢ SESSION.
-     *
-     * Đường giả lập dùng `generateText` (buffered) ⇒ phải dùng instance model RIÊNG có
-     * `fetch: nonStreamingFetch` (`modelNen`), nếu không gateway trả SSE và AI SDK ném
-     * "Invalid JSON response".
-     */
-    const chayLuot = async (
-      signal: AbortSignal,
-    ): Promise<{
-      text: string;
-      messages: CoreMessage[];
-      usage: {
-        promptTokens: number | null;
-        completionTokens: number | null;
-        finishReason?: string;
-      };
-    }> => {
-      const system = nen ? nen.system() : (opts.system ?? '');
-      const chayGiaLap = async () => {
-        const r = await runEmulatedTurn({
-          model: opts.modelNen as LanguageModelV1,
-          tools: (opts.tools ?? {}) as ToolSet,
-          messages: messages(),
-          system,
-          ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
-          signal,
-          onText: (delta) => out(delta),
-          onToolCall: (name) => note(`[goi tool] ${name}`),
-        });
-        return {
-          text: r.text,
-          messages: r.messages,
-          usage: { promptTokens: null, completionTokens: null },
-        };
-      };
-
-      /* Đã biết model này chê tools ⇒ đi thẳng đường giả lập, khỏi tốn một lượt
-       * native chết mỗi lượt. */
-      if (opts.modelNen && shouldUseEmulated(envEmulated)) return chayGiaLap();
-
-      try {
-        const turn = await runAgentTurn({
-          model: opts.model,
-          tools: opts.tools,
-          messages: messages(),
-          ...(system ? { system } : {}),
-          ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
-          signal,
-          onToolCall: (name) => note(`[goi tool] ${name}`),
-          onToolError: (name, msg) => note(`[tool that bai] ${name}: ${msg}`),
-          onText: (delta) => out(delta),
-        });
-        return { text: turn.text, messages: turn.messages, usage: turn.usage };
-      } catch (e) {
-        /* Model/gateway không nhận function calling ⇒ chuyển sang đường giả lập thay vì
-         * báo lỗi rồi dừng phiên. Ghi nhớ 10 phút để lượt sau khỏi thử lại. */
-        if (opts.modelNen && opts.tools && isToolsUnsupportedError(e)) {
-          markEmulated(envEmulated);
-          note('> model nay khong ho tro tool — chuyen sang duong gia lap.');
-          return chayGiaLap();
-        }
-        throw e;
-      }
-    };
     /* Vòng trong: cho phép THỬ LẠI đúng một lần khi provider từ chối vì tràn
      * context. Mọi lỗi khác thì báo ra, không thử lại. */
     let daThuLai = false;
     for (;;) {
       const huy = new AbortController();
       let nghePhim: (() => void) | undefined;
+      const system = nen ? nen.system() : (opts.system ?? '');
       try {
         if (opts.watchInterrupt) nghePhim = opts.watchInterrupt(() => huy.abort());
-        const turn = await chayLuot(huy.signal);
+        const turn = await runTurn({
+          model: opts.model,
+          ...(opts.modelNen ? { modelNen: opts.modelNen } : {}),
+          ...(opts.tools ? { tools: opts.tools } : {}),
+          messages: messages(),
+          ...(system ? { system } : {}),
+          ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+          signal: huy.signal,
+          env: envEmulated,
+          onToolCall: (name) => note(`[goi tool] ${name}`),
+          onToolError: (name, msg) => note(`[tool that bai] ${name}: ${msg}`),
+          onText: (delta) => out(delta),
+          onChuyenDuong: (lyDo) => {
+            if (lyDo === 'model-che-tools') {
+              note('> model nay khong ho tro tool — chuyen sang duong gia lap.');
+            }
+          },
+        });
         // Ghi MỘT LẦN cho cả khối: tool-call và tool-result phải vào đĩa cùng nhau.
         // Ghi lệch pha là provider từ chối mọi lượt sau của phiên.
         opts.session.appendAll(turn.messages);

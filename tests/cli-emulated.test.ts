@@ -18,6 +18,7 @@ import {
 import { resetToolSupportCache } from '@/lib/tool-support-cache';
 import { messagesDaHoanThanh } from '@/cli/agent-turn';
 import { runRepl } from '@/cli/repl';
+import { chayMotLuot } from '@/cli/index';
 import { openSession, sessionFileFor } from '@/cli/session';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -459,5 +460,132 @@ describe('B — usage + finishReason của đường giả lập', () => {
     expect(r.usage.promptTokens, 'phai co promptTokens de bat tran ngam').toBe(1);
     expect(r.usage.completionTokens).toBe(1);
     expect(r.finishReason, 'finishReason la thu lưới tran ngam can').toBe('stop');
+  });
+});
+
+
+/* ============ C: MỘT CƠ CHẾ CHO CẢ REPL LẪN `-p` ============
+ *
+ * Root cause (I1): `cli/index.ts` (`chayMotLuot`) gọi thẳng `runAgentTurn` ⇒ đường
+ * `-p` không có đường giả lập ⇒ model không hỗ trợ tools thì `-p` vẫn chết.
+ *
+ * Root cause (I4): `lib/emulated-agent.ts` nuốt lỗi tool thành
+ * `{note:'Công cụ tạm thời không khả dụng.'}` ⇒ model không phân biệt được "bị từ chối"
+ * với "tool hỏng". Đường NATIVE không dính (đã bọc `wrapTools`).
+ */
+describe('C — đường `-p` cũng phải tự chuyển sang đường giả lập', () => {
+  it('chayMotLuot trả lời được thay vì chết khi model chê tools', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const model = {
+        specificationVersion: 'v1',
+        provider: 'stub',
+        modelId: 'stub-1',
+        defaultObjectGenerationMode: 'tool',
+        doGenerate: async () => ({
+          text: 'Tôi trả lời bằng văn bản thôi.',
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue({
+                  type: 'error',
+                  error: new Error('This model does not support tools'),
+                } as never);
+                ctrl.close();
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          }),
+      } as unknown as LanguageModelV1;
+
+      const session = openSession(state, dir);
+      const out: string[] = [];
+      await chayMotLuot({
+        lm: model,
+        lmNen: model,
+        session,
+        question: 'xin chào',
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'x' }),
+          },
+        } as unknown as ToolSet,
+        maxTokens: 100,
+        apiKey: 'sk-test',
+        model: 'stub-1',
+        system: 'SYSTEM',
+        out: (s) => out.push(s),
+        note: () => {},
+      });
+
+      expect(out.join(''), 'duong -p phai tra loi duoc qua duong gia lap').toContain(
+        'trả lời bằng văn bản thôi',
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('C — lỗi tool phải TỚI ĐƯỢC MODEL trên đường giả lập', () => {
+  it('model thấy lý do tool bị từ chối, không phải "tạm thời không khả dụng"', async () => {
+    const prompts: unknown[] = [];
+    let i = 0;
+    const model = {
+      specificationVersion: 'v1',
+      provider: 'stub',
+      modelId: 'stub-1',
+      defaultObjectGenerationMode: 'tool',
+      doGenerate: async (args: { prompt: unknown }) => {
+        prompts.push(args.prompt);
+        i += 1;
+        if (i === 1) {
+          return {
+            text: KHOI_TOOL_CALL,
+            finishReason: 'stop',
+            usage: { promptTokens: 10, completionTokens: 5 },
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          };
+        }
+        return {
+          text: 'Đã xong.',
+          finishReason: 'stop',
+          usage: { promptTokens: 20, completionTokens: 5 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        };
+      },
+      doStream: () => {
+        throw new Error('stub khong ho tro doStream');
+      },
+    } as unknown as LanguageModelV1;
+
+    await runEmulatedTurn({
+      model,
+      tools: {
+        fs_read: {
+          description: 'doc file',
+          parameters: z.object({ path: z.string().optional() }),
+          execute: async () => {
+            throw new Error('Nguoi dung KHONG duyet phep chay tool "fs_read".');
+          },
+        },
+      } as unknown as ToolSet,
+      messages: [{ role: 'user', content: 'doc file a.txt' }],
+      system: 'SYSTEM',
+    });
+
+    expect(prompts.length, 'phai co vong 2 de model thay ket qua').toBe(2);
+    const promptHai = JSON.stringify(prompts[1]);
+    expect(promptHai, 'model phai thay ly do tool bi tu choi').toContain('KHONG duyet');
+    expect(promptHai, 'khong duoc che ly do bang thong bao chung chung').not.toContain(
+      'Công cụ tạm thời không khả dụng',
+    );
   });
 });
