@@ -1,6 +1,5 @@
 /** @jsxImportSource @opentui/react */
 import React from 'react';
-import { useKeyboard } from '@opentui/react';
 import { theme } from './theme.ts';
 import { Header } from './header.tsx';
 import { Transcript } from './transcript.tsx';
@@ -21,40 +20,30 @@ export interface AppProps {
   /** Lời hỏi duyệt đang chờ (nếu có). */
   approval?: ApprovalRequest;
   onSubmit: (text: string) => void;
-  onApproval: (id: number, dongY: boolean) => void;
 }
 
 /**
  * Màn hình TUI: header · transcript · (hộp duyệt) · ô nhập · footer.
  *
- * ============ VÌ SAO PHÍM ĐƯỢC XỬ LÝ Ở ĐÂY ============
+ * ============ VÌ SAO KHÔNG `useKeyboard` Ở ĐÂY ============
  *
  * `useKeyboard` là **toàn cục**: nó nhận phím bất kể ô nhập có focus hay không.
- * Nên chỉ dùng nó cho phím mà ô nhập **không** cần: phím trả lời hộp duyệt.
- * Còn lại (Enter gửi, gõ chữ) để ô nhập lo — vì trong lúc hỏi duyệt, ô nhập
- * bị **blur** để không tranh phím với hộp duyệt.
+ * Nếu App dùng nó để trả lời hộp duyệt, thì phím Esc được **hai** người nghe:
+ * App (trả lời "không") và store (cắt lượt). App đăng ký trước (lúc mount) ⇒ nó
+ * gỡ lời hỏi khỏi hàng đợi ⇒ store thấy "không còn lời hỏi" ⇒ **cắt lượt**.
+ * Đo 2026-10-21 (review độc lập): Esc trong hộp duyệt vừa từ chối tool vừa
+ * cắt lượt ⇒ mất câu trả lời của model.
+ *
+ * ⇒ **Store làm chủ phím** (một listener duy nhất, đăng ký lúc khởi tạo store);
+ * App chỉ vẽ.
  *
  * ============ VÌ SAO BLUR KHI ĐANG CHẠY ============
  *
  * Gõ phím lúc lượt đang chạy sẽ chen vào dòng đang gõ ⇒ người dùng tưởng lỗi.
- * Blur làm phím gõ không vào đâu cả, và trạng thái "đang chạy" đã nói rõ trên
- * dòng trạng thái.
+ * Blur làm phím gõ không vào đâu cả, và trạng thái "đang chạy" đã nói rõ ở dòng
+ * trạng thái.
  */
 export function App(props: AppProps): React.ReactNode {
-  useKeyboard((key) => {
-    const a = props.approval;
-    if (!a) return;
-    if (key.name === 'y' || key.name === 'c') props.onApproval(a.id, true);
-    else if (
-      key.name === 'n' ||
-      key.name === 'return' ||
-      key.name === 'enter' ||
-      key.name === 'escape'
-    ) {
-      props.onApproval(a.id, false);
-    }
-  });
-
   const trangThai = props.approval
     ? 'chờ bạn quyết'
     : props.running

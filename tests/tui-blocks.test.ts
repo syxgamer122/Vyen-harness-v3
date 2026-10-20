@@ -80,6 +80,28 @@ describe('messagesToBlocks', () => {
     expect(tool.status).toBe('running');
   });
 
+  it('tool lỗi (kết quả `{ok:false}`) ⇒ khối tool là LỖI, không phải xong', () => {
+    /* Lỗi tool đi qua part `tool-result` (wrapper đổi thành `{ok:false,error}` để
+     * model đọc được lý do) ⇒ nếu lúc nạp lại lịch sử cứ đánh 'ok' thì mở lại
+     * phiên sẽ thấy dấu tick cho một tool đã hỏng. Đo 2026-10-21 (review độc
+     * lập). */
+    const b = messagesToBlocks([
+      { role: 'user', content: 'x' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'a', toolName: 'fs_write', args: {} }],
+      },
+      {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'a', toolName: 'fs_write', result: { ok: false, error: 'tu choi' } },
+        ],
+      },
+    ]);
+    const tool = b.find((x) => x.kind === 'tool') as { status: string };
+    expect(tool.status).toBe('error');
+  });
+
   it('text rỗng thì không tạo block', () => {
     const b = messagesToBlocks([{ role: 'assistant', content: [{ type: 'text', text: '' }] }]);
     expect(b).toEqual([]);

@@ -149,18 +149,54 @@ describe('store TUI', () => {
     return p;
   });
 
-  it('Esc không cắt lượt khi đang có hộp duyệt', () => {
+  /* ============ PHÍM DO STORE NGHE (một listener duy nhất) ============
+   *
+   * Nếu App cũng nghe Esc thì có **hai** listener trên một emitter: App (đăng ký
+   * lúc mount) gỡ lời hỏi khỏi hàng đợi trước, nên store thấy "không còn lời
+   * hỏi" ⇒ **cắt lượt**. Đo 2026-10-21 (review độc lập): Esc trong hộp duyệt vừa
+   * từ chối tool vừa cắt lượt ⇒ mất câu trả lời của model.
+   */
+  it('y là duyệt, Enter/Esc là từ chối — và Esc KHÔNG cắt lượt', async () => {
     const approval = createApprovalBroker();
     const ki = keyInputGia();
     const s = storeGia({ approval, keyInput: ki });
     const huy = vi.fn();
     s.watchInterrupt(huy);
-    void approval.approve('fs_write', { path: 'a' });
+
+    const p = approval.approve('fs_write', { path: 'a' });
     ki.emit({ name: 'escape' });
-    expect(huy).not.toHaveBeenCalled();
-    approval.traLoi(s.snapshot().approval!.id, false);
+    expect(huy, 'Esc trong hộp duyệt KHÔNG được cắt lượt').not.toHaveBeenCalled();
+    expect(s.snapshot().approval, 'lời hỏi phải được trả lời (từ chối)').toBeUndefined();
+    await expect(p).resolves.toBe(false);
+
+    /* Lượt tiếp theo: y là duyệt. */
+    const p2 = approval.approve('fs_write', { path: 'b' });
+    ki.emit({ name: 'y' });
+    await expect(p2).resolves.toBe(true);
+
+    /* Không còn hộp duyệt thì Esc mới cắt lượt. */
     ki.emit({ name: 'escape' });
     expect(huy).toHaveBeenCalledTimes(1);
+  });
+
+  it('câu người dùng phải có trên màn hình ngay khi gõ', () => {
+    const s = storeGia();
+    void s.ask();
+    s.submit('ghi file a.txt');
+    const b = s.snapshot().blocks;
+    expect(b[0]).toEqual({ kind: 'user', text: 'ghi file a.txt' });
+  });
+
+  it('hai lượt không bị gộp làm một khối chữ', () => {
+    const s = storeGia();
+    void s.ask();
+    s.submit('cau mot');
+    s.out('tra loi MOT');
+    void s.ask();
+    s.submit('cau hai');
+    s.out('tra loi HAI');
+    const b = s.snapshot().blocks;
+    expect(b.map((x) => x.kind)).toEqual(['user', 'assistant', 'user', 'assistant']);
   });
 
   it('submit "/new" xoá màn hình, nhưng dòng đó VẪN được đưa cho runRepl', async () => {

@@ -89,7 +89,6 @@ describe('hộp duyệt', () => {
       running={false}
       approval={{ id: 7, tool: 'fs_write', moTa: '  path: a.txt' }}
       onSubmit={vi.fn()}
-      onApproval={vi.fn()}
       {...props}
     />
   );
@@ -104,19 +103,10 @@ describe('hộp duyệt', () => {
     t.renderer.destroy();
   });
 
-  it('y là duyệt; Enter và Esc là từ chối', async () => {
-    const onApproval = vi.fn();
-    const t = await testRender(app({ onApproval }), { width: 80, height: 24 });
-    await t.renderOnce();
-    t.renderer.keyInput.emit('keypress', PHIM('y'));
-    t.renderer.keyInput.emit('keypress', PHIM('return'));
-    t.renderer.keyInput.emit('keypress', PHIM('escape'));
-    await t.renderOnce();
-    expect(onApproval).toHaveBeenNthCalledWith(1, 7, true);
-    expect(onApproval).toHaveBeenNthCalledWith(2, 7, false);
-    expect(onApproval).toHaveBeenNthCalledWith(3, 7, false);
-    t.renderer.destroy();
-  });
+  /* Phím trả lời hộp duyệt do **store** nghe, không phải App — vì nếu cả hai
+   * cùng nghe Esc trên một emitter thì App (đăng ký trước) gỡ lời hỏi khỏi
+   * hàng đợi ⇒ store thấy "không còn lời hỏi" ⇒ **cắt lượt**. Xem
+   * `tests/tui-bridge.test.ts` và `tests/tui-scenario.test.tsx`. */
 
   it('ô nhập bị blur khi đang hỏi duyệt — gõ không chen vào dòng', async () => {
     const onSubmit = vi.fn();
@@ -126,6 +116,53 @@ describe('hộp duyệt', () => {
     await t.renderOnce();
     expect(plainText(t), 'ô nhập phải mù khi đang hỏi duyệt').toBe('');
     expect(onSubmit).not.toHaveBeenCalled();
+    t.renderer.destroy();
+  });
+});
+
+/* ============ DÒNG TRẠNG THÁI ============
+ *
+ * Đo 2026-10-21 (review độc lập): dòng trạng thái **không bao giờ hiện** — ô nhập
+ * và dòng trạng thái nằm cùng hàng nên textarea vẽ đè lên. Mà dòng trạng thái
+ * là chỗ duy nhất nói "đang chạy" / "chờ bạn quyết" / "chat" ⇒ mất nó thì người
+ * dùng không biết lượt đã xong chưa.
+ *
+ * Test này render **App** (không phải Composer lẻ) vì lỗi nằm ở bố cục cột
+ * của App — Composer lẻ thì vẫn đúng. */
+describe('dòng trạng thái', () => {
+  it('hiện dòng trạng thái khi không có hộp duyệt', async () => {
+    const t = await testRender(
+      <App
+        workspace="w"
+        modelLabel="m"
+        windowTokens={1000}
+        tokens={null}
+        blocks={[]}
+        running={false}
+        onSubmit={vi.fn()}
+      />,
+      { width: 80, height: 12 },
+    );
+    await t.renderOnce();
+    expect(t.captureCharFrame(), 'dòng trạng thái phải hiện').toContain('chat · m');
+    t.renderer.destroy();
+  });
+
+  it('hiện "đang chạy" khi lượt đang chạy', async () => {
+    const t = await testRender(
+      <App
+        workspace="w"
+        modelLabel="m"
+        windowTokens={1000}
+        tokens={null}
+        blocks={[]}
+        running
+        onSubmit={vi.fn()}
+      />,
+      { width: 80, height: 12 },
+    );
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain('đang chạy · m');
     t.renderer.destroy();
   });
 });

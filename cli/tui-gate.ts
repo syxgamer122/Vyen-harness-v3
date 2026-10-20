@@ -47,6 +47,11 @@ export function nodeAtLeast(version: string, minimum: string = NODE_TOI_THIEU_TU
  *
  * Thứ tự này là thứ tự của *mức độ quyết định*: `-p` là ý người dùng rõ ràng
  * (một lượt rồi thoát) nên phải thắng; sau đó mới tới điều kiện kỹ thuật.
+ *
+ * `reason` để caller **giải thích** với người dùng khi TUI không mở được
+ * (hiện tại: Node quá cũ — trường hợp duy nhất người dùng không tự biết).
+ * Không in lý do cho `not-tty` (đang pipe) hay `forced` (người dùng tự bật
+ * `VYEN_PLAIN=1`) — hai trường hợp đó nói rõ rồi.
  */
 export function chooseFrontend(input: {
   print: boolean;

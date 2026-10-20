@@ -30,9 +30,20 @@ export function Composer({
   const ref = useRef<{ plainText: string; setText: (t: string) => void } | null>(null);
 
   return (
-    <box flexDirection="column" backgroundColor={theme.bg} paddingLeft={2} paddingRight={2}>
+    <box
+      flexDirection="column"
+      /* KHÔNG co: ô nhập + dòng trạng thái là phần **cố định** của màn hình.
+       * Đo 2026-10-21 (review độc lập): khi cột bị bóp, ô nhập và dòng trạng
+       * thái rơi vào **cùng hàng** và textarea vẽ đè lên dòng trạng thái ⇒
+       * dòng trạng thái (chỗ duy nhất nói "đang chạy") biến mất. Transcript
+       * mới là phần co lại được. */
+      flexShrink={0}
+      backgroundColor={theme.bg}
+      paddingLeft={2}
+      paddingRight={2}
+    >
       {status ? (
-        <box flexDirection="row">
+        <box flexDirection="row" height={1}>
           <text fg={theme.accent}>▎ </text>
           <text fg={theme.muted}>{status}</text>
         </box>

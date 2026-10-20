@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { LanguageModelV1, LanguageModelV1StreamPart } from 'ai';
 import { z } from 'zod';
-import { testRender } from '@opentui/react/test-utils';
+import { createTestRenderer } from '@opentui/core/testing';
+import { createRoot } from '@opentui/react';
 import { runRepl } from '@/cli/repl';
 import { openSession, sessionFileFor } from '@/cli/session';
 import { createApprovalBroker } from '@/cli/approval-broker';
@@ -20,15 +21,21 @@ import { App } from '../cli/tui/app';
  *
  * ============ VÌ SAO TEST NÀY TỒN TẠI ============
  *
- * Một lần trước, feature "đường giả lập cho CLI" ship với 1 Critical — câu trả
+ * Đo 2026-10-20: feature "đường giả lập cho CLI" ship với 1 Critical — câu trả
  * lời của model **không bao giờ** được ghi vào transcript (người dùng thấy trên
  * màn hình nhưng transcript trên đĩa không có). Test tầng hàm không bắt được
  * lỗi tầng hệ thống đó — chỉ một kịch bản chạy thật mới bắt được.
  *
- * Vì vậy test này chạy **đúng** vòng lặp thật (`runRepl`), store thật, màn
- * hình thật (renderer headless), và kiểm **file JSONL trên đĩa** — ranh giới quan
- * sát được, không phải trạng thái nội bộ.
+ * ============ VÌ SAO DỰNG LẠI RENDERER (KHÔNG DÙNG `testRender`) ============
+ *
+ * `testRender` gắn luôn node React vào renderer ⇒ không lấy được **bàn phím thật
+ * của renderer** trước khi dựng store. Mà bàn phím thật là thứ duy nhất bắt
+ * được lỗi "Esc trong hộp duyệt vừa từ chối tool vừa CẮT LƯỢT": dùng bản giả
+ * thì đường cắt lượt của TUI không hề được kiểm.
  */
+/** React chi can co coIS_REACT_ACT_ENVIRONMENT de ct hoat dong. */
+const reactEnv = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+
 const DONE = {
   type: 'finish' as const,
   finishReason: 'stop' as const,
@@ -83,13 +90,7 @@ const PHIM = (name: string) =>
   }) as never;
 
 /** Màn hình **sống**: vẽ lại mỗi khi store đổi (giống `AppRoot` thật). */
-function LiveApp({
-  store,
-  onApproval,
-}: {
-  store: TuiStore;
-  onApproval: (id: number, dongY: boolean) => void;
-}): React.ReactNode {
+function LiveApp({ store }: { store: TuiStore }): React.ReactNode {
   const state = useSyncExternalStore(store.subscribe, store.snapshot);
   return (
     <App
@@ -101,31 +102,34 @@ function LiveApp({
       running={state.running}
       {...(state.approval ? { approval: state.approval } : {})}
       onSubmit={(line) => store.submit(line)}
-      onApproval={onApproval}
     />
   );
 }
 
 describe('kịch bản end-to-end: duyệt tool rồi trả lời', () => {
-  const chay = async (traLoi: 'y' | 'return') => {
+  const chay = async (traLoi: 'y' | 'return' | 'escape') => {
     const state = mkdtempSync(path.join(tmpdir(), 'vyen-tui-e2e-'));
     const dir = 'C:\\du-an';
+    const actEnv = reactEnv.IS_REACT_ACT_ENVIRONMENT;
+    reactEnv.IS_REACT_ACT_ENVIRONMENT = true;
     try {
       const broker = createApprovalBroker();
       const model = stubModel();
       const session = openSession(state, dir);
+
+      const t = await createTestRenderer({ width: 90, height: 20 });
       const store = createTuiStore({
         messages: session.messages,
         approval: broker,
         /* Ghi chú khởi động phải hiện trong transcript — vào alternate screen thì
          * in ra stderr là mất, nên nó là một phần của màn hình, không phải log. */
         startupNotes: ['> cong cu: 3'],
-        keyInput: { on: () => {}, off: () => {} },
+        /* Bàn phím THẬT của renderer — xem ghi chú đầu file. */
+        keyInput: t.renderer.keyInput,
       });
-
-      const t = await testRender(<LiveApp store={store} onApproval={(id, y) => broker.traLoi(id, y)} />, {
-        width: 90,
-        height: 20,
+      const root = createRoot(t.renderer);
+      await act(async () => {
+        root.render(<LiveApp store={store} />);
       });
 
       /* Tool giả: xin duyệt thật qua broker, rồi chạy (hoặc ném lỗi nếu bị
@@ -163,8 +167,7 @@ describe('kịch bản end-to-end: duyệt tool rồi trả lời', () => {
 
       await vi.waitFor(() => expect(daHoi).toBe(true));
       /* `act` là BẮT BUỘC: store đổi state **ngoài** React, nên React phải được
-       * báo "có việc mới" trong act để nó vẽ lại — nếu không thì màn hình vẫn là
-       * khung cũ (và React cảnh báo "not wrapped in act"). */
+       * báo "có việc mới" trong act để nó vẽ lại. */
       await act(async () => {
         store.submit('ghi file a.txt');
       });
@@ -179,17 +182,22 @@ describe('kịch bản end-to-end: duyệt tool rồi trả lời', () => {
       expect(khungDuyet).toContain('a.txt');
       expect(khungDuyet).toContain('[y/N]');
       expect(khungDuyet, 'ghi chu khoi dong phai hien tren man hinh').toContain('> cong cu: 3');
+      /* Câu người dùng phải có trên màn hình — lịch sử nạp lại có nó, nên lúc
+       * đang chat cũng phải có, nếu không thì mở lại phiên thấy màn hình khác. */
+      expect(khungDuyet, 'cau nguoi dung phai hien tren man hinh').toContain('ghi file a.txt');
 
       /* Trả lời. */
       await act(async () => {
         t.renderer.keyInput.emit('keypress', PHIM(traLoi));
       });
 
-      /* Chờ model trả lời xong. */
-      await vi.waitFor(() =>
-        expect(
-          store.snapshot().blocks.some((b) => b.kind === 'assistant' && b.text.includes('da ghi xong')),
-        ).toBe(true),
+      /* Chờ model trả lời xong — trừ khi lượt bị cắt. */
+      await vi.waitFor(
+        () =>
+          expect(
+            store.snapshot().blocks.some((b) => b.kind === 'assistant' && b.text.includes('da ghi xong')),
+          ).toBe(true),
+        { timeout: 5_000 },
       );
 
       /* REPL là vòng lặp **hỏi tiếp** ⇒ không tự kết thúc. Gửi `/exit` để nó
@@ -204,9 +212,10 @@ describe('kịch bản end-to-end: duyệt tool rồi trả lời', () => {
 
       const khung = t.captureCharFrame();
       const jsonl = readFileSync(sessionFileFor(state, dir), 'utf8');
-      t.renderer.destroy();
+      await t.dispose();
       return { khung, jsonl };
     } finally {
+      reactEnv.IS_REACT_ACT_ENVIRONMENT = actEnv;
       rmSync(state, { recursive: true, force: true });
     }
   };
@@ -223,5 +232,14 @@ describe('kịch bản end-to-end: duyệt tool rồi trả lời', () => {
   it('người dùng TỪ CHỐI (Enter) ⇒ tool bị từ chối, dòng tool hiện dấu X', async () => {
     const { khung } = await chay('return');
     expect(khung, 'phai co dau X cua tool bi tu choi').toContain('✗');
+  });
+
+  /* C1: Esc trong hộp duyệt là câu trả lời "KHÔNG" — KHÔNG phải cắt lượt. Cắt lượt
+   * lúc đó là mất câu trả lời của model (và lượt bị ghi dở ⇒ transcript hỏng). */
+  it('Esc trong hộp duyệt ⇒ từ chối tool, KHÔNG cắt lượt', async () => {
+    const { khung, jsonl } = await chay('escape');
+    expect(khung, 'tool phai bi tu choi').toContain('✗');
+    expect(khung, 'luot phai tiep tuc, model van tra loi').toContain('da ghi xong');
+    expect(jsonl, 'cau tra loi phai duoc ghi xuong dia').toContain('da ghi xong');
   });
 });

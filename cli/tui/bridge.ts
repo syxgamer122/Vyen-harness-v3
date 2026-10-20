@@ -15,7 +15,7 @@
  * transcript đã dài thêm.
  */
 import type { CoreMessage } from 'ai';
-import { messagesToBlocks, nhanTool, tomTatDoiSo, type Block } from './blocks.ts';
+import { ketQuaLoi, messagesToBlocks, nhanTool, tomTatDoiSo, type Block } from './blocks.ts';
 import { parseCommand } from '../commands.ts';
 import type { ApprovalBroker, ApprovalRequest } from '../approval-broker.ts';
 import type { NoteLevel } from '../repl.ts';
@@ -38,19 +38,9 @@ export interface KeyInputLike {
 }
 
 /**
- * Kết quả tool có phải LỖI không?
- *
- * Wrapper của CLI đổi lỗi thành `{ok:false,error}` để **model** đọc được lý do
- * ⇒ lỗi vẫn đi qua part `tool-result` như thành công. Không kiểm `ok` thì dòng
- * tool lỗi hiện dấu tick — người dùng tưởng đã ghi được file.
+ * Kết quả tool có phải LỖI không? — xem `ketQuaLoi` trong `blocks.ts` (một
+ * nguồn cho cả đường đang chạy lẫn đường nạp lại lịch sử).
  */
-function ketQuaLoi(resultado: unknown): boolean {
-  return (
-    typeof resultado === 'object' &&
-    resultado !== null &&
-    (resultado as { ok?: unknown }).ok === false
-  );
-}
 
 export interface TuiStoreOptions {
   /** Lịch sử nạp lại từ đĩa — dựng thành block ngay từ đầu. */
@@ -103,6 +93,40 @@ export function createTuiStore(opts: TuiStoreOptions): TuiStore {
   /* Lời hỏi đang chờ — chỉ có một lúc (REPL hỏi tuần tự). */
   let choHoi: ((dong: string | null) => void) | null = null;
 
+  /* Đánh dấu "Esc vừa được dùng để trả lời hộp duyệt" — để đường cắt lượt biết
+   * mà đừng cắt. Xem `xuLyPhimDuyet` bên dưới. */
+  let vuaTraLoiDuyet = false;
+
+  /* ============ PHÍM: MỘT NGƯỜI NGHE DUY NHẤT ============
+   *
+   * Cả "trả lời hộp duyệt" và "cắt lượt" đều nghe phím Esc, và cả hai đều trên
+   * **cùng một** emitter. Nếu để hai listener riêng thì chúng chạy theo thứ tự
+   * đăng ký: listener thứ nhất gỡ lời hỏi khỏi hàng đợi ⇒ listener thứ hai thấy
+   * "không còn lời hỏi" ⇒ **cắt lượt**. Đo 2026-10-21 (review độc lập): Esc
+   * trong hộp duyệt vừa từ chối tool vừa cắt lượt ⇒ mất câu trả lời của model
+   * và transcript ghi dở.
+   *
+   * Nên: **một** listener, do store đăng ký lúc khởi tạo (trước cả lúc React
+   * mount), xử lý cả hai việc. */
+  const xuLyPhimDuyet = (k: { name?: string }): void => {
+    const ten = k.name;
+    if (
+      ten !== 'y' &&
+      ten !== 'c' &&
+      ten !== 'n' &&
+      ten !== 'return' &&
+      ten !== 'enter' &&
+      ten !== 'escape'
+    ) {
+      return;
+    }
+    const a = opts.approval.pending();
+    if (!a) return;
+    if (ten === 'escape') vuaTraLoiDuyet = true;
+    opts.approval.traLoi(a.id, ten === 'y' || ten === 'c');
+  };
+  opts.keyInput.on('keypress', xuLyPhimDuyet);
+
   /* Hộp duyệt: theo dõi broker, không tự hỏi. */
   const boTheoDoi = opts.approval.onPending((req) => {
     capNhat({ approval: req });
@@ -133,6 +157,12 @@ export function createTuiStore(opts: TuiStoreOptions): TuiStore {
     submit(line: string): void {
       const traLoi = choHoi;
       choHoi = null;
+      /* Cau nguoi dung phai co tren man hinh NGAY - lich su nap lai co no (no
+       * nam trong CoreMessage[]), neu luc dang chat ma khong co thi mo lai
+       * phien thay man hinh khac han. Do 2026-10-21 (review doc lap). */
+      if (line) {
+        capNhat({ blocks: [...state.blocks, { kind: 'user', text: line }] });
+      }
       capNhat({ running: true });
       /* `/new` ⇒ phiên mới ⇒ transcript cũ không còn ý nghĩa ⇒ xoá màn hình.
          * Lệnh VẪN được đưa cho REPL (nó còn phải xoá lịch sử trên đĩa). */
@@ -143,7 +173,7 @@ export function createTuiStore(opts: TuiStoreOptions): TuiStore {
     },
 
     out(text: string): void {
-      if (!text) return;
+      if (!text.trim()) return;
       const cuoi = state.blocks[state.blocks.length - 1];
       if (cuoi && cuoi.kind === 'assistant') {
         const blocks = [...state.blocks];
@@ -221,9 +251,16 @@ export function createTuiStore(opts: TuiStoreOptions): TuiStore {
 
     watchInterrupt(cancel: () => void): () => void {
       const h = (k: { name?: string }): void => {
+        if (k.name !== 'escape') return;
+        /* Esc vừa trả lời hộp duyệt (xem `xuLyPhimDuyet`) ⇒ KHÔNG cắt lượt.
+         * Cắt lượt lúc đó là mất câu trả lời của model và làm transcript ghi
+         * dở — đúng lỗi review độc lập 2026-10-21 chỉ ra. */
+        if (vuaTraLoiDuyet) {
+          vuaTraLoiDuyet = false;
+          return;
+        }
         /* Đang có hộp duyệt thì Esc thuộc về hộp duyệt (trả lời "không"),
          * KHÔNG phải cắt lượt — cắt lượt lúc đang chờ duyệt là mất việc. */
-        if (k.name !== 'escape') return;
         if (opts.approval.pending()) return;
         cancel();
       };
@@ -237,6 +274,7 @@ export function createTuiStore(opts: TuiStoreOptions): TuiStore {
       const traLoi = choHoi;
       choHoi = null;
       boTheoDoi();
+      opts.keyInput.off('keypress', xuLyPhimDuyet);
       traLoi?.(null);
     },
   };

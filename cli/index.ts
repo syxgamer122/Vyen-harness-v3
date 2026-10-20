@@ -191,7 +191,7 @@ import { openSession } from './session';
 import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
 import { TaoLichSu } from './history';
 import { createTerminal } from './terminal';
-import { chooseFrontend } from './tui-gate';
+import { chooseFrontend, NODE_TOI_THIEU_TUI } from './tui-gate';
 import { createApprovalBroker } from './approval-broker';
 import type { ApprovalBroker } from './approval-broker';
 /* Kiểu của đảo ESM — chỉ để **type**, nên bị xoá lúc build; không phải import
@@ -640,6 +640,26 @@ async function main(): Promise<void> {
     else console.error(s);
   };
 
+  /* Node quá cũ là trường hợp **duy nhất** người dùng không tự biết vì sao
+   * không có TUI (pipe thì rõ rồi, `VYEN_PLAIN=1` thì do mình bật) ⇒ nói một
+   * dòng. Đây là thông tin MỚI trong một trường hợp mới — không đổi hành vi của
+   * đường plain ở các trường hợp có sẵn (`-p`, pipe, `VYEN_PLAIN=1`). */
+  if (mode.kind === 'plain' && mode.reason === 'node-too-old') {
+    console.error(
+      `> TUI khong bat: Node ${process.versions.node} qua cu (can >= ${NODE_TOI_THIEU_TUI}).`,
+    );
+  }
+
+  /* Lỗi xảy ra **sau** khi TUI đã mở thì không in ra stderr được: OpenTUI đang
+   * giữ alternate screen ⇒ stderr bị nuốt ⇒ CLI im lặng rồi thoát, người dùng
+   * không hiểu vì sao. Đo 2026-10-21 (review độc lập) ⇒ lỗi phải đi vào
+   * transcript đang chạy. */
+  let tuiDangChay = false;
+  const baoLoi = (s: string): void => {
+    if (tuiDangChay && tui) tui.note(s);
+    else ghiChu(s);
+  };
+
   /* Terminal readline chỉ tồn tại ở đường PLAIN. Ở TUI, OpenTUI đang giữ stdin
    * — hai bên cùng đọc stdin là hai bên cùng tranh, và `ask` của REPL sẽ nuốt
    * phím của TUI. */
@@ -733,8 +753,8 @@ async function main(): Promise<void> {
       ghiChu('> gõ /new neu muon bat dau moi. /exit de thoat.');
     }
   } catch (e) {
-    console.error(`> KHONG doc duoc transcript: ${e instanceof Error ? e.message : String(e)}`);
-    console.error('> chay tiep, chi khong nho duoc.');
+    baoLoi(`> KHONG doc duoc transcript: ${e instanceof Error ? e.message : String(e)}`);
+    baoLoi('> chay tiep, chi khong nho duoc.');
   }
 
   ghiChu(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
@@ -757,7 +777,7 @@ async function main(): Promise<void> {
      * CLI in ra CÂU RỖNG rồi exit 0, tức báo thành công cho một lần gọi thất bại —
      * tệ hơn cả crash. `runAgentTurn` vì thế ném lại lỗi provider ra đây. */
     if (!session) {
-      console.error('> khong co session, thoat. Van xong lich su? khong.');
+      baoLoi('> khong co session, thoat. Van xong lich su? khong.');
       process.exitCode = 1;
       return;
     }
@@ -798,6 +818,7 @@ async function main(): Promise<void> {
 
     if (dungTui && tui) {
       /* TUI: chạy CÙNG vòng lặp, chỉ khác adapter đọc/ghi. */
+      tuiDangChay = true;
       await tui.run({ ...core, startupNotes });
     } else if (terminal && lichSu) {
       await runRepl(buildReplOptions({ ...core, terminal, lichSu }));
@@ -809,7 +830,7 @@ async function main(): Promise<void> {
   } catch (err) {
     /* Chỉ bắt được lỗi CỐ Ý ném ra (ví dụ config sai lúc dựng model). Lỗi từ
      * provider đã được bắt và chẩn đoán ở `catch` bên trên. */
-    console.error(`\n> LOI: ${err instanceof Error ? err.message : String(err)}`);
+    baoLoi(`\n> LOI: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   } finally {
     /* Đóng TUI TRƯỚC: nó phải trả terminal về trạng thái cũ (thoát alternate

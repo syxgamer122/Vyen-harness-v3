@@ -95,6 +95,25 @@ function partsOf(content: unknown): Part[] {
 }
 
 /**
+ * Kết quả tool có phải LỖI không?
+ *
+ * Wrapper của CLI đổi lỗi thành `{ok:false,error}` để **model** đọc được lý do
+ * ⇒ lỗi vẫn đi qua part `tool-result` như thành công. Không kiểm `ok` thì dòng
+ * tool lỗi sẽ hiện dấu tick — người dùng tưởng đã ghi được file.
+ *
+ * Dùng **chung** cho cả hai đường (lúc đang chạy và lúc nạp lại lịch sử), nếu
+ * không thì một đường hiện ✗ còn đường kia hiện ✓ — cùng một sự việc mà hai
+ * màn hình khác nhau. Đo 2026-10-21 (review độc lập).
+ */
+export function ketQuaLoi(result: unknown): boolean {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { ok?: unknown }).ok === false
+  );
+}
+
+/**
  * Dựng block từ lịch sử.
  *
  * ============ GHÉP THEO ID, KHÔNG THEO THỨ TỰ ============
@@ -158,7 +177,9 @@ export function messagesToBlocks(messages: CoreMessage[]): Block[] {
         /* Kết quả mồ côi (không có lời gọi tương ứng) ⇒ bỏ qua, không đoán. */
         if (viTri === undefined) continue;
         const blk = blocks[viTri];
-        if (blk.kind === 'tool') blk.status = 'ok';
+        if (blk.kind === 'tool') {
+          blk.status = ketQuaLoi(p.result) ? 'error' : 'ok';
+        }
       }
     }
   }

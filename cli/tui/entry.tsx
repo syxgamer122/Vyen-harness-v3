@@ -16,7 +16,7 @@ import { createRoot } from '@opentui/react';
 import { useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { runRepl } from '../repl.ts';
-import type { ReplOptions } from '../repl.ts';
+import type { NoteLevel, ReplOptions } from '../repl.ts';
 import type { ApprovalBroker } from '../approval-broker.ts';
 import { createTuiStore, type TuiStore } from './bridge.ts';
 import { App } from './app.tsx';
@@ -56,6 +56,14 @@ export interface TuiSession {
   /** Chạy vòng lặp hội thoại trên màn hình này. */
   run(opts: TuiRunOptions): Promise<void>;
   /**
+   * Ghi một dòng trạng thái vào transcript **đang chạy**.
+   *
+   * Cần vì lỗi xảy ra *sau* khi màn hình đã mở thì không thể in ra stderr:
+   * OpenTUI đang giữ alternate screen ⇒ stderr bị nuốt, người dùng thấy CLI
+   * im lặng rồi thoát. Đo 2026-10-21 (review độc lập).
+   */
+  note(text: string, level?: NoteLevel): void;
+  /**
    * Dựng màn hình **tĩnh** (không chạy vòng lặp) và chờ Esc.
    *
    * Dùng để soi giao diện mà **không cần API key** — lúc đó mới kiểm được
@@ -83,7 +91,11 @@ export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
     renderer.destroy();
   };
 
+  /** Store của lượt đang chạy — để ghi lỗi vào transcript khi màn hình đã mở. */
+  let storeHienTai: TuiStore | null = null;
+
   const mount = (store: TuiStore): void => {
+    storeHienTai = store;
     const root = createRoot(renderer);
     root.render(
       <AppRoot
@@ -91,7 +103,6 @@ export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
         workspace={opts.workspace}
         modelLabel={opts.modelLabel}
         windowTokens={opts.windowTokens}
-        approval={opts.approval}
       />,
     );
   };
@@ -121,6 +132,11 @@ export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
       } finally {
         store.close();
       }
+    },
+
+    note(text: string, level?: NoteLevel): void {
+      /* Ghi vào transcript **đang chạy** — xem `TuiSession.note`. */
+      storeHienTai?.note(text, level);
     },
 
     async preview(): Promise<void> {
@@ -157,13 +173,11 @@ export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
   workspace,
   modelLabel,
   windowTokens,
-  approval,
 }: {
   store: TuiStore;
   workspace: string;
   modelLabel: string;
   windowTokens: number;
-  approval: ApprovalBroker;
 }): ReactNode {
   const state = useSyncExternalStore(store.subscribe, store.snapshot);
   return (
@@ -176,7 +190,6 @@ export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
       running={state.running}
       {...(state.approval ? { approval: state.approval } : {})}
       onSubmit={(line) => store.submit(line)}
-      onApproval={(id, dongY) => approval.traLoi(id, dongY)}
     />
   );
 }
