@@ -32,33 +32,14 @@ import type { ToolCallEvent, ToolResultEvent } from './agent-turn';
 import type { SessionStore } from './session';
 import type { TaoLichSu } from './history';
 
-export type ReplCommand =
-  | { kind: 'exit' }
-  | { kind: 'new' }
-  | { kind: 'compact' }
-  | { kind: 'unknown'; name: string };
-
 /**
- * Nhận diện lệnh dòng đầu.
- *
- * ============ VÌ SAO KHỚP TRỌN TỪ ============
- *
- * Bản đầu tôi kiểm `"abc".startsWith('/exit')` — nghe có vẻ đúng, nhưng `/exit ngay`
- * và `/exitch` cũng khớp. Mà `/exit ngay` là người dùng muốn **gõ câu đó cho
- * model**. Thoát nhầm ở đây là **mất cả phiên làm việc** mà không có gì để khôi
- * phục. Nên phải so trọn từ sau dấu `/`.
+ * Lệnh dòng đầu nằm ở `cli/commands.ts` (module thuần) vì **hai** bên cần
+ * dùng: REPL chạy lệnh, còn TUI phải biết `/new` để xoá màn hình. Đảo ESM
+ * không import runtime từ file này (kéo theo cả AI SDK).
  */
-export function parseCommand(line: string): ReplCommand | null {
-  const s = line.trim();
-  if (!s.startsWith('/')) return null;
-  const ten = s.slice(1);
-  if (/^exit$/i.test(ten)) return { kind: 'exit' };
-  if (/^new$/i.test(ten)) return { kind: 'new' };
-  if (/^compact$/i.test(ten)) return { kind: 'compact' };
-  // `/exit ngay` có khoảng trắng → tên lệnh là "exit ngay", không phải lệnh nào.
-  if (/\s/.test(ten)) return null;
-  return { kind: 'unknown', name: ten };
-}
+import { parseCommand } from './commands';
+export { parseCommand };
+export type { ReplCommand } from './commands';
 
 export interface ReplOptions {
   model: LanguageModelV1;

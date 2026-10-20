@@ -53,7 +53,9 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/tui/approval.tsx`
 - `cli/tui/footer.tsx`
 - `cli/tui/app.tsx`
+- `cli/tui/bridge.ts`
 - `cli/tui/entry.tsx`
+- `cli/commands.ts`
 
 ## Bằng chứng dòng
 

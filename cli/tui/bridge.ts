@@ -1,0 +1,214 @@
+/**
+ * Store của TUI — cầu nối giữa vòng lặp hội thoại (CJS, callback) và màn hình
+ * (React, state).
+ *
+ * ============ VÌ SAO MỘT STORE, KHÔNG LÀM TRỰC TIẾP ============
+ *
+ * `runRepl` nói chuyện bằng callback (`ask`/`out`/`note`/`onToolCall`…), còn màn
+ * hình nói chuyện bằng **state**. Store là chỗ dịch hai kiểu giao tiếp đó, và là
+ * chỗ duy nhất biết "khối nào đang chạy, khối nào xong, hộp duyệt đang chờ".
+ *
+ * ============ STATE BẤT BIẾN ============
+ *
+ * Mỗi lần thay đổi sinh **object state mới**. React so sánh tham chiếu để biết
+ * có cần vẽ lại không — trả về cùng object thì màn hình đứng yên trong khi
+ * transcript đã dài thêm.
+ */
+import type { CoreMessage } from 'ai';
+import { messagesToBlocks, nhanTool, tomTatDoiSo, type Block } from './blocks.ts';
+import { parseCommand } from '../commands.ts';
+import type { ApprovalBroker, ApprovalRequest } from '../approval-broker.ts';
+import type { NoteLevel } from '../repl.ts';
+import type { ToolCallEvent, ToolResultEvent } from '../agent-turn.ts';
+
+export interface TuiState {
+  blocks: Block[];
+  /** Có lượt đang chạy không. */
+  running: boolean;
+  /** Lời hỏi duyệt đang chờ. */
+  approval: ApprovalRequest | undefined;
+  /** Token đã dùng của lượt gần nhất. */
+  tokens: number | null;
+}
+
+/** Đúng hình dạng `renderer.keyInput` của OpenTUI (chỉ phần ta dùng). */
+export interface KeyInputLike {
+  on(event: 'keypress', cb: (k: { name?: string }) => void): unknown;
+  off(event: 'keypress', cb: (k: { name?: string }) => void): unknown;
+}
+
+export interface TuiStoreOptions {
+  /** Lịch sử nạp lại từ đĩa — dựng thành block ngay từ đầu. */
+  messages: CoreMessage[];
+  approval: ApprovalBroker;
+  /** Ghi chú lúc khởi động (công cụ, cảnh báo, model…). */
+  startupNotes: string[];
+  keyInput: KeyInputLike;
+}
+
+export interface TuiStore {
+  snapshot(): TuiState;
+  subscribe(cb: () => void): () => void;
+  /** Chờ người dùng gõ. `null` = đóng. */
+  ask(): Promise<string | null>;
+  /** Người dùng đã gõ xong một dòng. */
+  submit(line: string): void;
+  /** Chữ của model tới. */
+  out(text: string): void;
+  /** Dòng trạng thái. */
+  note(text: string, level?: NoteLevel): void;
+  onToolCall(call: ToolCallEvent): void;
+  onToolResult(result: ToolResultEvent): void;
+  onToolError(name: string, message: string): void;
+  onUsage(usage: { promptTokens: number | null }): void;
+  /** Bật lắng nghe phím dừng lượt. Trả về hàm dọn. */
+  watchInterrupt(cancel: () => void): () => void;
+  /** Đóng: lời hỏi đang chờ được trả lời `null` (không treo). */
+  close(): void;
+}
+
+export function createTuiStore(opts: TuiStoreOptions): TuiStore {
+  const listeners = new Set<() => void>();
+
+  let state: TuiState = {
+    blocks: [
+      ...opts.startupNotes.map((text): Block => ({ kind: 'note', level: 'info', text })),
+      ...messagesToBlocks(opts.messages),
+    ],
+    running: false,
+    approval: undefined,
+    tokens: null,
+  };
+
+  const capNhat = (partial: Partial<TuiState>): void => {
+    state = { ...state, ...partial };
+    for (const cb of [...listeners]) cb();
+  };
+
+  /* Lời hỏi đang chờ — chỉ có một lúc (REPL hỏi tuần tự). */
+  let choHoi: ((dong: string | null) => void) | null = null;
+
+  /* Hộp duyệt: theo dõi broker, không tự hỏi. */
+  const boTheoDoi = opts.approval.onPending((req) => {
+    capNhat({ approval: req });
+  });
+
+  const themBlock = (block: Block): void => {
+    capNhat({ blocks: [...state.blocks, block] });
+  };
+
+  const store: TuiStore = {
+    snapshot: () => state,
+
+    subscribe(cb: () => void): () => void {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+
+    ask(): Promise<string | null> {
+      /* Lượt vừa xong ⇒ không còn "đang chạy". */
+      capNhat({ running: false });
+      return new Promise<string | null>((resolve) => {
+        choHoi = resolve;
+      });
+    },
+
+    submit(line: string): void {
+      const traLoi = choHoi;
+      choHoi = null;
+      capNhat({ running: true });
+      /* `/new` ⇒ phiên mới ⇒ transcript cũ không còn ý nghĩa ⇒ xoá màn hình.
+         * Lệnh VẪN được đưa cho REPL (nó còn phải xoá lịch sử trên đĩa). */
+      if (parseCommand(line)?.kind === 'new') {
+        capNhat({ blocks: [] });
+      }
+      traLoi?.(line);
+    },
+
+    out(text: string): void {
+      if (!text) return;
+      const cuoi = state.blocks[state.blocks.length - 1];
+      if (cuoi && cuoi.kind === 'assistant') {
+        const blocks = [...state.blocks];
+        blocks[blocks.length - 1] = { kind: 'assistant', text: cuoi.text + text };
+        capNhat({ blocks });
+        return;
+      }
+      themBlock({ kind: 'assistant', text });
+    },
+
+    note(text: string, level: NoteLevel = 'info'): void {
+      themBlock({ kind: 'note', level, text });
+    },
+
+    onToolCall(call: ToolCallEvent): void {
+      themBlock({
+        kind: 'tool',
+        id: call.id,
+        name: call.name,
+        /* Nhãn + chi tiết dựng **bằng đúng hàm** của lịch sử
+         * (`nhanTool`/`tomTatDoiSo`) — để dòng tool lúc chạy và dòng tool lúc
+         * nạp lại trông giống nhau. */
+        label: nhanTool(call.name),
+        detail: tomTatDoiSo(call.name, call.args),
+        status: 'running',
+      });
+    },
+
+    onToolResult(result: ToolResultEvent): void {
+      const blocks = state.blocks.map((b) =>
+        b.kind === 'tool' && b.id === result.id ? { ...b, status: 'ok' as const } : b,
+      );
+      capNhat({ blocks });
+    },
+
+    onToolError(name: string, message: string): void {
+      /* Không có id trong sự kiện lỗi ⇒ đánh dấu khối `running` gần nhất cùng
+       * tên (đúng như lời gọi đó vừa hỏng). */
+      let viTri = -1;
+      for (let i = state.blocks.length - 1; i >= 0; i--) {
+        const b = state.blocks[i];
+        if (b.kind === 'tool' && b.name === name && b.status === 'running') {
+          viTri = i;
+          break;
+        }
+      }
+      const blocks = [...state.blocks];
+      if (viTri >= 0) {
+        const b = blocks[viTri];
+        if (b.kind === 'tool') blocks[viTri] = { ...b, status: 'error' };
+      }
+      capNhat({ blocks });
+      themBlock({ kind: 'note', level: 'error', text: `[tool that bai] ${name}: ${message}` });
+    },
+
+    onUsage(usage: { promptTokens: number | null }): void {
+      capNhat({ tokens: usage.promptTokens });
+    },
+
+    watchInterrupt(cancel: () => void): () => void {
+      const h = (k: { name?: string }): void => {
+        /* Đang có hộp duyệt thì Esc thuộc về hộp duyệt (trả lời "không"),
+         * KHÔNG phải cắt lượt — cắt lượt lúc đang chờ duyệt là mất việc. */
+        if (k.name !== 'escape') return;
+        if (opts.approval.pending()) return;
+        cancel();
+      };
+      opts.keyInput.on('keypress', h);
+      return () => {
+        opts.keyInput.off('keypress', h);
+      };
+    },
+
+    close(): void {
+      const traLoi = choHoi;
+      choHoi = null;
+      boTheoDoi();
+      traLoi?.(null);
+    },
+  };
+
+  return store;
+}
