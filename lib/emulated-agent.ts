@@ -391,6 +391,23 @@ export async function runEmulatedLoop(opts: EmulatedLoopOptions): Promise<Emulat
       const stripped = stripEmulatedToolMarkup((text ?? '').trim());
       const answer = stripped.text.trim() || (text ?? '').trim();
       if (answer) opts.onTextDelta(answer);
+      /* CÂU TRẢ LỜI CUỐI PHẢI VÀO TRANSCRIPT — không thì dữ liệu người dùng mất.
+       *
+       * Đo 2026-10-20: trước khi sửa, nhánh này chỉ `onTextDelta(answer)` rồi
+       * `return` — message assistant KHÔNG BAO GIỜ được push. Hệ quả: lượt chỉ có
+       * prose ⇒ `messages` rỗng ⇒ transcript CLI chỉ có message `user`, câu trả lời
+       * mà người dùng đã thấy trên màn hình không có ở bất kỳ đâu; lượt sau model
+       * không biết mình đã trả lời gì; `/compact` không thấy gì để tóm tắt.
+       *
+       * Web/subagent KHÔNG đọc `result.messages` (`app/api/chat/route.ts:1808`,
+       * `lib/subagent.ts:327` chỉ đọc `status`/`roundsUsed`/`totalCalls`) ⇒ push
+       * thêm không ảnh hưởng họ. Và `messages` ở đây là mảng CỤC BỘ
+       * (`opts.messages.filter(...)` tạo mảng mới) ⇒ không mutate transcript của
+       * caller.
+       *
+       * Push đúng `answer` (đã strip markup), không phải `text` thô: đó là đúng
+       * thứ người dùng đã thấy và đúng thứ model nên nhớ ở lượt sau. */
+      if (answer) messages.push({ role: 'assistant', content: answer });
       return { status: 'done', roundsUsed: round + 1, totalCalls, messages: messages.slice(soDauVao) };
     }
 

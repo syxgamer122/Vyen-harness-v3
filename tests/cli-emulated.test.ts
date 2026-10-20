@@ -17,8 +17,8 @@ import {
 } from '@/cli/emulated';
 import { resetToolSupportCache } from '@/lib/tool-support-cache';
 import { runRepl } from '@/cli/repl';
-import { openSession } from '@/cli/session';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { openSession, sessionFileFor } from '@/cli/session';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -90,14 +90,17 @@ describe('runEmulatedTurn — lượt giả lập của CLI', () => {
     expect(r.text).toContain('Đã đọc xong');
     expect(r.totalCalls).toBe(1);
     // Transcript phải có lượt assistant + lượt chứa TOOL_RESULT.
-    expect(r.messages.length).toBe(2);
+    // assistant gọi tool + user chứa TOOL_RESULT + assistant trả lời cuối.
+    expect(r.messages.length).toBe(3);
     expect(r.messages[0].role).toBe('assistant');
     expect(r.messages[1].role).toBe('user');
+    expect(r.messages[2].role).toBe('assistant');
+    expect(JSON.stringify(r.messages[2].content)).toContain('Đã đọc xong');
     expect(JSON.stringify(r.messages)).toContain('TOOL_RESULT');
     expect(JSON.stringify(r.messages)).toContain('NOI DUNG');
   });
 
-  it('model không gọi tool thì trả lời prose, không sinh message rác', async () => {
+  it('model không gọi tool thì trả lời prose, và câu trả lời vẫn vào transcript', async () => {
     const r = await runEmulatedTurn({
       model: stubModel(['Chào bạn, tôi không cần tool.']),
       tools: {} as unknown as ToolSet,
@@ -255,6 +258,86 @@ describe('REPL — model không hỗ trợ tools', () => {
 
       /* Lượt 1 native chết (phát hiện) → ghi cache; lượt 2 phải đi thẳng giả lập. */
       expect(soLanNative, 'native chi duoc thu MOT lan').toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+
+/* ============ C1: CÂU TRẢ LỜI CỦA LƯỢT GIẢ LẬP PHẢI ĐƯỢC GHI ============
+ *
+ * Root cause (đo, không suy đoán): `runEmulatedLoop` gọi `onTextDelta(answer)` rồi
+ * `return` — KHÔNG push `{role:'assistant', content: answer}` vào `messages`.
+ * Hệ quả: transcript CLI chỉ có message `user`, câu trả lời mà người dùng ĐÃ THẤY
+ * trên màn hình không có ở bất kỳ đâu; lượt sau model không biết mình đã trả lời gì.
+ */
+describe('C1 — câu trả lời của lượt giả lập phải được GHI', () => {
+  it('runEmulatedTurn trả về message chứa câu trả lời cuối', async () => {
+    const r = await runEmulatedTurn({
+      model: stubModel(['Chào bạn, tôi không cần tool.']),
+      tools: {} as unknown as ToolSet,
+      messages: [{ role: 'user', content: 'xin chào' }],
+      system: 'SYSTEM',
+    });
+    expect(r.text).toContain('Chào bạn');
+    expect(
+      r.messages.some(
+        (m) => m.role === 'assistant' && JSON.stringify(m.content).includes('Chào bạn'),
+      ),
+      'cau tra loi cuoi phai co trong messages',
+    ).toBe(true);
+  });
+
+  it('lượt giả lập trong REPL: file JSONL trên đĩa phải chứa câu trả lời', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      const model = {
+        specificationVersion: 'v1',
+        provider: 'stub',
+        modelId: 'stub-1',
+        defaultObjectGenerationMode: 'tool',
+        doGenerate: async () => ({
+          text: 'Tôi trả lời bằng văn bản thôi.',
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue({
+                  type: 'error',
+                  error: new Error('This model does not support tools'),
+                } as never);
+                ctrl.close();
+              },
+            }),
+            rawCall: { rawPrompt: null, rawSettings: {} },
+          }),
+      } as unknown as LanguageModelV1;
+
+      const session = openSession(state, dir);
+      await runRepl({
+        model,
+        modelNen: model,
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'x' }),
+          },
+        } as unknown as ToolSet,
+        session,
+        ask: reader('xin chào', '/exit'),
+        out: () => {},
+      });
+
+      const jsonl = readFileSync(sessionFileFor(state, dir), 'utf8');
+      expect(jsonl, 'cau tra loi cuoi phai duoc ghi vao dia').toContain(
+        'Tôi trả lời bằng văn bản thôi.',
+      );
     } finally {
       cleanup();
     }
