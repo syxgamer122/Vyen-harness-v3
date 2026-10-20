@@ -111,6 +111,81 @@ Số 0 trông rất hợp lý nên dễ tin — và tin là bảng kiểm kê sa
 kết luận "không có gì", kiểm lại **phép đo** chứ không phải kết quả: thử phép đo
 đó trên một thứ **chắc chắn có** và xem nó có ra khác 0 không.
 
+## 2.5. Kế hoạch, test và review — ba tầng không được lệch nhau
+
+Đo 2026-10-20: feature "đường giả lập cho CLI" ship với **1 Critical** — câu trả lời
+của model **không bao giờ** được ghi vào transcript (người dùng thấy trên màn hình,
+file trên đĩa không có, lượt sau model không biết mình đã trả lời gì).
+
+Không phải "không cẩn thận" — ba tầng lệch nhau:
+
+| Tầng | Ở đâu | Lệch ở đâu |
+|---|---|---|
+| Tiêu chí (văn xuôi) | `## Review Focus` | *"Transcript của lượt giả lập phải ghi được"* — **không tiêu chí nào có test** |
+| Việc (mã) | Task trong plan | Task chỉ nói *"trả `messages.slice(soDauVao)`"* ⇒ **thoả mãn được** khi tiêu chí vẫn sai |
+| Kiểm chứng | test + review | test xanh vì kỳ vọng lấy từ code; **không có review** trước khi push |
+
+⇒ Mở rộng §4 cho **KẾ HOẠCH**: văn xuôi không có hiệu lực, kể cả văn xuôi trong plan.
+
+### Luật 1 — Mỗi tiêu chí = một dòng trong bảng "tiêu chí → test"
+
+Plan (trong `docs/superpowers/plans/`, từ 2026-10-20) phải có mục `## Kịch bản & Test`:
+
+```md
+## Kịch bản & Test
+
+**Người dùng thấy:** <1-3 câu tiếng Việt: sau khi chạy, người dùng thấy gì>
+
+| # | Tiêu chí | Test |
+|---|---|---|
+| 1 | <5 từ đầu của tiêu chí trong Review Focus> | `tests/<ten-file>.test.ts` |
+```
+
+Mỗi mục đánh số trong `## Review Focus` phải có một dòng bảng tương ứng, và — khi
+plan đã xong — file test nêu ở bảng phải **tồn tại**. `tests/plan-traceability.test.ts`
+canh đúng hai điều đó ⇒ tiêu chí không có dòng thì **ĐỎ**.
+
+**Test KHÔNG canh được** việc dòng bảng có thật sự phủ tiêu chí hay không: đã thử
+ràng buộc bằng cách so cụm từ dẫn nhập và nó **bắt oan** một plan hợp lệ (tiêu chí
+"Màn hình" ↔ dòng bảng nói "Transcript … cùng block" — cùng thứ nhưng không dùng
+chung từ nào). ⇒ Văn xuôi trong bảng vẫn phải được **đọc** (bởi agent và reviewer),
+không có test nào thay được. Đừng hứa quá thứ test canh.
+
+Câu `**Người dùng thấy:**` viết **trước** khi code: đó là thứ duy nhất tự đặt ra
+ranh giới quan sát mà tác giả plan không nghĩ tới.
+
+### Luật 2 — Kỳ vọng lấy từ YÊU CẦU, không lấy từ code
+
+Số/giá trị trong kỳ vọng phải suy ra từ yêu cầu — **không** từ "tôi vừa viết ra
+gì". Đo 2026-10-20: `expect(r.messages.length).toBe(2)` — con số 2 đếm từ code ⇒
+test xanh vì code đúng như tôi viết, không phải vì hành vi đúng. Dấu hiệu: đổi
+implementation (thêm/bớt một message) thì kỳ vọng phải **đổi theo**.
+
+### Luật 3 — Mỗi feature có ≥ 1 test kịch bản end-to-end
+
+Ở ranh giới **quan sát được**: file trên đĩa, output thật, exit code. Test tầng hàm
+không bắt được lỗi tầng hệ thống — đó chính là Critical của lượt 6.
+
+### Luật 4 — Review độc lập là BẮT BUỘC trước khi push
+
+Skill `requesting-code-review`. Đo 2026-10-20: lượt implement đường giả lập đã
+**push 4 commit** mà không gọi review — và reviewer sau đó bắt đúng Critical đó.
+"Tự đọc lại diff của mình" **không thay thế** được: tự review là hỏng theo cấu trúc
+(đọc lại *ý định*, không phải *hành vi*). Reviewer phải được yêu cầu **chạy probe
+end-to-end**, không chỉ đọc diff.
+
+### Lý do thường để bỏ qua (đo được)
+
+| Lời giải thích | Thực tế |
+|---|---|
+| "Tôi đã có `Review Focus` rồi" | Focus là văn xuôi; **Task** mới là thứ được kiểm ⇒ Focus sai mà không ai báo |
+| "Test xanh rồi mà" | Xanh vì kỳ vọng lấy từ code (Luật 2) |
+| "Mutation bắt được rồi" | Mutation bắt được thứ test **đã khẳng định**; **không** bắt được hành vi **còn thiếu** |
+| "Reviewer sẽ bắt" | Không có reviewer thì không ai bắt — lượt 5 đã tự push không review |
+
+**Luật 2/3/4 là quy tắc cho agent, KHÔNG có test canh** (test chỉ canh Luật 1). Đừng
+đòi test cho chúng — nhưng cũng đừng coi là "không cần làm".
+
 ## 3. Sửa token màu phải sửa cả ba file
 
 `tests/design-system.test.ts` canh chiều hai chiều giữa test, `tailwind.config.ts`
@@ -130,6 +205,9 @@ nội dung tài liệu.
 Hệ quả: tài liệu viết ở thì mệnh lệnh nhưng không mệnh lệnh nào được canh sẽ
 lệch dần khỏi code mà vẫn trông như luật, và agent sẽ tuân thủ luật đã chết. Vì
 vậy:
+
+**Cùng nguyên tắc này áp cho KẾ HOẠCH** — xem mục 2.5. `## Review Focus` viết bằng
+văn xuôi không có hiệu lực; chỉ bảng "tiêu chí → test" mới có.
 
 - `DESIGN.md` — định hướng ngắn, không phải hợp đồng.
 - `PLAN.md`, `PLAN-ui-audit.md` ở gốc repo — **lịch sử**, đã dánh nhãn.
@@ -291,11 +369,15 @@ Luật:
 ## 10. Trước khi báo xong
 
 - [ ] `npm run typecheck` exit 0
-- [ ] `npm run test` — không đỏ (trừ 3 flaky ở mục 1)
+- [ ] `npm run test` — không đỏ (trừ 4 flaky ở mục 1)
 - [ ] `npm run lint` — không có lỗi mới
 - [ ] `npm run docs:check` OK
 - [ ] Test mới đã được chứng minh ĐỎ (mục 2)
 - [ ] **Mutation đã được xác nhận là thật sự thay đổi hành vi** (mục 2.2)
 - [ ] **Mọi lời hứa trong comment mới đều có test đỏ khi bỏ lớp bảo vệ** (mục 2.1)
+- [ ] **Kỳ vọng lấy từ yêu cầu, không lấy từ code** (mục 2.5 — Luật 2, *tự khai*)
+- [ ] **Có ≥ 1 test kịch bản end-to-end** ở ranh giới quan sát được (mục 2.5 — Luật 3, *tự khai*)
+- [ ] **Đã gọi skill `requesting-code-review` trước khi push** (mục 2.5 — Luật 4, *tự khai*)
+- [ ] Plan có mục `## Kịch bản & Test`; mọi tiêu chí trong `Review Focus` đều có dòng (mục 2.5 — Luật 1, *có test canh*)
 - [ ] File mới đã `git add`
 - [ ] File nguồn không có BOM (mục 8)

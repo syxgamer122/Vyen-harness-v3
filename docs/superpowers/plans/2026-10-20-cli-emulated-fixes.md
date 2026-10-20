@@ -22,7 +22,7 @@
 - Mọi lời hứa trong comment mới phải có test đỏ khi bỏ lớp bảo vệ (`AGENTS.md` §2.1).
 - Dùng lại cơ chế có sẵn (`AGENTS.md` §6): `wrapTools`, `messagesDaHoanThanh`,
   `evaluateUsageTrigger`, `TOOLS_UNSUPPORTED_RE` — **không** viết bản thứ hai.
-- Ba gate mỗi task: typecheck 0 lỗi · test không đỏ (trừ 3 flaky `AGENTS.md` §1) · lint 0 lỗi mới.
+- Ba gate mỗi task: typecheck 0 lỗi · test không đỏ (trừ 4 flaky `AGENTS.md` §1) · lint 0 lỗi mới.
 
 ## Review Focus
 
@@ -30,6 +30,27 @@
 2. **Một cơ chế**: REPL và `-p` phải dùng CHUNG một quyết định "native trước, giả lập khi bị chê".
 3. **Lỗi tool phải tới được model** (đường giả lập không được nuốt lỗi thành "tạm thời không khả dụng").
 4. **Lưới an toàn tràn ngầm phải sống** trên đường giả lập (usage + finishReason).
+
+## Kịch bản & Test
+
+**Người dùng thấy:** người dùng model local (không hỗ trợ function calling) gõ câu
+hỏi ⇒ CLI **vẫn trả lời được** thay vì báo lỗi rồi dừng phiên; câu trả lời nằm
+trong transcript trên đĩa nên đóng terminal rồi mở lại vẫn thấy, và lượt sau model
+không hỏi lại điều nó vừa trả lời. Tool của CLI (`fs_*`, `shell_run`, `git_*`) chạy
+thật, và khi bị từ chối thì model biết **lý do** chứ không thấy "tạm thời không khả
+dụng".
+
+| # | Tiêu chí | Test |
+|---|---|---|
+| 1 | Không mất dữ liệu người dùng: câu trả lời của model phải nằm trong transcript trên đĩa | `tests/cli-emulated.test.ts` |
+| 2 | Một cơ chế: REPL và `-p` dùng chung một quyết định "native trước, giả lập khi bị chê" | `tests/cli-emulated.test.ts` |
+| 3 | Lỗi tool phải tới được model (không nuốt thành "tạm thời không khả dụng") | `tests/cli-emulated.test.ts` |
+| 4 | Lưới an toàn tràn ngầm phải sống trên đường giả lập (usage + finishReason) | `tests/emulated-agent.test.ts` |
+
+> Tiêu chí #1 là chính Critical của lượt 5: lượt đó có "Review Focus" yêu cầu nó nhưng
+> **không tiêu chí nào có test** ⇒ task "trả `messages.slice(soDauVao)`" thoả mãn được
+> mà tiêu chí vẫn sai. Test cho #1 chỉ sinh ra ở lượt 6 (`tests/cli-emulated.test.ts`,
+> case "file JSONL trên đĩa phải chứa câu trả lời").
 
 ---
 
@@ -49,14 +70,14 @@ vào `messages`. Lượt chỉ có prose ⇒ `messages` rỗng ⇒ transcript CL
 - `messages` trong `runEmulatedLoop` là mảng **cục bộ** (`opts.messages.filter(...)` tạo mảng mới)
   ⇒ không mutate transcript của caller.
 
-- [ ] **Step 1: Viết test đỏ** — 2 test:
+- [x] **Step 1: Viết test đỏ** — 2 test:
   1. `runEmulatedTurn` với model trả prose ⇒ `r.messages` phải chứa câu trả lời.
   2. `runRepl` với model giả ⇒ đọc file JSONL trên đĩa ⇒ phải thấy câu trả lời của assistant.
-- [ ] **Step 2: Chạy → RED**
-- [ ] **Step 3: Implement** — push `{ role: 'assistant', content: answer }` ngay trước `return`.
-- [ ] **Step 4: GREEN**
-- [ ] **Step 5: Mutation** — bỏ dòng push ⇒ test đỏ.
-- [ ] **Step 6: Gate + commit** — `fix(cli): ghi cau tra loi cuoi vao transcript duong gia lap`
+- [x] **Step 2: Chạy → RED**
+- [x] **Step 3: Implement** — push `{ role: 'assistant', content: answer }` ngay trước `return`.
+- [x] **Step 4: GREEN**
+- [x] **Step 5: Mutation** — bỏ dòng push ⇒ test đỏ.
+- [x] **Step 6: Gate + commit** — `fix(cli): ghi cau tra loi cuoi vao transcript duong gia lap`
 
 ---
 
@@ -66,17 +87,17 @@ vào `messages`. Lượt chỉ có prose ⇒ `messages` rỗng ⇒ transcript CL
 - Modify: `lib/emulated-agent.ts`
 - Test: `tests/cli-emulated.test.ts`, `tests/emulated-agent.test.ts`
 
-- [ ] **Step 1: Viết test đỏ**
+- [x] **Step 1: Viết test đỏ**
   1. Lượt giả lập hỏng giữa chừng (round 2 lỗi upstream) ⇒ phần tool đã chạy xong phải lấy
      lại được từ lỗi (dùng chung cơ chế `messagesDaHoanThanh` của CLI).
   2. `finishReason` của round cuối phải trả về (để `evaluateUsageTrigger` bắt được ca
      "tràn ngầm": `finishReason='stop'` mà `promptTokens > window`).
-- [ ] **Step 2: RED**
-- [ ] **Step 3: Implement** — `try/catch` quanh vòng lặp, gắn `messages.slice(soDauVao)` vào
+- [x] **Step 2: RED**
+- [x] **Step 3: Implement** — `try/catch` quanh vòng lặp, gắn `messages.slice(soDauVao)` vào
   lỗi bằng WeakMap của module + export getter; thêm `finishReason?` vào `EmulatedLoopResult`.
-- [ ] **Step 4: GREEN**
-- [ ] **Step 5: Mutation** — bỏ phần gắn lỗi ⇒ test đỏ.
-- [ ] **Step 6: Gate + commit** — `fix(cli): giu phan da hoan thanh va finishReason o duong gia lap`
+- [x] **Step 4: GREEN**
+- [x] **Step 5: Mutation** — bỏ phần gắn lỗi ⇒ test đỏ.
+- [x] **Step 6: Gate + commit** — `fix(cli): giu phan da hoan thanh va finishReason o duong gia lap`
 
 ---
 
@@ -92,17 +113,17 @@ vào `messages`. Lượt chỉ có prose ⇒ `messages` rỗng ⇒ transcript CL
 **Root cause:** `cli/index.ts:227` (`chayMotLuot`) gọi thẳng `runAgentTurn` ⇒ đường `-p` không
 có fallback ⇒ model không hỗ trợ tools thì `-p` vẫn chết.
 
-- [ ] **Step 1: Viết test đỏ**
+- [x] **Step 1: Viết test đỏ**
   1. `-p` (qua `chayMotLuot`): model chê tools ⇒ phải trả lời được.
   2. Tool của CLI bị từ chối (ném lỗi) trên đường giả lập ⇒ **model phải thấy lý do**
      (`{ok:false,error:...}`), không phải "Công cụ tạm thời không khả dụng".
   3. Usage của round cuối phải tới được `evaluateUsageTrigger` (không phải `null`).
-- [ ] **Step 2: RED**
-- [ ] **Step 3: Implement** — `runTurn` trong `cli/emulated.ts`: native trước; lỗi "không hỗ trợ
+- [x] **Step 2: RED**
+- [x] **Step 3: Implement** — `runTurn` trong `cli/emulated.ts`: native trước; lỗi "không hỗ trợ
   tools" ⇒ ghi cache + chạy lại bằng đường giả lập với tool đã `wrapTools`.
-- [ ] **Step 4: GREEN**
-- [ ] **Step 5: Mutation** — bỏ `wrapTools` khỏi đường giả lập ⇒ test đỏ.
-- [ ] **Step 6: Gate + commit** — `fix(cli): dung chung mot co che chuyen duong gia lap cho REPL va -p`
+- [x] **Step 4: GREEN**
+- [x] **Step 5: Mutation** — bỏ `wrapTools` khỏi đường giả lập ⇒ test đỏ.
+- [x] **Step 6: Gate + commit** — `fix(cli): dung chung mot co che chuyen duong gia lap cho REPL va -p`
 
 ---
 
@@ -111,14 +132,14 @@ có fallback ⇒ model không hỗ trợ tools thì `-p` vẫn chết.
 **Files:**
 - Test: `tests/cli-emulated.test.ts` (bổ sung)
 
-- [ ] **Step 1: Viết test đỏ** — `buildReplOptions({forceEmulated:true,…}).forceEmulated === true`;
+- [x] **Step 1: Viết test đỏ** — `buildReplOptions({forceEmulated:true,…}).forceEmulated === true`;
   `providerBase`/`modelId` đi qua nguyên vẹn; REPL với `forceEmulated:true` ⇒ native **không**
   được gọi lần nào.
-- [ ] **Step 2: RED**
-- [ ] **Step 3: Implement** — chỉ sửa nếu test đỏ (có thể code đã đúng ⇒ test là bảo vệ).
-- [ ] **Step 4: GREEN**
-- [ ] **Step 5: Mutation** — đổi `'1'` thành `'true'` trong `cli/index.ts` ⇒ test đỏ.
-- [ ] **Step 6: Gate + commit** — `test(cli): bao ve wiring VYEN_EMULATED`
+- [x] **Step 2: RED**
+- [x] **Step 3: Implement** — chỉ sửa nếu test đỏ (có thể code đã đúng ⇒ test là bảo vệ).
+- [x] **Step 4: GREEN**
+- [x] **Step 5: Mutation** — đổi `'1'` thành `'true'` trong `cli/index.ts` ⇒ test đỏ.
+- [x] **Step 6: Gate + commit** — `test(cli): bao ve wiring VYEN_EMULATED`
 
 ---
 
@@ -138,17 +159,17 @@ bị khớp oan, nhưng đường giả lập gửi tool dạng **văn bản** (
 phải khớp oan vô hại. Siết mẫu dùng chung lại rủi ro làm hỏng hành vi web đang chạy.
 ⇒ Chỉ **bổ sung** cách diễn đạt còn thiếu (chỉ thêm match ⇒ không làm hỏng case nào đang chạy).
 
-- [ ] **Step 1: Viết test đỏ** — 4 cách diễn đạt còn thiếu phải khớp.
-- [ ] **Step 2: RED**
-- [ ] **Step 3: Implement** — thêm mẫu vào `TOOLS_UNSUPPORTED_RE`.
-- [ ] **Step 4: GREEN**
-- [ ] **Step 5: Mutation** — bỏ mẫu vừa thêm ⇒ test đỏ.
-- [ ] **Step 6: Gate + commit** — `fix(lib): bu sung mau loi "khong ho tro tools"`
+- [x] **Step 1: Viết test đỏ** — 4 cách diễn đạt còn thiếu phải khớp.
+- [x] **Step 2: RED**
+- [x] **Step 3: Implement** — thêm mẫu vào `TOOLS_UNSUPPORTED_RE`.
+- [x] **Step 4: GREEN**
+- [x] **Step 5: Mutation** — bỏ mẫu vừa thêm ⇒ test đỏ.
+- [x] **Step 6: Gate + commit** — `fix(lib): bu sung mau loi "khong ho tro tools"`
 
 ---
 
 ### Task F: gate cuối + ledger
 
-- [ ] `npm run typecheck` · `npm run test` · `npm run lint` · `npm run build` · `npm run docs:check`.
-- [ ] Ghi ledger lượt 6 (kết quả + mutation + cái gì **không** sửa và vì sao).
-- [ ] Commit: `docs(sdd): ledger luot 6 — sua 1 Critical + 6 Important cua reviewer`
+- [x] `npm run typecheck` · `npm run test` · `npm run lint` · `npm run build` · `npm run docs:check`.
+- [x] Ghi ledger lượt 6 (kết quả + mutation + cái gì **không** sửa và vì sao).
+- [x] Commit: `docs(sdd): ledger luot 6 — sua 1 Critical + 6 Important cua reviewer`

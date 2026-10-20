@@ -862,3 +862,103 @@ trong gate** — typecheck/test/lint đều xanh với package.json hỏng.
 | `npm run test` | xem bên dưới |
 | `npm run build` | exit 0 (sau khi trả `package.json`) |
 | `npm run docs:check` | OK |
+
+
+---
+
+# LƯỢT 7 — SỬA AGENTS.md SAU KHI PHÂN TÍCH VÌ SAO VẪN CÒN LỖI
+
+Câu hỏi của chủ repo: *"tại sao đã rất kĩ trong lập kế hoạch và thực thi code mà đến cuối
+vẫn lỗi — luật AGENTS.md chưa đủ hay có bất cập ở đâu?"*. Tôi trả lời bằng **dữ kiện của
+chính phiên này**, rồi sửa `AGENTS.md` và làm cho luật mới **có hiệu lực** (test canh),
+vì §4 của chính AGENTS.md nói: tài liệu không có hiệu lực, test mới có.
+
+## Chẩn đoán (không phải "không cẩn thận")
+
+Ba tầng lệch nhau:
+
+| Tầng | Ở đâu | Lệch ở đâu |
+|---|---|---|
+| Tiêu chí (văn xuôi) | `## Review Focus` trong plan | *"Transcript của lượt giả lập phải ghi được"* — **không tiêu chí nào có test** |
+| Việc (mã) | Task trong plan | Task chỉ nói *"trả `messages.slice(soDauVao)`"* ⇒ **thoả mãn được** khi tiêu chí vẫn sai |
+| Kiểm chứng | test + review | test xanh vì kỳ vọng lấy từ code (`toBe(2)` — con số đếm từ code); **không có review** trước khi push |
+
+Ba cách sửa lỗi tương ứng:
+- **Luật 1** — mỗi tiêu chí = một dòng trong bảng "tiêu chí → test".
+- **Luật 2** — kỳ vọng lấy từ YÊU CẦU, không lấy từ code.
+- **Luật 3** — mỗi feature có ≥ 1 test kịch bản end-to-end.
+- **Luật 4** — review độc lập là BẮT BUỘC trước khi push.
+
+## Kiểm chứng từng luật bằng failure THẬT (RED baseline)
+
+Không dùng "cảm thấy đúng" — mỗi luật phải **bắt được** lượt 5 (lượt có Critical):
+
+| Luật | Áp vào lượt 5 ⇒ kết quả |
+|---|---|
+| Luật 1 | Bảng "tiêu chí → test" **không tồn tại** ⇒ ĐỎ ✓ (đo bằng bản sao test với `TU_NGAY='2026-10-19'`: 4 assertion đỏ, đúng chỗ) |
+| Luật 2 | `expect(r.messages.length).toBe(2)` — 2 là số đếm từ code ⇒ kỳ vọng đổi theo implementation ⇒ **vi phạm** ✓ |
+| Luật 3 | Lượt 5 chỉ có test tầng hàm (`messages`), không có test đọc file JSONL trên đĩa ⇒ **vi phạm** ✓ (lỗi nằm đúng ở đó) |
+| Luật 4 | Lượt 5 **push 4 commit** mà không gọi `requesting-code-review` ⇒ **vi phạm** ✓ (ledger có review cho lượt 2/3/4, không có cho lượt 5) |
+
+## Luật mới CÓ hiệu lực: `tests/plan-traceability.test.ts`
+
+Plan (trong `docs/superpowers/plans/`, từ 2026-10-20) phải có mục `## Kịch bản & Test`:
+câu `**Người dùng thấy:**` + bảng `| # | Tiêu chí | Test |`. Test canh: mỗi mục đánh số
+trong `## Review Focus` có một dòng bảng, và file test nêu ở bảng tồn tại (khi plan đã xong).
+
+**3 mutation, cả 3 đều bị bắt:**
+
+| Mutation | Kết quả |
+|---|---|
+| Xoá dòng bảng của tiêu chí #1 | ĐỎ: *"tiêu chí 1 … không có dòng 'tiêu chí → test' ⇒ văn xuôi không có hiệu lực"* ✓ |
+| Trỏ file test không tồn tại | ĐỎ: *"file test không tồn tại: tests/khong-ton-tai.test.ts (dòng 4)"* ✓ |
+| Xoá cả mục `## Kịch bản & Test` | ĐỎ 3 assertion ✓ |
+
+## Review độc lập của chính patch này (dogfood Luật 4)
+
+Reviewer (minimax) soi patch và tìm **2 Critical + 4 Important + 6 Minor**. Tôi **tự kiểm
+chứng từng cái** trước khi sửa — và cả 2 Critical đều ĐÚNG:
+
+| Phát hiện | Kiểm chứng của tôi | Xử lý |
+|---|---|---|
+| **C1** `npm run docs:check` ĐỎ (placeholder `tests/ten-file.test.ts` trong AGENTS.md) | Chạy `docs:check` ⇒ đỏ đúng dòng 141 ✓ | Đổi placeholder thành `tests/<ten-file>.test.ts` (regex path không khớp) ⇒ docs:check OK ✓ |
+| **C2** cơ chế chỉ canh HÌNH THỨC, không canh NỘI DUNG; và file mẫu của patch tự vi phạm luật | Đọc lại bảng của plan ⇒ đúng là chép từ plan cũ, **không khớp** `Review Focus` của chính nó ✓ | Sửa bảng cho khớp + **bỏ** phần hứa "tiêu chí không có test thì ĐỎ" (chỉ hứa thứ test thật canh) ✓ |
+| **I1** "file test phải tồn tại" làm ĐỎ repo khi plan đang làm dở | **Xảy ra ngay trong phiên**: full-suite đỏ vì plan TUI của session song song chưa có file test ✓ | Chỉ áp cho plan **đã xong** (không còn `- [ ]`) ✓ |
+| **I2** quét không đệ quy + phạm vi theo tiền tố ngày ⇒ fail-open | Đọc code ✓ | Quét đệ quy + file không có ngày ⇒ coi như TRONG phạm vi (fail-closed) ✓ |
+| **I3** guard "không rỗng" canh nhầm số; regex bỏ sót `- 1.`; CRLF làm hỏng parse | Đọc code ✓ | Thêm guard "parse ra ≥1 tiêu chí"; regex nhận `- 1.` / `1)` / `**1.**`; chuẩn hoá CRLF + bỏ khối code ✓ |
+| **I4** lệch ngày 2026-10-21 vs 2026-10-20 | Đọc code ✓ | Sửa header ✓ |
+| **M5** §10 ghi "trừ 3 flaky" mà §1 liệt kê **bốn** | Đọc file ✓ | Sửa thành 4 ✓ |
+
+## Điều tôi BÁO OAN reviewer, và điều tôi TỪ BỎ sau khi đo
+
+Reviewer đề xuất ràng buộc **nội dung** (dòng bảng phải chứa cụm từ dẫn nhập của tiêu
+chí). Tôi đã thử — và nó **bắt oan một plan hợp lệ của agent khác**: tiêu chí *"Màn hình"*
+↔ dòng bảng nói *"Transcript … cùng block"* — cùng một thứ nhưng không dùng chung từ nào.
+
+⇒ **BỎ** ràng buộc nội dung. Cơ chế chỉ canh **hình thức** (tiêu chí ↔ dòng bảng; file
+tồn tại), và `AGENTS.md` nói rõ điều đó: *"Test KHÔNG canh được việc dòng bảng có thật sự
+phủ tiêu chí hay không … Đừng hứa quá thứ test canh."* ⇒ đúng §2.1 (không viết lời hứa
+không kèm test đỏ).
+
+Luật 2/3/4 được ghi rõ là **quy tắc cho agent, KHÔNG có test canh** — để §4 không bị
+lạm dụng thành "mọi luật đều phải có test".
+
+## Còn nợ (chưa làm, ghi ra để không quên)
+
+- **AGENTS.md gần chạm trần của CLI**: `cli/instructions.ts` cắt file hướng dẫn ở
+  `MAX_INSTRUCTION_CHARS = 20_000` ký tự, cắt **phần đuôi** ⇒ §9 (bản đồ) + §10
+  (checklist) là thứ bị cắt đầu tiên. Đo 2026-10-20: file dài 16.993 byte (13.9k ký tự)
+  trước, **18.265 ký tự** sau ⇒ còn ~1.7k ký tự đệm. Thêm ~1.8k ký tự nữa là mất §10.
+  Cần chủ repo quyết: nâng trần, hay rút gọn AGENTS.md, hay chuyển checklist lên đầu.
+- Luật 2/3/4 chỉ là quy tắc tự khai ⇒ cần reviewer đọc mỗi lượt (đã thêm vào §10 với
+  nhãn *tự khai* / *có test canh*).
+
+## Gate lượt 7
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm run typecheck` | 0 lỗi |
+| `npm run lint` | 0 lỗi / 8 warning (baseline) |
+| `npm run docs:check` | OK — 10 tài liệu, 599 file, 0 lệch (sau khi sửa C1) |
+| `npm run build` | exit 0 |
+| `npm run test` | xem bên dưới |
