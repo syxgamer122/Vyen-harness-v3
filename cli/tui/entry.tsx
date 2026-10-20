@@ -140,8 +140,7 @@ export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
  * `useSyncExternalStore` là đúng ở đây vì store là nguồn sự thật **bên ngoài**
  * React (vòng lặp hội thoại ghi vào nó từ lúc này), không phải state của
  * component.
- */
-function AppRoot({
+ */function AppRoot({
   store,
   workspace,
   modelLabel,
@@ -168,4 +167,31 @@ function AppRoot({
       onApproval={(id, dongY) => approval.traLoi(id, dongY)}
     />
   );
+}
+
+/*
+ * Chạy trực tiếp để soi giao diện mà **không cần API key**:
+ *
+ *   npx tsx cli/tui/entry.tsx     (bấm Esc để thoát)
+ *
+ * Đây cũng là cách cổng `tests/tui-terminal-gate.test.ts` kiểm: tiến trình thật,
+ * alternate screen thật, thoát sạch thật.
+ */
+if (import.meta.main) {
+  void (async () => {
+    const t = await createTui({
+      workspace: 'dev',
+      modelLabel: 'dev',
+      windowTokens: 200_000,
+      /* Cổng duyệt giả: bản xem trước không chạy tool nào. */
+      approval: {
+        approve: async () => false,
+        pending: () => undefined,
+        traLoi: () => {},
+        onPending: () => () => {},
+      },
+    });
+    await t.preview();
+    t.close();
+  })();
 }

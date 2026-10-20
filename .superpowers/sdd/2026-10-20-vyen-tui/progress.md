@@ -71,3 +71,60 @@ dia da cu tu truoc, ma test chi so TAP ten dong nen khong bat. Ruling: commit ba
 sinh lai. Chi phi neu sai: bang kiem ke noi doi ve vi tri API trinh duyet.
 Task 2: complete (commits fcd1dac..1b13263, tests: npx vitest run tests/tui-gate.test.ts tests/tui-theme.test.ts tests/tui-node-load.test.ts tests/tui-terminal-gate.test.ts tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
 Task 3: complete (commits 1b13263..3cf751c, tests: npx vitest run tests/cli-approval-broker.test.ts tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
+Task 4: complete (commits 3cf751c..e1352c0, tests: npx vitest run tests/cli-agent-turn.test.ts tests/cli-repl.test.ts tests/cli-emulated.test.ts tests/cli-approval-broker.test.ts -> pass)
+Task 5: complete (commits e1352c0..0a63da7, tests: npx vitest run tests/tui-blocks.test.ts tests/cli-migration-scan.test.ts tests/repo-hygiene.test.ts -> pass)
+Task 6: complete (commits 0a63da7..2007d35, tests: npx vitest run tests/tui-app.test.tsx tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
+Task 7: complete (commits 2007d35..ae72e6a, tests: npx vitest run tests/tui-bridge.test.ts tests/cli-repl.test.ts tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
+Task 8: complete (commits ae72e6a..57b2315, tests: npx vitest run tests/tui-scenario.test.tsx tests/tui-bridge.test.ts tests/tui-app.test.tsx tests/cli-repl-wiring.test.ts tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
+
+## Task 7 - Ruling: tach `parseCommand` ra `cli/commands.ts`
+
+Dao ESM can biet `/new` de xoa man hinh, nhung import runtime tu `cli/repl.ts`
+keo theo ca chuoi agent-turn -> AI SDK. Ruling: tach `parseCommand` + `ReplCommand`
+ra module thuan `cli/commands.ts`, `cli/repl.ts` **re-export** de khong pha cho noi
+goi cu, ca hai ben dung MOT cach hieu lenh. Chi phi neu sai: mot lan doi import.
+
+## Task 8 - Ruling: `ReplCore` khai tuong minh, khong dung `Omit<ReplOptions, ...>`
+
+`Omit` lam `modelNen` thanh TUY CHON, ma `modelNen` la model rieng cho luot tom
+tat: thieu no thi khong nen duoc context ma **khong ai bao loi**. Ruling: khai
+`ReplCore` tuong minh (modelNen bat buoc), `buildReplOptions` = core + adapter
+terminal. Chi phi neu sai: mot lan doi kieu.
+
+## Task 8 - Ruling: loi tool di qua `tool-result` voi `{ok:false}` - phai kiem `ok`
+
+Test kich ban end-to-end bat duoc: khi nguoi dung TU CHOI, wrapper doi loi thanh
+`{ok:false,error}` nen part van la `tool-result` => store danh 'ok' => dong hien
+dau TICK trong khi tool da hong. Ruling: `ketQuaLoi(result)` trong store + test
+rieng trong `tests/tui-bridge.test.ts`. Chi phi neu sai: mot dong kiem tra.
+
+## Task 8 - Ruling: hop duyet KHONG dat chieu cao cung
+
+Hinh dung 1 dong mo ta, hop co `height={7}` => Yoga cat **dong dau** (tieu de
+"duyet tool" bien mat). Ruling: bo chieu cao cung, giu `flexShrink={0}`, va gioi
+han so dong mo ta (6 dong) trong hop. Chi phi neu sai: mot lan do lai bo cuc.
+
+## Task 8 - Ruling: kich ban E2E phai goi `/exit`
+
+`runRepl` la vong lap **hoi tiep** nen khong tu ket thuc => test treo 60s. Ruling:
+gui `/exit` sau khi model tra loi. Chi phi neu sai: mot dong.
+
+## Task 9 - Ruling: DA SUA `tests/repo-hygiene.test.ts` (canh co) - can nguoi dung xac nhan
+
+AGENTS.md (2026-10-21) cau "khong sua nguoi canh cong", trong danh sach co
+`tests/repo-hygiene.test.ts`. Task 0 da sua file do:
+(a) cho phep entry ket thuc `.tsx` (khong khai duoc dao TUI `.tsx` ma guard chi
+    chap nhan `.ts` => khong khai thi file do nam ngoai moi guard);
+(b) `duyet()` bo qua file tam `.probe-`.
+Ly do: KHONG phai de lam test xanh ma de **mo rong** guard theo hinh dang moi, va
+mutation da chung minh guard con rang (file thuong chua khai van do).
+=> Ghi lai day de khong giau, va de nguoi dung quyet dinh co chap nhan hay khong.
+Chi phi neu sai: 1 dong sua nguoi canh.
+
+## Task 9 - Ruling: nhanh TUI trong `cli/index.ts` chi co kiem tra tay
+
+`main()` khong import duoc trong test (module scope), nen nhanh "mode -> broker ->
+createTui -> run" chi duoc kiem bang **kiem tay** (Task 8 buoc 8). Phan co test:
+`chooseFrontend` (pure), `buildReplCore` (tang noi), va kich ban E2E (store + App +
+runRepl that). Ruling: ghi ro khoang trong nay, khong coi la da canh xong.
+Chi phi neu sai: mot lan kiem tay lai sau moi thay doi `cli/index.ts`.

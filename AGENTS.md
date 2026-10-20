@@ -310,6 +310,25 @@ dùng chung, một lần** — đừng vá lặp ở từng caller để "cho xo
 | **CLI — cầu nối tool** | `lib/tools/ipc-node.ts` (cầu `lib/ipc.cjs`) |
 | **CLI — bảng kiểm kê** | `docs/cli-migration-inventory.md` + `scripts/cli-migration/` |
 | Cổng chống hạ chuẩn (mục 1.1) | `tests/repo-hygiene.test.ts` |
+| **CLI — TUI (màn hình đồ họa)** | `cli/tui/` (đảo ESM: có `package.json` riêng) + `cli/tui-gate.ts` + `cli/approval-broker.ts`. Tắt bằng `VYEN_PLAIN=1`; cần Node ≥ 26.4.0 (OpenTUI cần FFI) |
+
+## 10. Trước khi báo xong
+
+- [ ] `npm run typecheck` exit 0
+- [ ] `npm run test` — không đỏ (trừ 4 flaky ở mục 1)
+- [ ] `npm run lint` — không có lỗi mới
+- [ ] `npm run docs:check` OK
+- [ ] `npm run build` exit 0
+- [ ] Test mới đã được chứng minh ĐỎ (mục 2)
+- [ ] **Mutation đã được xác nhận là thật sự thay đổi hành vi** (mục 2.2)
+- [ ] **Mọi lời hứa trong comment mới đều có test đỏ khi bỏ lớp bảo vệ** (mục 2.1)
+- [ ] **Kỳ vọng lấy từ yêu cầu, không lấy từ code** (mục 2.5 — Luật 2, *tự khai*)
+- [ ] **Có ≥ 1 test kịch bản end-to-end** ở ranh giới quan sát được (mục 2.5 — Luật 3, *tự khai*)
+- [ ] **Đã gọi skill `requesting-code-review` trước khi push** (mục 2.5 — Luật 4, *tự khai*)
+- [ ] Plan có mục `## Kịch bản & Test`; mọi tiêu chí trong `Review Focus` đều có dòng (mục 2.5 — Luật 1, *có test canh*)
+- [ ] File mới đã `git add`
+- [ ] File nguồn không có BOM (mục 8)
+>>>>>>> c3edcb8 (docs(cli): cap nhat ban do va huong dan tui)
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -52,6 +52,24 @@
  *   $env:VYEN_MODEL   = "claude-3-5-haiku-20241022"
  *   $env:VYEN_KIND    = "anthropic"
  *
+ * ============ BA GIAO DIỆN ============
+ *
+ *   1. `-p`            — một lượt rồi thoát (đường cũ, không đổi).
+ *   2. **TUI**         — màn hình đồ họa full-screen (`cli/tui/`), mở khi có TTY.
+ *   3. REPL cũ (plain) — mọi trường hợp còn lại.
+ *
+ *   Cổng vào là hàm thuần `chooseFrontend` (`cli/tui-gate.ts`, có test): `-p`,
+ *   pipe (không có TTY), `VYEN_PLAIN=1`, và Node < 26.4.0 đều rơi về REPL cũ,
+ *   **y nguyên** — không nhánh nào của REPL cũ bị đổi hành vi.
+ *
+ *   `VYEN_PLAIN=1` là van thoát luôn có: khi TUI hỏng trên terminal lạ, người
+ *   dùng vẫn làm việc được ngay.
+ *
+ *   TUI cần Node ≥ 26.4.0 vì OpenTUI tạo renderer gốc qua FFI. Đảo TUI nằm ở
+ *   `cli/tui/` — thư mục có `package.json` riêng (`{"type":"module"}`) vì
+ *   `@opentui/core` chỉ nạp được bằng ESM, còn repo này là CommonJS. Từ CJS ta
+ *   gọi vào đó bằng `await import('./tui/entry.tsx')` (chạy động).
+ *
  * ============ LỆNH TRONG PHIÊN ============
  *
  *   /exit    thoát. Mọi thứ đã ghi xuống đĩa, mở lại là đọc tiếp.

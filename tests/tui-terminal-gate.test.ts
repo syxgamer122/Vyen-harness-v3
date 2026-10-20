@@ -3,7 +3,7 @@
  *
  * ============ VÌ SAO LÀ TEST, KHÔNG PHẢI "CHECK TAY" ============
  *
- * Đo 2026-10-20: chạy `npx tsx cli/tui/entry.tsx` trong terminal thật thì màn
+ * chạy `npx tsx cli/tui/entry.tsx` trong terminal thật thì màn
  * hình mở, chữ hiện, Esc thoát sạch — nhưng đó là **một lần quan sát của tôi**,
  * không có gì chặn lần sau nó hỏng. Cổng này nên là test: nó chạy được trong
  * CI, và hỏng thì đỏ.
@@ -29,7 +29,12 @@ const ALT_SCREEN_TAT = '\u001b[?1049l';
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 describe('cổng TUI trên tiến trình thật', () => {
-  it('mở alternate screen, Esc thoát với exit 0, terminal được trả lại', async () => {
+  /* Timeout riêng 150s: mặc định của repo là 30s, mà cổng này phải nạp tsx +
+     AI SDK + OpenTUI trong một tiến trình con — khi cả suite chạy song song thì
+     nạp module chậm hơn nhiều. */
+  it(
+    'mở alternate screen, Esc thoát với exit 0, terminal được trả lại',
+    async () => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'cli/tui/entry.tsx'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -49,28 +54,31 @@ describe('cổng TUI trên tiến trình thật', () => {
        *
        * Lần đầu chỉ chờ alt-screen rồi khẳng định chữ ⇒ dưới tải nặng (chạy cả
        * suite) khung hình đầu chỉ có escape, chữ vẽ ở khung sau ⇒ đỏ giả.
-       * Đo 2026-10-20: xanh khi chạy riêng, đỏ khi chạy song song với cả suite. */
+       * xanh khi chạy riêng, đỏ khi chạy song song với cả suite. */
       let coBat = false;
       let coChu = false;
-      for (let i = 0; i < 60 && !(coBat && coChu); i++) {
-        await wait(250);
+      /* Ngân sách 60s: tiến trình con phải nạp tsx + cả AI SDK + OpenTUI, mà
+       * khi cả suite chạy song song thì nạp module chậm hơn nhiều. */
+      const HAN = 120; // 120 * 500ms = 60s
+      for (let i = 0; i < HAN && !(coBat && coChu); i++) {
+        await wait(500);
         coBat = out.includes(ALT_SCREEN_BAT);
-        coChu = out.includes('Vyen TUI');
+        coChu = out.includes('# vyen · dev');
       }
       expect(
         coBat,
-        `TUI không bật alternate screen sau 15s. stderr: ${err.slice(-400)}`,
+        `TUI không bật alternate screen sau 60s. stderr: ${err.slice(-400)}`,
       ).toBe(true);
       expect(
         coChu,
-        `TUI không vẽ chữ sau 15s. stdout: ${JSON.stringify(out.slice(-300))}`,
+        `TUI không vẽ header sau 60s. stdout: ${JSON.stringify(out.slice(-300))}`,
       ).toBe(true);
 
       child.stdin.write('\u001b'); // Esc
 
       let exitCode: number | null = null;
-      for (let i = 0; i < 60 && exitCode === null; i++) {
-        await wait(250);
+      for (let i = 0; i < 120 && exitCode === null; i++) {
+        await wait(500);
         exitCode = child.exitCode;
       }
       expect(exitCode, `TUI không thoát sau Esc. stderr: ${err.slice(-400)}`).toBe(0);
@@ -81,5 +89,7 @@ describe('cổng TUI trên tiến trình thật', () => {
     } finally {
       child.kill('SIGKILL');
     }
-  });
+    },
+    150_000,
+  );
 });
