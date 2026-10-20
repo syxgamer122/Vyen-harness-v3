@@ -602,6 +602,9 @@ export const CLIENT_TOOL_DEFS = {
       'Đọc nội dung một FILE trong workspace của người dùng (trên máy họ). ' +
       'File TEXT (mã nguồn, cấu hình, tài liệu...): trả nội dung, tối đa 24.000 ký tự tính TỪ start_line ' +
       'trở đi; vượt trần thì kết quả có `truncated: true` — đọc tiếp bằng cách gọi lại với start_line lớn hơn. ' +
+      'Ngoại lệ: khi kết quả có `nextStartChar` (bị cắt giữa một dòng rất dài) thì gọi lại với ' +
+      '`start_char` = giá trị `nextStartChar` — đọc tiếp được đúng phần còn lại, KHÔNG mất ký tự nào ' +
+      '(đọc tiếp bằng start_line sẽ BỎ QUA phần đuôi của dòng đó). ' +
       'File ẢNH (.png/.jpg/.webp/.heic): trả `description` — bản mô tả chi tiết do model vision của Nhà cung cấp đang bật tạo (qua /api/vision), ' +
       'kèm transcribe nguyên văn mọi chữ trong ảnh; dùng để xem ảnh, screenshot, diagram trong workspace. ' +
       'Định dạng khác (PDF, font, video, file nén) bị từ chối — với PDF/tài liệu hãy bảo người dùng đính kèm vào khung chat. ' +
@@ -611,6 +614,15 @@ export const CLIENT_TOOL_DEFS = {
       path: z.string().min(1).max(500).describe('Đường dẫn tương đối tới file, vd "src/index.ts"'),
       start_line: z.number().int().min(1).max(1_000_000).optional().describe('Dòng bắt đầu, đánh số từ 1; mặc định 1'),
       line_count: z.number().int().min(1).max(2_000).optional().describe('Số dòng cần đọc; mặc định đọc tới trần ký tự'),
+      start_char: z
+        .number()
+        .int()
+        .min(0)
+        .max(100_000_000)
+        .optional()
+        .describe(
+          'Offset ký tự bắt đầu đọc (dùng để đọc tiếp: gọi với start_char = nextStartChar mà kết quả trả về). Bỏ qua start_line/line_count khi có start_char.',
+        ),
     }),
   }),
   fs_search: tool({

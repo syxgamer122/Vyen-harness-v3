@@ -17,6 +17,7 @@
 import { db } from '@/lib/db';
 import { redactSecretText } from '@/lib/secret-registry';
 import { noteUntrustedToolResult } from '@/lib/taint-tracker';
+import { applyReadWindow, DEFAULT_READ_MAX_CHARS } from '@/lib/fs-read-window';
 
 const KV_KEY = 'agent_workspace_root';
 /** Thư mục luôn bỏ qua khi quét — đủ cho spike, chưa cần parse .gitignore đầy đủ. */
@@ -329,9 +330,13 @@ export interface FsReadResult {
   size: number;
   startLine: number;
   endLine: number;
+  /** Offset ký tự để đọc tiếp — chỉ có khi `truncated`. */
+  nextStartChar?: number;
+  /** Dòng chứa ký tự tại `nextStartChar` — chỉ có khi `truncated`. */
+  nextStartLine?: number;
 }
 
-const MAX_READ_CHARS = 24_000;
+const MAX_READ_CHARS = DEFAULT_READ_MAX_CHARS;
 
 export interface FsReadOptions {
   maxChars?: number;
@@ -339,6 +344,11 @@ export interface FsReadOptions {
   startLine?: number;
   /** Số dòng cần đọc; bỏ trống thì đọc tới trần ký tự. */
   lineCount?: number;
+  /**
+   * Offset ký tự TUYỆT ĐỐI trong file — đọc tiếp sau khi bị cắt giữa dòng.
+   * Có nó thì `startLine`/`lineCount` bị bỏ qua.
+   */
+  startChar?: number;
 }
 
 /** Đọc file text; trần ký tự chống nuốt cả file build vào context. */
@@ -392,28 +402,30 @@ export async function fsRead(
 
   const opts = typeof options === 'number' ? { maxChars: options } : options;
   const maxChars = opts.maxChars ?? MAX_READ_CHARS;
-  const allLines = text.split('\n');
-  const startIndex = Math.min(
-    Math.max(0, Math.floor((opts.startLine ?? 1) - 1)),
-    Math.max(0, allLines.length - 1),
-  );
-  const endIndex = opts.lineCount
-    ? Math.min(allLines.length, startIndex + Math.max(1, Math.floor(opts.lineCount)))
-    : allLines.length;
-  const selected = allLines.slice(startIndex, endIndex).join('\n');
-  /* Cắt TRƯỚC rồi tính endLine từ phần ĐÃ CẮT — nếu lấy endIndex của cả
-     `selected` chưa cắt thì model đọc `endLine` rồi báo "đã đọc tới dòng N"
-     trong khi `content` dừng dở ở dòng M (M < N): file lớn hơn trần ký tự là
-     mọi lần, vì `truncated` vẫn đúng nên không ai nghi ngờ. Công thức: số dòng
-     thực sự có trong `content` = startIndex + (số ký tự \n còn lại sau cắt) + 1. */
-  const content = selected.slice(0, maxChars);
+  /* Cắt cửa sổ ở MỘT chỗ dùng chung (`lib/fs-read-window.ts`).
+   *
+   * Trước đây bản này tự cắt và tự tính `endLine` theo công thức riêng
+   * (`startIndex + content.split('\n').length`) ⇒ file có dấu xuống dòng cuối
+   * thì `endLine` báo NHIỀU HƠN thực tế (file 5 dòng bị báo là 6) ⇒ model đọc
+   * tiếp `start_line = endLine + 1` ⇒ nhận dòng rỗng rồi lặp.
+   *
+   * Bản dùng chung còn trả `nextStartChar` ⇒ đọc tiếp được phần đuôi của một
+   * dòng dài bị cắt giữa chừng (trước đây mất vĩnh viễn). */
+  const win = applyReadWindow(text, {
+    maxChars,
+    ...(opts.startLine !== undefined ? { startLine: opts.startLine } : {}),
+    ...(opts.lineCount !== undefined ? { lineCount: opts.lineCount } : {}),
+    ...(opts.startChar !== undefined ? { startChar: opts.startChar } : {}),
+  });
   return {
     path,
-    content,
-    truncated: endIndex < allLines.length || selected.length > maxChars,
+    content: win.content,
+    truncated: win.truncated,
     size: file.size,
-    startLine: startIndex + 1,
-    endLine: startIndex + content.split('\n').length,
+    startLine: win.startLine,
+    endLine: win.endLine,
+    ...(win.nextStartChar !== undefined ? { nextStartChar: win.nextStartChar } : {}),
+    ...(win.nextStartLine !== undefined ? { nextStartLine: win.nextStartLine } : {}),
   };
 }
 

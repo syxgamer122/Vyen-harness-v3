@@ -6,10 +6,10 @@
  */
 import { isVyenDesktop, vyenDesktop } from '@/lib/desktop-bridge';
 import { noteUntrustedToolResult } from '@/lib/taint-tracker';
+import { applyReadWindow, DEFAULT_READ_MAX_CHARS } from '@/lib/fs-read-window';
 
-// Mirror trần của lib/fs-access.ts — giữ đồng bộ để desktop không
-// đọc được nhiều hơn web rồi làm phình context ở nơi khác.
-const MAX_READ_CHARS = 24_000;
+// Trần đọc — DÙNG CHUNG với web và CLI (một hằng duy nhất).
+const MAX_READ_CHARS = DEFAULT_READ_MAX_CHARS;
 const BINARY_EXT_RE =
   /\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|eot|otf|mp4|webm|mov|mp3|wav|zip|gz|tar|rar|7z|pdf|docx?|xlsx?|pptx?|exe|dll|so|dylib|wasm|node|lock-bin)$/i;
 
@@ -25,11 +25,17 @@ export interface FsReadResult {
   size: number;
   startLine: number;
   endLine: number;
+  /** Offset ký tự để đọc tiếp — chỉ có khi `truncated`. */
+  nextStartChar?: number;
+  /** Dòng chứa ký tự tại `nextStartChar` — chỉ có khi `truncated`. */
+  nextStartLine?: number;
 }
 export interface FsReadOptions {
   maxChars?: number;
   startLine?: number;
   lineCount?: number;
+  /** Offset ký tự TUYỆT ĐỐI trong file — đọc tiếp sau khi bị cắt giữa dòng. */
+  startChar?: number;
 }
 export interface SearchMatch {
   path: string;
@@ -116,27 +122,31 @@ export async function desktopFsRead(rawPath: string, options: number | FsReadOpt
   }
   const opts = typeof options === 'number' ? { maxChars: options } : options;
   const maxChars = opts.maxChars ?? MAX_READ_CHARS;
-  const allLines = r.content.split('\n');
-  const startIndex = Math.min(Math.max(0, Math.floor((opts.startLine ?? 1) - 1)), Math.max(0, allLines.length - 1));
-  const endIndex = opts.lineCount ? Math.min(allLines.length, startIndex + Math.max(1, Math.floor(opts.lineCount))) : allLines.length;
-  const selected = allLines.slice(startIndex, endIndex).join('\n');
 
   /* Egress Guard (A5): nội dung file workspace là dữ liệu KHÔNG ĐÁNG TIN →
      đánh dấu lượt đã nhiễm (xem lib/auto-pilot.ts Egress Guard). */
-  noteUntrustedToolResult(null, 'fs_read', selected, { path: rawPath });
+  noteUntrustedToolResult(null, 'fs_read', r.content, { path: rawPath });
 
-  const content = selected.slice(0, maxChars);
+  /* Cắt cửa sổ ở MỘT chỗ dùng chung (`lib/fs-read-window.ts`) — cùng công thức
+     với CLI và web. Trước đây bản này tự tính `endLine` theo cách riêng ⇒ file
+     có dấu xuống dòng cuối thì báo dòng nhiều hơn thực tế, và không đọc tiếp
+     được phần đuôi của dòng dài bị cắt giữa chừng. */
+  const win = applyReadWindow(r.content, {
+    maxChars,
+    ...(opts.startLine !== undefined ? { startLine: opts.startLine } : {}),
+    ...(opts.lineCount !== undefined ? { lineCount: opts.lineCount } : {}),
+    ...(opts.startChar !== undefined ? { startChar: opts.startChar } : {}),
+  });
 
   return {
     path: rawPath,
-    content,
-    truncated: endIndex < allLines.length || selected.length > maxChars,
+    content: win.content,
+    truncated: win.truncated,
     size: r.size,
-    startLine: startIndex + 1,
-    /* Cắt TRƯỚC rồi tính endLine từ phần ĐÃ CẮT — cùng lý do và cùng công
-       thức với fsRead (lib/fs-access.ts): endIndex của cả `selected` chưa cắt
-       làm model báo "đọc tới dòng N" trong khi content dừng ở dòng M. */
-    endLine: startIndex + content.split('\n').length,
+    startLine: win.startLine,
+    endLine: win.endLine,
+    ...(win.nextStartChar !== undefined ? { nextStartChar: win.nextStartChar } : {}),
+    ...(win.nextStartLine !== undefined ? { nextStartLine: win.nextStartLine } : {}),
   };
 }
 

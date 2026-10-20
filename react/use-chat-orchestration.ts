@@ -94,6 +94,7 @@ import {
 } from '@/lib/chat-tree-persistence';
 import { gatherWebContext } from '@/lib/use-web-search';
 import { stripEmulatedToolMarkup } from '@/lib/text-tool-guard';
+import { applyReadWindow } from '@/lib/fs-read-window';
 import type { TurnIntent } from '@/lib/turns';
 import {
   fsDelete,
@@ -1756,26 +1757,23 @@ export function useChatOrchestration(options?: UseChatOrchestrationOptions) {
             if (stagedEntry && !isImagePath(rel)) {
               readFilesRef.current.add(normRel);
               const content = stagedEntry.content;
-              const lines = content.split('\n');
-              const startLine = typeof args.start_line === 'number' ? Math.max(1, args.start_line) : 1;
-              const lineCount = typeof args.line_count === 'number' ? args.line_count : undefined;
-              const sliced = lineCount !== undefined
-                ? lines.slice(startLine - 1, startLine - 1 + lineCount)
-                : lines.slice(startLine - 1);
-              /* Trần 24k ký tự MIRROR fsRead trên đĩa: overlay tích luỹ nhiều
-                 fs_edit có thể dài hơn trần — không cắt thì một fs_read nhồi
-                 cả file khổng lồ vào context trong khi đường đĩa vẫn cắt.
-                 truncated phản ánh cả cắt-dòng (có line_count) lẫn cắt-ký tự
-                 để model biết gọi tiếp start_line thay vì tưởng hết file. */
-              const STAGED_READ_MAX_CHARS = 24_000;
-              const joined = sliced.join('\n');
-              const truncated =
-                (lineCount !== undefined ? startLine - 1 + lineCount < lines.length : false) ||
-                joined.length > STAGED_READ_MAX_CHARS;
+              /* Cắt cửa sổ ở MỌT chỗ (`lib/fs-read-window.ts`) — cùng công thức
+               * với CLI/web/desktop. Trước đây staging tự cắt ⇒ lệch với đường
+               * đĩa (endLine lệch 1 với file có dấu xuống dòng cuối) và không
+               * đọc tiếp được phần đuôi của dòng dài bị cắt giữa chừng. */
+              const win = applyReadWindow(content, {
+                ...(typeof args.start_line === 'number' ? { startLine: args.start_line } : {}),
+                ...(typeof args.line_count === 'number' ? { lineCount: args.line_count } : {}),
+                ...(typeof args.start_char === 'number' ? { startChar: args.start_char } : {}),
+              });
               return JSON.stringify({
-                content: joined.slice(0, STAGED_READ_MAX_CHARS),
+                content: win.content,
                 size: content.length,
-                truncated,
+                truncated: win.truncated,
+                startLine: win.startLine,
+                endLine: win.endLine,
+                ...(win.nextStartChar !== undefined ? { nextStartChar: win.nextStartChar } : {}),
+                ...(win.nextStartLine !== undefined ? { nextStartLine: win.nextStartLine } : {}),
                 staged: true,
               });
             }
@@ -1811,6 +1809,7 @@ export function useChatOrchestration(options?: UseChatOrchestrationOptions) {
             const opts = {
               ...(typeof args.start_line === 'number' ? { startLine: args.start_line } : {}),
               ...(typeof args.line_count === 'number' ? { lineCount: args.line_count } : {}),
+              ...(typeof args.start_char === 'number' ? { startChar: args.start_char } : {}),
             };
             const data = isDesktop ? await desktopFsRead(rel, opts) : await fsRead(wsForFs!, rel, opts);
             /* Read-before-edit: ghi nhận file đã đọc để fs_edit/fs_write cho phép. */

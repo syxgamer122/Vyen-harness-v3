@@ -37,6 +37,7 @@ import path from 'node:path';
 import ipc from '../ipc.cjs';
 import { parseEditBlocks, replaceMostSimilarChunk } from '../edit-blocks';
 import { CLIENT_TOOL_DEFS } from '../agent-tools';
+import { applyReadWindow as applyReadWindowShared } from '../fs-read-window';
 import { capToolValue } from '../tool-result-server';
 import { redactSecretText } from '../secret-registry';
 
@@ -484,50 +485,28 @@ export function toIpcPayload(
   return out;
 }
 
-/** Trần ký tự cho một lần đọc file. Khớp `MAX_READ_CHARS` của `lib/fs-access.ts`. */
-const MAX_READ_CHARS = 24_000;
-
 /**
  * Cắt cửa sổ dòng mà `ipc.cjs` **không** làm được.
  *
  * `FsReadPayload` của `ipc.cjs` chỉ có `relPath` — `start_line`/`line_count`
  * thuộc về tầng client ở bản web. Ta gọi thẳng channel nên phải tự cắt, nếu
  * không thì đúng cái vòng lặp tốn tiền ở trên sẽ quay lại.
+ *
+ * Logic cắt nằm ở `lib/fs-read-window.ts` — dùng CHUNG với web/desktop/staging
+ * (trước đây mỗi đường một bản, chúng đã drift: bản web báo `endLine` lệch 1 với
+ * file có dấu xuống dòng cuối).
  */
 function applyReadWindow(
   raw: string,
   startLine?: number,
   lineCount?: number,
-): { content: string; truncated: boolean; startLine: number; endLine: number } {
-  const lines = raw.split('\n');
-  const start = Math.max(1, startLine ?? 1);
-  const end = lineCount ? start + lineCount - 1 : lines.length;
-  const selected = lines.slice(start - 1, end);
-  // `truncated` = còn dòng chưa trả, HOẶC bị cắt vì vượt trần ký tự.
-  let truncated = end < lines.length;
-  let content = selected.join('\n');
-  if (content.length > MAX_READ_CHARS) {
-    content = content.slice(0, MAX_READ_CHARS);
-    truncated = true;
-  }
-  /* `endLine` tính từ phần ĐÃ CẮT, không từ phần chưa cắt — nếu lấy của phần
-   * chưa cắt thì model đọc `endLine` rồi báo "đã đọc tới dòng N" trong khi
-   * `content` dừng ở dòng M (M < N) ⇒ file lớn hơn trần là mọi lượt, vì
-   * `truncated` vẫn đúng nên không ai nghi ngờ. Cùng lý do với bản web
-   * (`lib/fs-access.ts:404-408`). */
-  /* So dong THẬT trong `content`: dấu `\n` cuối file tạo ra một phần tử rỗng,
-   * không phải một dòng. Bản web đếm cả nó (`lib/fs-access.ts:416` ⇒
-   * `endLine = startIndex + content.split('\n').length`) ⇒ file 5 dòng bị báo là 6.
-   * Hậu quả: model hỏi `start_line=6` ⇒ nhận về dòng rỗng ⇒ lại hỏi tiếp ⇒
-   * mắc vòng lặp đọc lại. CLI là sản phẩm còn lại (web sẽ bị xoá), nên ở đây
-   * đếm đúng số dòng thật. */
-  const soDong = content === '' ? 0 : content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
-  return {
-    content,
-    truncated,
-    startLine: start,
-    endLine: start + Math.max(0, soDong - 1),
-  };
+  startChar?: number,
+): ReturnType<typeof applyReadWindowShared> {
+  return applyReadWindowShared(raw, {
+    ...(startLine !== undefined ? { startLine } : {}),
+    ...(lineCount !== undefined ? { lineCount } : {}),
+    ...(startChar !== undefined ? { startChar } : {}),
+  });
 }
 
 function sha256(s: string): string {
@@ -818,18 +797,32 @@ export function buildIpcTools(
             // Hash phải tính trên TOÀN BỘ file, không phải phần cửa sổ — nếu tính
             // trên cửa sổ thì đọc tiếp rồi ghi sẽ luôn lệch và chặn oan.
             if (a.path) hashes.set(khoa, sha256(full));
-            const { content, truncated, startLine, endLine } = applyReadWindow(
-              full,
-              a.start_line as number,
-              a.line_count as number,
-            );
+            const { content, truncated, startLine, endLine, nextStartChar, nextStartLine } =
+              applyReadWindow(
+                full,
+                a.start_line as number,
+                a.line_count as number,
+                a.start_char as number,
+              );
             /* `path`/`startLine`/`endLine`: model phải biết ĐỌC TIẾP TỪ ĐÂU. Mô tả
              * tool bảo "gọi lại với `start_line` lớn hơn" mà không nói nó dừng ở
              * dòng nào thì "lớn hơn" là bao nhiêu? Model đoán ⇒ đọc lại trùng hoặc
-             * đọc hụt ⇒ tốn tiền mà không tiến. Bản web đã trả đủ
-             * (`lib/fs-access.ts:410-417`). */
+             * đọc hụt ⇒ tốn tiền mà không tiến.
+             *
+             * `nextStartChar` là câu trả lời cho phần còn lại của MỘT DÒNG DÀI:
+             * khi bị cắt giữa dòng, `start_line + 1` bỏ qua phần đuôi của dòng đó
+             * ⇒ đọc tiếp bằng `start_char = nextStartChar` là không mất ký tự nào. */
             return capToolValue(
-              { ...(r as object), content, truncated, startLine, endLine, path: a.path },
+              {
+                ...(r as object),
+                content,
+                truncated,
+                startLine,
+                endLine,
+                ...(nextStartChar !== undefined ? { nextStartChar } : {}),
+                ...(nextStartLine !== undefined ? { nextStartLine } : {}),
+                path: a.path,
+              },
               spillSaver,
             ) as Record<string, unknown>;
           }
