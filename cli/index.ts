@@ -159,7 +159,7 @@ import { getKeyLabel } from '@/lib/api-keys';
 import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
 import { createConsoleApprover, createAutoApprover } from './approve';
 import { buildModelConfigs, createCompactionRunner, statusCodeOf } from './compaction';
-import { runAgentTurn } from './agent-turn';
+import { runAgentTurn, messagesDaHoanThanh } from './agent-turn';
 import { runTurn } from './emulated';
 import { runRepl, type ReplOptions } from './repl';
 import { openSession } from './session';
@@ -224,7 +224,7 @@ export async function chayMotLuot(opts: {
     model: lmNen,
     system,
     ...(opts.windowTokens !== undefined ? { windowTokens: opts.windowTokens } : {}),
-    note: (s) => console.error(s),
+    note: (s) => ghiChu(s),
   });
   session.append({ role: 'user', content: question });
   let wroteAny = false;
@@ -257,7 +257,7 @@ export async function chayMotLuot(opts: {
       });
       session.appendAll(turn.messages);
       if (wroteAny) ghiRa('\n');
-      console.error(
+      ghiChu(
         `\n> xong. token: vao ${turn.usage.promptTokens ?? '?'} / ra ${turn.usage.completionTokens ?? '?'}`,
       );
       return;
@@ -267,26 +267,46 @@ export async function chayMotLuot(opts: {
       const msg = e instanceof Error ? e.message : String(e);
       if (!daThuLai && isContextOverflowError(statusCodeOf(e), msg)) {
         daThuLai = true;
-        console.error('> het context, dang nen lai...');
+        ghiChu('> het context, dang nen lai...');
         if (await nen.nen('overflow')) continue;
       }
+
+      /* Phần ĐÃ HOÀN THÀNH trước khi lượt hỏng vẫn phải ghi lại — Y HỆT đường
+       * REPL (`cli/repl.ts`).
+       *
+       * Không ghi thì `fs_write` đã ghi file mà transcript không có dấu vết ⇒
+       * `/compact` không biết file nào vừa bị sửa, và đường `overflow` thử lại
+       * ⇒ model LÀM LẠI đúng các tool call đó ⇒ ghi file hai lần.
+       *
+       * Chỉ phần ĐẦY ĐỦN mới được ghi (tool-call có tool-result tương ứng) —
+       * ghi chuỗi hở làm provider từ chối MỌI lượt sau của phiên.
+       */
+      const daHoanThanh = messagesDaHoanThanh(e);
+      if (daHoanThanh.length > 0) {
+        session.appendAll(daHoanThanh);
+        ghiChu(`> ${daHoanThanh.length} message da hoan thanh truoc khi luot hong — da ghi lai.`);
+      }
+
       /* Chuyển lỗi thô thành chẩn đoán có nghĩa (spec §7).
        *
        * Không in `e.message` thẳng: message của provider là tiếng Anh dài dòng, và
        * quan trọng hơn là **không phân biệt được lỗi mạng với lỗi key** — người
-       * dùng CLI không biết nên bật lại Wi-Fi hay đổi key. */
+       * dùng CLI không biết nên bật lại Wi-Fi hay đổi key.
+       *
+       * Mọi dòng chẩn đoán đi qua `ghiChu` (tức `opts.note`) — không in thẳng ra
+       * `console.error`, để người gọi (và test) bắt được hết. */
       const diag = diagnoseUpstreamError(e, {
         requestId: randomUUID().slice(0, 8),
         model,
         keyLabel: getKeyLabel(apiKey),
         providerBase: process.env.VYEN_BASE_URL,
       });
-      console.error(`\n> ${diag.code}  (${diag.scope})`);
-      console.error(`> ${diag.userMessage}`);
-      console.error(
+      ghiChu(`\n> ${diag.code}  (${diag.scope})`);
+      ghiChu(`> ${diag.userMessage}`);
+      ghiChu(
         `> phai doi key: ${diag.blameKey ? 'co' : 'khong'} | dung thu key khac: ${diag.stopFailover ? 'dung roi' : 'chua'}`,
       );
-      if (process.env.VYEN_DEBUG === '1') console.error(`> dev: ${diag.devLog}`);
+      if (process.env.VYEN_DEBUG === '1') ghiChu(`> dev: ${diag.devLog}`);
       process.exitCode = 1;
       return;
     }
