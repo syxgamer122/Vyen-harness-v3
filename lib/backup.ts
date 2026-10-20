@@ -1,7 +1,7 @@
 import { db, type ChatSession, type StoredAttachment, type StoredMessage } from '@/lib/db';
 import { toParentKey } from '@/lib/parent-keys';
 import { tokenize } from '@/lib/search-utils';
-import { redactSecretsDeep } from '@/lib/secret-registry';
+import { redactSecretJson } from '@/lib/secret-registry';
 
 export const BACKUP_FORMAT = 'vyen-backup';
 /**
@@ -109,23 +109,27 @@ export function downloadBlob(filename: string, blob: Blob): void {
 /* ------------------------------------------------------------------ */
 
 /**
- * Che bí mật trong kết quả tool trước khi XUẤT RA file.
+ * Che bí mật trong kết quả tool VÀ tham số tool trước khi XUẤT RA file.
  *
  * Vì sao cần cả ở đây, không chỉ ở tầng ghi DB:
  *   - `sanitizeToolInvocations` (lib/db.ts) đã che khi ghi ⇒ row MỚI sạch;
  *   - nhưng row CŨ (đã ghi trước khi sửa) vẫn còn khoá thô ⇒ file sao lưu
  *     xuất ra từ máy người dùng có khoá API trong khi chat hiển thị không có.
  *
- * Ranh giới: chỉ kết quả TOOL (nội dung app tự đọc từ đĩa). Nội dung tin
- * nhắn người dùng tự gõ là dữ liệu của họ — không được đổi.
+ * Dùng `redactSecretJson` (che trên chuỗi JSON) chứ KHÔNG `redactSecretsDeep`:
+ * deep-redact dừng ở `DEEP_REDACT_MAX_DEPTH = 12` ⇒ kết quả lồng ≥ 12 cấp
+ * vẫn lọt (đo 2026-10-20 bởi verifier độc lập: sâu 11 còn che, sâu 12 là lộ).
+ *
+ * Ranh giới: chỉ kết quả/tham số TOOL (nội dung app tự đọc từ đĩa). Nội dung
+ * tin nhắn người dùng tự gõ là dữ liệu của họ — không được đổi.
  */
 export function sanitizeMessageForExport(msg: StoredMessage): SerializedMessage {
   const { attachments, tokens, ...rest } = msg;
-  const toolInvocations = msg.toolInvocations?.map((inv) =>
-    inv.result === undefined
-      ? { ...inv }
-      : { ...inv, result: redactSecretsDeep(inv.result) },
-  );
+  const toolInvocations = msg.toolInvocations?.map((inv) => ({
+    ...inv,
+    ...(inv.args !== undefined ? { args: redactSecretJson(inv.args) } : {}),
+    ...(inv.result !== undefined ? { result: redactSecretJson(inv.result) } : {}),
+  }));
   return {
     ...rest,
     ...(toolInvocations ? { toolInvocations } : {}),

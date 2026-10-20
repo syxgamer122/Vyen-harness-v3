@@ -9,7 +9,8 @@
  * Toán nhẹ (fetch + regex), không DOM parser — cùng triết lý với lib/web-extract.
  */
 
-import { assertFetchableUrl, assertFetchableIps } from '@/lib/web-url-guard';
+import { assertFetchableUrl } from '@/lib/web-url-guard';
+import { fetchPinned } from '@/lib/web-fetch-pinned';
 import {
   capText,
   extractReadableText,
@@ -42,11 +43,11 @@ const MAX_REDIRECTS = 4;
 
 /**
  * PERF: Cache DNS lookup function để tránh dynamic import mỗi lần fetch.
- * Edge runtime không có node:dns → cachedDnsLookup = null, check một lần.
  *
  * Kiểu gọi: `lookup(hostname, { all: true })` trả về **mảng** địa chỉ (cần kiểm
- * TẤT CẢ — xem `guardedFetch`), còn gọi không có `{all}` trả về một địa chỉ.
- * Vì overload của `node:dns` rười việc này, ta chuẩn hoá về một hình duy nhất.
+ * TẤT CẢ — xem `resolveAndValidate` ở `lib/web-fetch-pinned.ts`), còn gọi không
+ * có `{all}` trả về một địa chỉ. Vì overload của `node:dns` rười việc này, ta
+ * chuẩn hoá về một hình duy nhất.
  */
 type DnsLookupFn = (
   hostname: string,
@@ -63,6 +64,27 @@ async function getDnsLookup() {
     cachedDnsLookup = null; // Edge runtime hoặc môi trường không hỗ trợ
   }
   return cachedDnsLookup;
+}
+
+/**
+ * Tầng transport của `guardedFetch` — **seam để test**.
+ *
+ * Mặc định là `fetchPinned` (ghim IP ⇒ không còn cửa sổ DNS rebinding).
+ * Test thay bằng `__setFetchImpl` để không gọi mạng thật.
+ *
+ * Lưu ý: trước đây seam là `globalThis.fetch` ⇒ test stub `vi.stubGlobal('fetch')`.
+ * Seam đổi theo ⇒ các test đó phải chuyển sang `__setFetchImpl`.
+ */
+export type FetchImpl = (
+  url: string,
+  opts: { timeoutMs: number; headers?: Record<string, string>; allowPrivate?: boolean },
+) => Promise<Response>;
+
+let fetchImpl: FetchImpl = (url, opts) => fetchPinned(url, opts);
+
+/** Chỉ dùng cho test. `null` ⇒ trở về transport mặc định (ghim IP). */
+export function __setFetchImpl(impl: FetchImpl | null): void {
+  fetchImpl = impl ?? ((url, opts) => fetchPinned(url, opts));
 }
 /** Trần ký tự nội dung mỗi trang đưa vào context (~2k token). */
 const MAX_TEXT_CHARS = WEB_LIMITS.pageContentChars;
@@ -147,6 +169,20 @@ async function readTextCapped(res: Response, maxBytes: number): Promise<string> 
  * `trusted = true`: bỏ kiểm SSRF cho endpoint do NGƯỜI VẬN HÀNH cấu hình —
  * chặn theo guard sẽ vô lý vì chính owner đã chọn địa chỉ đó. Input người
  * dùng vẫn KHÔNG BAO GIỜ được hưởng cờ này.
+ *
+ * ============ VÌ SAO KHÔNG DÙNG `fetch` THẤT NỮA ============
+ *
+ * `fetch(url)` tự resolve DNS **LẦN THỨ HAI** ⇒ giữa lúc ta kiểm IP và lúc
+ * nối, DNS của kẻ tấn công đổi câu trả lời ⇒ server nối tới IP riêng
+ * (đo 2026-10-20 bởi verifier: tầng kiểm thấy IP public còn server `127.0.0.1`
+ * vẫn nhận được request).
+ *
+ * Nay dùng `fetchPinned` (`lib/web-fetch-pinned.ts`): tự resolve MỘT lần, kiểm
+ * TẤT CẢ địa chỉ, rồi **ghim** địa chỉ đã kiểm vào tầng nối ⇒ không còn
+ * lần resolve thứ hai ⇒ không còn cửa sổ rebinding.
+ *
+ * ⇒ Kiểm DNS là **BẮT BUỘC**: không resolve được thì TỪ CHỐI (fail closed),
+ * không phải "bỏ qua cho an toàn" — bỏ qua chính là lỗ hổng.
  */
 export async function guardedFetch(
   rawUrl: string,
@@ -160,46 +196,24 @@ export async function guardedFetch(
     if (!trusted) {
       const check = assertFetchableUrl(current);
       if (!check.ok) throw new WebOpError(check.error, 400, 'WEB_URL_BLOCKED');
-      // Chặn hostname resolve về IP RIÊNG — kiểm **TOÀN BỘ** địa chỉ.
-      //
-      // `assertFetchableUrl` chỉ soi hostname string; `fetch()` resolve DNS
-      // độc lập nên hostname public vẫn có thể trỏ về 127.0.0.1/169.254.x.x
-      // lúc TCP connect.
-      //
-      // Trước đây chỉ kiểm MỘT địa chỉ (`dns.lookup` không có `{all:true}`) ⇒
-      // domain có cả A record công khai lẫn A record riêng lọt nếu resolver
-      // trả bản công khai trước. Nay kiểm tất cả ⇒ chặn được phần xác định.
-      //
-      // RỦI RO CÒN LẠI (không che): đổi DNS giữa lúc kiểm và lúc nối
-      // (rebinding) vẫn lọt, vì `fetch` tự resolve lần hai. Cần ghim IP thì
-      // phải dùng dispatcher của undici — nằm ngoài phạm vi lượt này.
-      // PERF: Dùng cached DNS lookup thay vì dynamic import mỗi lần fetch.
-      try {
-        const dnsLookup = await getDnsLookup();
-        if (dnsLookup) {
-          const hostname = new URL(current).hostname;
-          const resolved = await dnsLookup(hostname, { all: true });
-          const addresses = Array.isArray(resolved)
-            ? resolved.map((r) => r.address)
-            : [resolved.address];
-          const ipCheck = assertFetchableIps(addresses);
-          if (!ipCheck.ok) throw new WebOpError(ipCheck.error, 400, 'WEB_URL_BLOCKED');
-        }
-        // dnsLookup === null → Edge runtime, bỏ qua gracefully (đã cache)
-      } catch (dnsErr) {
-        if (dnsErr instanceof WebOpError) throw dnsErr;
-        // Lỗi DNS khác (NXDOMAIN, timeout...) → bỏ qua, fetch() sẽ báo lỗi sau
-      }
     }
 
-    const res = await fetch(current, {
-      redirect: 'manual',
+    const res = await fetchImpl(current, {
+      timeoutMs,
+      allowPrivate: trusted,
       headers: headers ?? {
         'User-Agent': UA,
         Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5',
       },
-      signal: AbortSignal.timeout(timeoutMs),
-      cache: 'no-store',
+    }).catch((e: unknown) => {
+      /* IP riêng / không resolve được / timeout / lỗi mạng — tất cả đều là
+       * "không tải được", KHÔNG phải "tải được nhưng rỗng". */
+      if (e instanceof WebOpError) throw e;
+      throw new WebOpError(
+        e instanceof Error ? e.message : String(e),
+        502,
+        'WEB_FETCH_FAILED',
+      );
     });
 
     if ([301, 302, 303, 307, 308].includes(res.status)) {
@@ -562,10 +576,13 @@ export async function fetchReadablePage(rawUrl: string): Promise<ReadablePage> {
  */
 async function fetchViaJinaReader(targetUrl: string): Promise<ReadablePage | null> {
   try {
-    const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
+    /* Qua `fetchImpl` (seam) như mọi đường fetch khác — nếu không thì đường
+     * này gọi `globalThis.fetch` trực tiếp ⇒ (1) không được ghim IP, (2) test
+     * không stub được. Host ở đây là CỐ ĐỊNH (`r.jina.ai`), URL đích nằm trong
+     * ĐƯỜNG DẪN chứ không phải host ⇒ không có SSRF qua host. */
+    const res = await fetchImpl(`https://r.jina.ai/${targetUrl}`, {
+      timeoutMs: FETCH_TIMEOUT_MS,
       headers: { Accept: 'text/plain', 'User-Agent': UA },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cache: 'no-store',
     });
     if (!res.ok) return null;
     const md = await readTextCapped(res, MAX_PAGE_BYTES);

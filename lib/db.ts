@@ -4,7 +4,7 @@ import type { MemoryRecord, MemoryReviewEntry } from '@/lib/memory/types';
 import type { AgentMemoryRecord } from '@/lib/memory/agent-memory';
 import type { ZeroMemTrace, ZeroMemEntity, ZeroMemRelation } from '@/lib/zeromem/types';
 import { resetTurnTaint } from '@/lib/taint-tracker';
-import { redactSecretText, redactSecretsDeep } from '@/lib/secret-registry';
+import { redactSecretText, redactSecretJson, redactSecretsDeep } from '@/lib/secret-registry';
 import { ROOT_KEY, toParentKey, fromParentKey } from '@/lib/parent-keys';
 
 /* `ROOT_KEY` / `toParentKey` / `fromParentKey` đã chuyển sang `@/lib/parent-keys`.
@@ -416,7 +416,15 @@ export function sanitizeToolInvocations(
     cleaned.push({
       toolCallId: String(inv.toolCallId ?? ''),
       toolName: inv.toolName,
-      ...(inv.args !== undefined ? { args: inv.args } : {}),
+      /* THAM SỐ cũng phải che — không chỉ kết quả.
+       *
+       * Verifier 2026-10-20 bắt được: trước đây `args` lưu THÔ. Kịch bản
+       * thật: agent đọc `.env` rồi `fs_write` sang `config/.env.local` ⇒
+       * `args.content` chứa khoá ⇒ khoá nằm nguyên trong IndexedDB (và trong
+       * file sao lưu xuất ra) dù `result` đã được che.
+       *
+       * Dùng `redactSecretJson` (che trên chuỗi JSON ⇒ không có trần độ sâu). */
+      ...(inv.args !== undefined ? { args: redactSecretJson(inv.args) } : {}),
       state: 'result',
       result,
     });

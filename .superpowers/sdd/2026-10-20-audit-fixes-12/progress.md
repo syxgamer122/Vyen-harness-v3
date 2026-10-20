@@ -80,6 +80,40 @@ Vòng 1 đã merge (`d157e72`) + push. Vòng 2 làm phần "kiểm chứng chu�
 
 **Cổng cuối:** typecheck 0 · lint 0 lỗi (8 warning baseline) · test 245/246 file xanh (đỏ duy nhất: `tests/secret-registry.test.ts` — flaky đã biết) · docs:check OK · plan-traceability 16/16.
 
+## Vòng 3 — VERIFIER ĐỘC LẬP bác bỏ 4 kết luận của tôi + sửa lỗ hổng
+
+Tôi dispatch một verifier (subagent, có quyền bác bỏ, phải tự chạy probe) để **kiểm chứng lại** chính các kết luận của tôi. Kết quả: **4 kết luận của tôi sai/tuyên bố quá mạnh**, và verifier tìm thêm 3 lỗ hổng.
+
+**Kết luận của tôi bị bác (đã sửa):**
+- **B1** — "không còn lưu secret thô": SAI. Chỉ `result` được che; **`args` của tool lưu THÔ** ⇒ `fs_write` mang khoá trong `args.content` ⇒ khoá nằm trong IndexedDB và trong file sao lưu.
+- **B2** — "row cũ cũng không rò": SAI. Đường export dùng `redactSecretsDeep` (trần `DEEP_REDACT_MAX_DEPTH = 12`) ⇒ kết quả lồng ≥ 12 cấp **vẫn lộ** (đo: sâu 11 che, sâu 12 lộ).
+- **F1** — "stdin là pipe thì từ chối": SAI CHÍNH XÁC. Điều kiện thật là **stdin ĐÃ KẾT THÚC**; pipe còn dữ liệu thì câu trả lời vẫn được đọc ("y" ⇒ duyệt).
+- **H3** — "file spill không bao giờ bị xoá": SAI. Trong MỘT tiến trình thì có dọn (registry tối đa 50). Đúng là **mồ côi giữa các tiến trình**.
+
+**Lỗ hổng mới do verifier tìm ra (đều đã sửa):**
+- **H1 (thật)** — đường xoá chat trong khung chat (`react/use-chat-orchestration.ts`) chỉ xoá `messages`+`chats`, **không** dọn `wsSnapshots` ⇒ snapshot mồ côi ⇒ nạp lại backup (merge) ⇒ nút "Hoàn tác" ghi **nội dung file CŨ xuống đĩa**. (Tôi đã kết luận "merge thì an toàn" vì chỉ kiểm `deleteChatCascade` — thiếu đường xoá trong UI.)
+- Import chết ở `lib/agent-tools.ts` kéo module server `web-backend` vào **bundle client** ⇒ trong trình duyệt `node:dns` lỗi ⇒ tầng kiểm IP **biến mất im lặng**.
+- Comment của tokenizer hứa sai (`"C:\dir\"` thực tế ném "unclosed quote" — fail-closed nhưng tài liệu sai).
+
+**Sửa trong vòng này (mỗi cái test đỏ trước):**
+| # | Sửa | File |
+|---|---|---|
+| 15 | Che bí mật trong `args` (không chỉ `result`) | `lib/db.ts`, `lib/backup.ts` |
+| 16 | Đường export không còn trần độ sâu (che trên chuỗi JSON) | `lib/secret-registry.ts` (`redactSecretJson`), `lib/backup.ts` |
+| 17 | Xoá chat trong khung chat dọn cả ảnh chụp (dùng `deleteChatCascade`) | `react/use-chat-orchestration.ts` |
+| 18 | **Ghim IP** — đóng DNS rebinding | `lib/web-fetch-pinned.ts` (mới), `lib/web-backend.ts` |
+| 19 | Dọn file spill/shell mồ côi (> 24 giờ) lúc module nạp | `lib/ipc.cjs` |
+| 20 | Xoá import chết ⇒ module server không lọt vào bundle client | `lib/agent-tools.ts` |
+
+**Ghim IP (mục 18) — chi tiết:**
+- Cơ chế đã THỬ NGHIỆM (không suy đoán): `node:https` với `lookup` tự định nghĩa trả IP đã kiểm ⇒ HTTP 200, body đúng, **chứng thương TLS vẫn kiểm theo hostname** ⇒ không cần hạ TLS, không cần dependency mới.
+- Bẫy Node 20+: `autoSelectFamily` ⇒ `lookup` được gọi với `{all:true}` ⇒ callback phải trả **mảng**; trả sai dạng ⇒ "Invalid IP address: undefined" (đã dính ở lần thử đầu).
+- Seam đổi: transport cũ là `globalThis.fetch` ⇒ test stub `vi.stubGlobal('fetch')`; nay là `__setFetchImpl` ⇒ phải chuyển **6 file test** (web-backend, agent-tools, jina-reader-fallback, web-jina-reader, tool-limits-budget, emulated-agent). Trong `emulated-agent.test.ts` stub phục vụ **cả** model giả lẫn web ⇒ phải nối cả hai, không thay thế bừa.
+- Kiểm chứng bằng **mạng thật**: `fetchReadablePage('https://example.com/')` → "Example Domain" ✓; `searchWeb('vyen ai')` → engine `ddg-html`, 10 hits ✓.
+- Test mới `tests/web-fetch-pinned.test.ts` dùng DNS thật (`localtest.me` → 127.0.0.1 ⇒ bị chặn) + server thật cục bộ (chứng minh ghim IP hoạt động, Host header giữ nguyên).
+
+**Cổng cuối vòng 3:** typecheck 0 · lint 0 lỗi (8 warning baseline) · test 248/249 file xanh (đỏ duy nhất `tests/secret-registry.test.ts` — flaky đã biết) · docs:check OK · plan-traceability 16/16 · build exit 0.
+
 ## Cổng chất lượng cuối (sau fix pass)
 
 | Cổng | Kết quả |

@@ -523,6 +523,40 @@ export function redactSecretText(text: string): string {
   return getDefaultSecretRegistry().redactText(text);
 }
 
+/**
+ * Che bí mật trong một giá trị BẤT KỲ (object/array/scalar) bằng cách đi qua
+ * **chuỗi JSON** — không có giới hạn độ sâu.
+ *
+ * ============ VÌ SAO KHÔNG DÙNG `redactSecretsDeep` ============
+ *
+ * `redactDeep` dừng ở `DEEP_REDACT_MAX_DEPTH = 12` ⇒ một giá trị lồng sâu hơn
+ * vẫn giữ bí mật. Đo 2026-10-20 (verifier độc lập): lồng 11 cấp còn che,
+ * **lồng 12 cấp là lộ** — trong DB lẫn trong file sao lưu xuất ra.
+ *
+ * Che trên chuỗi JSON đã serialize thì regex chạy trên TOÀN bộ nội dung, không
+ * có "tầng" nào để dừng ⇒ không còn đường lọt theo độ sâu.
+ *
+ * Đổi lại: hình dạng của giá trị được giữ (JSON round-trip) — `Date` thành chuỗi
+ * ISO, `undefined` bị bỏ. Với kết quả tool (JSON thuần) thì không khác gì.
+ */
+export function redactSecretJson<T>(value: T): T {
+  try {
+    const json = JSON.stringify(value ?? null) ?? 'null';
+    const redacted = redactSecretText(json);
+    try {
+      return JSON.parse(redacted) as T;
+    } catch {
+      /* JSON sau khi che vẫn phải parse được (placeholder không chứa dấu nháy)
+       * — nếu không (trường hợp cực hiếm) thì rơi về deep-redact: che ít hơn
+       * nhưng không làm hỏng dữ liệu. */
+      return getDefaultSecretRegistry().redactDeep(value);
+    }
+  } catch {
+    /* Không serialize được (circular/BigInt) ⇒ giữ nguyên, đừng làm hỏng lượt. */
+    return value;
+  }
+}
+
 /** Che đệ quy kết quả tool bằng registry mặc định. */
 export function redactSecretsDeep<T>(value: T): T {
   return getDefaultSecretRegistry().redactDeep(value);

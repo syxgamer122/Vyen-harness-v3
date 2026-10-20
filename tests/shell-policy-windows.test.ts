@@ -40,9 +40,12 @@ describe('tokenizer — đường dẫn Windows phải tới nguyên vẹn', () 
   });
 
   it('mặc định theo nền tảng máy (caller gọi không truyền options)', () => {
-    /* `lib/safe-spawn.ts` gọi `tokenizeCommandLine(command)` — không có options.
-     * Nếu mặc định là POSIX thì trên Windows `\` vẫn bị nuốt ở đường đó ⇒
-     * đúng bug mà lần này sửa vẫn còn sống ở một caller khác. */
+    /* `compileShellCommand` gọi tokenizer KHÔNG có options ⇒ mặc định của
+     * tokenizer phải theo nền tảng, nếu không thì trên Windows `\` vẫn bị
+     * nuốt ở chính đường đó ⇒ đúng bug mà lần này sửa vẫn còn sống.
+     *
+     * (Ghi chú 2026-10-20: comment cũ ở đây trỏ `lib/safe-spawn.ts` — file đó
+     * đã bị xoá vì là code chết; caller thật là `compileShellCommand`.) */
     const kq = tokenizeCommandLine('dir src\\components');
     if (process.platform === 'win32') {
       expect(kq).toEqual(['dir', 'src\\components']);

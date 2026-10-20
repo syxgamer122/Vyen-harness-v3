@@ -22,8 +22,17 @@ import { tool, type Tool } from 'ai';
 import { z } from 'zod';
 import type { AgentRegistry } from '@/lib/agents/agent-registry';
 import { describeAgents } from '@/lib/agents/agent-registry';
-import { capHits, fetchReadablePage, searchWeb } from '@/lib/web-backend';
-import { WEB_LIMITS } from '@/lib/web-context';
+/* KHÔNG import `@/lib/web-backend` ở đây (verifier 2026-10-20).
+ *
+ * File này được import bởi `react/use-chat-orchestration.ts` ⇒ chạy ở TRÌNH
+ * DUYỆT. `lib/web-backend` là module SERVER (dùng `node:dns`) ⇒ import nó ở
+ * đây kéo cả module server vào bundle client, và trong browser
+ * `import('node:dns/promises')` lỗi ⇒ `dnsLookup = null` ⇒ **tầng kiểm IP bị
+ * bỏ qua im lặng** (xem `guardedFetch` ở `lib/web-backend.ts`).
+ *
+ * Các hàm `capHits`/`fetchReadablePage`/`searchWeb`/`WEB_LIMITS` ở đây vốn
+ * chẳng được dùng ⇒ xoá hẳn import chết thay vì giữ "có thể sau này cần".
+ */
 import { judgeInjection } from '@/lib/injection-guard';
 import { getToolCallBudget, checkDoomLoop } from '@/lib/tool-call-budget';
 import { TOOL_RESULT_MAX_CHARS, TOOL_PREVIEW_MAX_CHARS } from '@/lib/tool-limits';

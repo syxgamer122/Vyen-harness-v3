@@ -9,6 +9,7 @@ import {
   runEmulatedLoop,
 } from '@/lib/emulated-agent';
 import { buildAgentTools } from '@/lib/agent-tools-server';
+import { __setFetchImpl } from '@/lib/web-backend';
 import { z } from 'zod';
 
 function jsonResponse(payload: unknown): Response {
@@ -38,7 +39,10 @@ function makeModel() {
   return provider('emu-model');
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  __setFetchImpl(null);
+});
 
 describe('parseToolCallBlocks — parser khoan dung', () => {
   const known = new Set(['web_search', 'web_fetch', 'weather']);
@@ -131,22 +135,23 @@ describe('runEmulatedLoop — e2e với upstream giả lập', () => {
 
   it('round 0 gọi web_search → round 1 trả lời prose', async () => {
     let completionCount = 0;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL) => {
-        const url = String(input);
-        if (url.includes('duckduckgo')) return new Response(SEARCH_FIXTURE, { headers: { 'content-type': 'text/html' } });
-        if (url.includes('/chat/completions')) {
-          completionCount += 1;
-          return completion(
-            completionCount === 1
-              ? 'Để tôi tra giá vàng.\n<tool_call>\n{"name":"web_search","arguments":{"query":"giá vàng hôm nay"}}\n</tool_call>'
-              : 'Giá vàng hôm nay khoảng 92 triệu/lượng theo kết quả tìm kiếm.',
-          );
-        }
-        throw new Error(`unexpected url ${url}`);
-      }),
-    );
+    const fakeFetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('duckduckgo')) return new Response(SEARCH_FIXTURE, { headers: { 'content-type': 'text/html' } });
+      if (url.includes('/chat/completions')) {
+        completionCount += 1;
+        return completion(
+          completionCount === 1
+            ? 'Để tôi tra giá vàng.\n<tool_call>\n{"name":"web_search","arguments":{"query":"giá vàng hôm nay"}}\n</tool_call>'
+            : 'Giá vàng hôm nay khoảng 92 triệu/lượng theo kết quả tìm kiếm.',
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal('fetch', fakeFetch);
+    /* Đường web (web-backend) dùng transport RIÊNG (`__setFetchImpl`) — cùng
+     * hàm giả lập này nên web_search trong lượt giả lập vẫn có kết quả. */
+    __setFetchImpl(fakeFetch as never);
 
     const { events, opts } = makeOpts();
     const result = await runEmulatedLoop(opts);
@@ -168,18 +173,17 @@ describe('runEmulatedLoop — e2e với upstream giả lập', () => {
   it('cạn ngân sách → round cuối ép prose, prompt có nhắc TOOL_RESULT', async () => {
     let completionCount = 0;
     let lastBody = '';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes('/chat/completions')) {
-          completionCount += 1;
-          lastBody = String(init?.body ?? '');
-          return completion('<tool_call>{"name":"web_search","arguments":{"query":"ty-gia"}}</tool_call>');
-        }
-        throw new Error(`unexpected url ${url}`);
-      }),
-    );
+    const fakeFetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/chat/completions')) {
+        completionCount += 1;
+        lastBody = String(init?.body ?? '');
+        return completion('<tool_call>{"name":"web_search","arguments":{"query":"ty-gia"}}</tool_call>');
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal('fetch', fakeFetch);
+    __setFetchImpl(fakeFetch as never);
 
     const { events, opts } = makeOpts({ maxRounds: 3 });
     await runEmulatedLoop(opts);
@@ -226,28 +230,27 @@ describe('runEmulatedLoop — e2e với upstream giả lập', () => {
     };
 
     let completionCount = 0;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL) => {
-        const url = String(input);
-        if (url.includes('duckduckgo')) {
-          return tracked(
-            () => new Response(SEARCH_FIXTURE, { headers: { 'content-type': 'text/html' } }),
-          );
-        }
-        if (url.includes('/chat/completions')) {
-          completionCount += 1;
-          return completionCount === 1
-            ? completion(
-              'Tra 2 nguồn.\n' +
-              '<tool_call>{"name":"web_search","arguments":{"query":"vàng"}}</tool_call>\n' +
-              '<tool_call>{"name":"web_search","arguments":{"query":"tỷ giá"}}</tool_call>',
-            )
-            : completion('Xong: đã có đủ 2 nguồn.');
-        }
-        throw new Error(`unexpected url ${url}`);
-      }),
-    );
+    const fakeFetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('duckduckgo')) {
+        return tracked(
+          () => new Response(SEARCH_FIXTURE, { headers: { 'content-type': 'text/html' } }),
+        );
+      }
+      if (url.includes('/chat/completions')) {
+        completionCount += 1;
+        return completionCount === 1
+          ? completion(
+            'Tra 2 nguồn.\n' +
+            '<tool_call>{"name":"web_search","arguments":{"query":"vàng"}}</tool_call>\n' +
+            '<tool_call>{"name":"web_search","arguments":{"query":"tỷ giá"}}</tool_call>',
+          )
+          : completion('Xong: đã có đủ 2 nguồn.');
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal('fetch', fakeFetch);
+    __setFetchImpl(fakeFetch as never);
 
     const { events, opts } = makeOpts({ maxRounds: 3 });
     const started = Date.now();

@@ -7,6 +7,7 @@ import {
   searchWeb,
   shouldTryArchive,
   __clearSearchCache,
+  __setFetchImpl,
 } from '@/lib/web-backend';
 
 const DDG_LITE_HTML =
@@ -26,6 +27,7 @@ function htmlRes(body: string, status = 200): Response {
 beforeEach(() => __clearSearchCache());
 afterEach(() => {
   vi.unstubAllGlobals();
+  __setFetchImpl(null);
   __clearSearchCache();
 });
 
@@ -34,7 +36,7 @@ describe('searchWeb', () => {
      (port từ Firecrawl) đo được 200 + kết quả, trong khi dạng cũ nhận 202. */
   it('engine html sống → trả hits từ html', async () => {
     const spy = vi.fn(async (_url: string) => htmlRes(DDG_LITE_HTML));
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
     const r = await searchWeb('test');
     expect(r.engine).toBe('ddg-html');
     expect(r.hits[0].title).toBe('Kết quả A');
@@ -45,20 +47,19 @@ describe('searchWeb', () => {
     const spy = vi.fn(async (url: string) =>
       String(url).includes('html.') ? htmlRes(DDG_HTML_EMPTY) : htmlRes(DDG_LITE_HTML),
     );
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
     const r = await searchWeb('test');
     expect(r.engine).toBe('ddg-lite');
   });
 
   it('HTTP 202 = bị chặn, KHÔNG phải "không có kết quả"', async () => {
     // Đây là phản hồi thật của DDG khi IP bị gắn cờ: 202 + trang rỗng.
-    vi.stubGlobal('fetch', vi.fn(async () => htmlRes('<html></html>', 202)));
+    __setFetchImpl(vi.fn(async () => htmlRes('<html></html>', 202)));
     await expect(searchWeb('x')).rejects.toMatchObject({ code: 'SEARCH_UNAVAILABLE' });
   });
 
   it('trang anomaly-modal của DDG được nhận là bị chặn', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async () => htmlRes('<div class="anomaly-modal__modal">bot?</div>')),
     );
     await expect(searchWeb('x')).rejects.toMatchObject({ code: 'SEARCH_UNAVAILABLE' });
@@ -66,7 +67,7 @@ describe('searchWeb', () => {
 
   it('kết quả được cache — truy vấn lặp không gọi lại engine', async () => {
     const spy = vi.fn(async (_url: string) => htmlRes(DDG_LITE_HTML));
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
     await searchWeb('lặp lại');
     const callsAfterFirst = spy.mock.calls.length;
     await searchWeb('lặp lại');
@@ -74,8 +75,7 @@ describe('searchWeb', () => {
   });
 
   it('cả hai hỏng → WebOpError SEARCH_UNAVAILABLE', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async () => htmlRes('<html>blocked</html>')),
     );
     await expect(searchWeb('x')).rejects.toMatchObject({
@@ -101,8 +101,7 @@ describe('capHits', () => {
 
 describe('fetchReadablePage', () => {
   it('HTML hợp lệ → trích title + text', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async () =>
         htmlRes('<html><head><title>Trang thử</title></head><main><p>Nội dung chính đáng giá.</p></main></html>'),
       ),
@@ -114,8 +113,7 @@ describe('fetchReadablePage', () => {
   });
 
   it('content-type không đọc được → 415 WEB_UNSUPPORTED_CONTENT_TYPE', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async () => new Response('binary', { status: 200, headers: { 'content-type': 'image/png' } })),
     );
     await expect(fetchReadablePage('https://example.com/img.png')).rejects.toMatchObject({
@@ -126,7 +124,7 @@ describe('fetchReadablePage', () => {
 
   it('URL private/SSRF bị chặn trước khi fetch', async () => {
     const spy = vi.fn();
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
     await expect(fetchReadablePage('http://127.0.0.1:8080/admin')).rejects.toBeInstanceOf(WebOpError);
     expect(spy).not.toHaveBeenCalled();
   });
@@ -160,7 +158,7 @@ describe('archive fallback (cứu link chết 404/410)', () => {
       if (String(url).startsWith('https://example.com/chet')) return htmlRes('<html></html>', 404);
       return htmlRes('<html><body><p>Nội dung lưu trữ</p></body></html>');
     });
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
     const page = await fetchReadablePage('https://example.com/chet');
     expect(spy).toHaveBeenCalledTimes(2);
     expect(String(spy.mock.calls[1][0])).toContain('web.archive.org');
@@ -170,7 +168,7 @@ describe('archive fallback (cứu link chết 404/410)', () => {
   });
 
   it('archive cũng chết → ném lại lỗi GỐC (upstream 404), không phải lỗi archive', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => htmlRes('<html></html>', 404)));
+    __setFetchImpl(vi.fn(async () => htmlRes('<html></html>', 404)));
     await expect(fetchReadablePage('https://example.com/chet')).rejects.toMatchObject({
       code: 'WEB_UPSTREAM_STATUS',
       upstreamStatus: 404,
@@ -179,17 +177,17 @@ describe('archive fallback (cứu link chết 404/410)', () => {
 
   it('trang 403/500 hoặc trang sống → KHÔNG đụng archive', async () => {
     const spy403 = vi.fn(async () => htmlRes('<html></html>', 403));
-    vi.stubGlobal('fetch', spy403);
+    __setFetchImpl(spy403);
     await expect(fetchReadablePage('https://example.com/x')).rejects.toBeTruthy();
     expect(spy403).toHaveBeenCalledTimes(1);
 
     const spy500 = vi.fn(async () => htmlRes('<html></html>', 500));
-    vi.stubGlobal('fetch', spy500);
+    __setFetchImpl(spy500);
     await expect(fetchReadablePage('https://example.com/x')).rejects.toBeTruthy();
     expect(spy500).toHaveBeenCalledTimes(1);
 
     const spyOk = vi.fn(async () => htmlRes('<html><body><p>Trang sống</p></body></html>'));
-    vi.stubGlobal('fetch', spyOk);
+    __setFetchImpl(spyOk);
     await fetchReadablePage('https://example.com/song');
     expect(spyOk).toHaveBeenCalledTimes(1);
   });

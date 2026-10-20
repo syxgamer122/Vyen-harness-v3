@@ -62,6 +62,25 @@ describe('bí mật không nằm trong IndexedDB', () => {
 
     expect(JSON.stringify(out), 'khoá sâu 15 tầng cũng không được lọt').not.toContain(KHOA);
   });
+
+  it('THAM SỐ tool (args) cũng phải được che — không chỉ kết quả', () => {
+    /* Verifier 2026-10-20 bắt được: trước đây chỉ `result` được che, còn
+     * `args` lưu THÔ. Kịch bản thật: agent đọc `.env` rồi `fs_write` sang
+     * `config/.env.local` ⇒ `args.content` chứa khoá ⇒ khoá nằm nguyên trong
+     * IndexedDB (và trong file sao lưu xuất ra). */
+    const out = sanitizeToolInvocations([
+      {
+        toolCallId: 'call_4',
+        toolName: 'fs_write',
+        state: 'result',
+        args: { path: 'config/.env.local', content: `ANTHROPIC_API_KEY=${KHOA}` },
+        result: { ok: true },
+      },
+    ]);
+
+    expect(JSON.stringify(out), 'khoá trong args không được lọt vào DB').not.toContain(KHOA);
+    expect(JSON.stringify(out)).toContain('config/.env.local');
+  });
 });
 
 describe('bí mật không nằm trong file sao lưu xuất ra', () => {
@@ -91,5 +110,57 @@ describe('bí mật không nằm trong file sao lưu xuất ra', () => {
     const exported = backup.sanitizeMessageForExport(msg);
     expect(JSON.stringify(exported), 'khoá KHÔNG được nằm trong file sao lưu').not.toContain(KHOA);
     expect(exported.content, 'nội dung tin nhắn của người dùng giữ nguyên').toBe('Đã đọc file .env');
+  });
+
+  it('bản xuất che được bí mật lồng SÂU (không có trần độ sâu)', () => {
+    /* Verifier 2026-10-20: `redactSecretsDeep` dừng ở
+     * `DEEP_REDACT_MAX_DEPTH = 12` ⇒ kết quả lồng ≥ 12 cấp VẪN còn khoá trong
+     * file xuất ra. Che trên CHUỖI JSON đã serialize thì không có trần. */
+    let goc: Record<string, unknown> = { content: `token=${KHOA}` };
+    for (let i = 0; i < 15; i += 1) goc = { [`k${i}`]: goc };
+
+    const msg: StoredMessage = {
+      id: 'm2',
+      chatId: 'c1',
+      role: 'assistant',
+      content: 'x',
+      parentId: '__ROOT__',
+      seq: 1,
+      branchOrder: 0,
+      branchTieBreaker: 'm2',
+      createdAt: 1,
+      toolInvocations: [
+        { toolCallId: 'call_2', toolName: 'mcp', state: 'result', result: goc },
+      ],
+    };
+
+    const exported = backup.sanitizeMessageForExport(msg);
+    expect(JSON.stringify(exported), 'khoá lồng sâu không được lọt vào file sao lưu').not.toContain(KHOA);
+  });
+
+  it('bản xuất che được khoá nằm trong THAM SỐ tool', () => {
+    const msg: StoredMessage = {
+      id: 'm3',
+      chatId: 'c1',
+      role: 'assistant',
+      content: 'x',
+      parentId: '__ROOT__',
+      seq: 2,
+      branchOrder: 0,
+      branchTieBreaker: 'm3',
+      createdAt: 1,
+      toolInvocations: [
+        {
+          toolCallId: 'call_3',
+          toolName: 'shell_run',
+          state: 'result',
+          args: { command: `curl -H "Authorization: Bearer ${KHOA}" https://x` },
+          result: { ok: true },
+        },
+      ],
+    };
+
+    const exported = backup.sanitizeMessageForExport(msg);
+    expect(JSON.stringify(exported), 'khoá trong args không được lọt vào file sao lưu').not.toContain(KHOA);
   });
 });

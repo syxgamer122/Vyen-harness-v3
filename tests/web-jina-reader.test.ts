@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchReadablePage, __clearSearchCache } from '@/lib/web-backend';
+import { fetchReadablePage, __clearSearchCache, __setFetchImpl } from '@/lib/web-backend';
 
 const SPA_HTML = '<html><head><title>App</title></head><body><div id="root"></div></body></html>';
 const STATIC_HTML =
@@ -30,14 +30,15 @@ function textRes(body: string, status = 200): Response {
 
 beforeEach(() => __clearSearchCache());
 afterEach(() => {
+  __setFetchImpl(null);
   vi.unstubAllGlobals();
   __clearSearchCache();
 });
 
 describe('fetchReadablePage — Jina Reader là lưới cứu duy nhất', () => {
   it('trang SPA rỗng → Jina render được', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async (url: string) =>
         String(url).startsWith('https://r.jina.ai/') ? textRes(JINA_OK) : htmlRes(SPA_HTML),
       ),
@@ -49,8 +50,8 @@ describe('fetchReadablePage — Jina Reader là lưới cứu duy nhất', () =>
   });
 
   it('Jina hỏng → giữ nguyên lỗi gốc WEB_EMPTY_CONTENT', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async (url: string) =>
         String(url).startsWith('https://r.jina.ai/') ? textRes('', 503) : htmlRes(SPA_HTML),
       ),
@@ -63,8 +64,8 @@ describe('fetchReadablePage — Jina Reader là lưới cứu duy nhất', () =>
 
   it('trang tĩnh bình thường KHÔNG gọi Jina (đường chính vẫn nhanh)', async () => {
     const urls: string[] = [];
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async (url: string) => {
         urls.push(String(url));
         return htmlRes(STATIC_HTML);
@@ -78,7 +79,7 @@ describe('fetchReadablePage — Jina Reader là lưới cứu duy nhất', () =>
 
   it('SSRF guard chặn URL private TRƯỚC khi chạm Jina', async () => {
     const spy = vi.fn();
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
     await expect(fetchReadablePage('http://169.254.169.254/latest/meta-data')).rejects.toMatchObject(
       { code: 'WEB_URL_BLOCKED' },
     );

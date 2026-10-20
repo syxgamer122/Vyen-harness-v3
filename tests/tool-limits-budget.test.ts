@@ -5,6 +5,7 @@
  *  - trần kết quả tool áp cho CẢ hai đường native/emulated
  */
 
+import { __setFetchImpl } from '@/lib/web-backend';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAgentTools,
@@ -36,14 +37,15 @@ import {
 
 beforeEach(() => __clearAllToolCallBudgets());
 afterEach(() => {
+  __setFetchImpl(null);
   vi.unstubAllGlobals();
   __clearAllToolCallBudgets();
 });
 
 describe('ngân sách gọi tool sống xuyên request', () => {
   it('gọi trùng ở request sau VẪN chạy thật (không còn dedupe chặn)', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async () =>
         new Response('<a class="result-link" href="https://e.com/a">T</a>', {
           headers: { 'content-type': 'text/html' },
@@ -68,8 +70,8 @@ describe('ngân sách gọi tool sống xuyên request', () => {
   });
 
   it('hội thoại KHÁC nhau không ảnh hưởng ngân sách của nhau', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async () =>
         new Response('<a class="result-link" href="https://e.com/a">T</a>', {
           headers: { 'content-type': 'text/html' },
@@ -121,8 +123,8 @@ describe('ngân sách gọi tool sống xuyên request', () => {
 
 describe('provenance tích lũy qua các lượt', () => {
   it('host từ web_search lượt trước vẫn cho phép web_fetch ở request sau', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async (url: string) =>
         String(url).includes('duck') || String(url).includes('search')
           ? new Response('<a class="result-link" href="https://trusted.com/a">T</a>', {
@@ -211,8 +213,8 @@ describe('trần kết quả tool', () => {
 
   it('web_fetch nội dung khổng lồ bị cắt nhưng GIỮ shape (url/title còn nguyên)', async () => {
     const huge = 'x'.repeat(TOOL_RESULT_MAX_CHARS * 2);
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async () =>
         new Response(`<html><body><article>${huge}</article></body></html>`, {
           headers: { 'content-type': 'text/html' },
@@ -309,8 +311,8 @@ describe('doom-loop detector', () => {
 
 describe('doom-loop qua guarded() — integration', () => {
   it(`lặp ${DOOM_LOOP_THRESHOLD} lần → nhận steering message thay vì kết quả`, async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async () =>
         new Response('<a class="result-link" href="https://e.com/a">T</a>', {
           headers: { 'content-type': 'text/html' },
@@ -335,8 +337,8 @@ describe('doom-loop qua guarded() — integration', () => {
   });
 
   it('call khác xen vào → doom-loop reset, call gốc chạy lại bình thường', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
+      
       vi.fn(async () =>
         new Response('<a class="result-link" href="https://e.com/a">T</a>', {
           headers: { 'content-type': 'text/html' },

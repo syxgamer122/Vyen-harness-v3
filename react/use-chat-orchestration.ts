@@ -16,6 +16,7 @@ import { syncActiveProviderSnapshot } from '@/lib/providers';
 import {
   db,
   appendMessage,
+  deleteChatCascade,
   type StoredMessage,
   type RecipeRecord,
 } from '@/lib/db';
@@ -5510,28 +5511,19 @@ export function useChatOrchestration(options?: UseChatOrchestrationOptions) {
       pendingAssistantForkRef.current = null;
 
       if (currentChatId) {
-        await db.transaction(
-          'rw',
-          db.messages,
-          db.chats,
-          async () => {
-            /**
-             * Đây là thao tác xóa toàn bộ chat do người dùng yêu cầu,
-             * nên được phép xóa tất cả message của chat.
-             *
-             * Quy tắc "không xóa message" chỉ áp dụng cho
-             * Edit và Regenerate.
-             */
-            await db.messages
-              .where('chatId')
-              .equals(currentChatId)
-              .delete();
-
-            await db.chats.delete(
-              currentChatId,
-            );
-          },
-        );
+        /* Dùng `deleteChatCascade` (đã có sẵn) thay vì xoá tay.
+         *
+         * Verifier 2026-10-20 bắt được lỗ hổng thật: bản xoá tay ở đây chỉ
+         * xoá `messages` + `chats`, KHÔNG đụng `wsSnapshots` ⇒ ảnh chụp
+         * workspace của chat bị xoá còn nằm lại (mồ côi). Sau đó người dùng
+         * nạp lại một file sao lưu có đúng `chatId` đó (chế độ `merge` — mặc
+         * định) ⇒ chat được tạo lại ⇒ nút "Hoàn tác thay đổi của AI" thấy
+         * ảnh chụp cũ ⇒ bấm là **nội dung file CŨ được ghi đè lên đĩa**.
+         *
+         * `deleteChatCascade` xoá cả ba bảng trong MỘT transaction ⇒ không còn
+         * đường xoá chat nào bỏ sót ảnh chụp.
+         */
+        await deleteChatCascade(currentChatId);
       }
 
       revokeObjectUrls(

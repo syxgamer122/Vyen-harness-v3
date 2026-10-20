@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchReadablePage } from '@/lib/web-backend';
+import { fetchReadablePage, __setFetchImpl } from '@/lib/web-backend';
 
 const SPA_HTML = '<html><head><title>App</title></head><body><div id="root"></div></body></html>';
 const STATIC_HTML =
@@ -27,14 +27,17 @@ function textRes(body: string, status = 200): Response {
   return new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  __setFetchImpl(null);
+});
 
 describe('fetchReadablePage — fallback Jina Reader', () => {
   it('trang SPA rỗng → dùng Reader và lấy được nội dung', async () => {
     const spy = vi.fn(async (url: string) =>
       String(url).startsWith('https://r.jina.ai/') ? textRes(JINA_RESPONSE) : htmlRes(SPA_HTML),
     );
-    vi.stubGlobal('fetch', spy);
+    __setFetchImpl(spy);
 
     const page = await fetchReadablePage('https://spa.example/');
     expect(page.title).toBe('Trang SPA');
@@ -46,8 +49,7 @@ describe('fetchReadablePage — fallback Jina Reader', () => {
 
   it('trang tĩnh bình thường KHÔNG gọi Reader (đường chính vẫn nhanh)', async () => {
     const urls: string[] = [];
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async (url: string) => {
         urls.push(String(url));
         return htmlRes(STATIC_HTML);
@@ -60,8 +62,7 @@ describe('fetchReadablePage — fallback Jina Reader', () => {
   });
 
   it('Reader cũng hỏng → giữ nguyên lỗi gốc WEB_EMPTY_CONTENT', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async (url: string) =>
         String(url).startsWith('https://r.jina.ai/') ? textRes('', 503) : htmlRes(SPA_HTML),
       ),
@@ -72,8 +73,7 @@ describe('fetchReadablePage — fallback Jina Reader', () => {
   });
 
   it('Reader ném lỗi mạng → không làm vỡ lượt, vẫn báo lỗi gốc', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async (url: string) => {
         if (String(url).startsWith('https://r.jina.ai/')) throw new Error('network down');
         return htmlRes(SPA_HTML);
@@ -85,8 +85,7 @@ describe('fetchReadablePage — fallback Jina Reader', () => {
   });
 
   it('Reader trả rỗng sau header → coi như thất bại', async () => {
-    vi.stubGlobal(
-      'fetch',
+    __setFetchImpl(
       vi.fn(async (url: string) =>
         String(url).startsWith('https://r.jina.ai/')
           ? textRes('Title: X\n\nMarkdown Content:\n   ')
