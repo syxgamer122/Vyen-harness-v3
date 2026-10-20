@@ -89,6 +89,30 @@ export function assertFetchableIp(ip: string): UrlCheckResult {
   return { ok: true, url: '' as unknown as URL };
 }
 
+/**
+ * Kiểm tra **toàn bộ** địa chỉ mà một hostname resolve ra.
+ *
+ * Vì sao cần (đo 2026-10-20): `guardedFetch` trước đây gọi `dns.lookup(host)` KHÔNG
+ * có `{ all: true }` ⇒ chỉ nhận về MỘT địa chỉ ⇒ chỉ kiểm được địa chỉ đó. Một
+ * domain có cả A record công khai lẫn A record riêng (127.0.0.1 / 10.x /
+ * 169.254.169.254) lọt nếu resolver trả bản công khai trước ⇒ server tự fetch
+ * vào mạng nội bộ.
+ *
+ * Luật: **bất kỳ** địa chỉ nào là IP riêng ⇒ chặn cả danh sách.
+ *
+ * Rủi ro còn lại (đã biết, không che): đổi DNS giữa lúc kiểm và lúc nối
+ * (rebinding) vẫn lọt được vì `fetch` tự resolve lần hai. Chặn được phần xác
+ * định (domain nhiều A record) bằng hàm này.
+ */
+export function assertFetchableIps(ips: readonly string[]): UrlCheckResult {
+  if (!ips.length) return { ok: false, error: 'Không resolve được IP.' };
+  for (const ip of ips) {
+    const kq = assertFetchableIp(ip);
+    if (!kq.ok) return kq;
+  }
+  return { ok: true, url: '' as unknown as URL };
+}
+
 export function assertFetchableUrl(raw: string): UrlCheckResult {
   const trimmed = (raw ?? '').trim();
   let url: URL;

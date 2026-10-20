@@ -9,7 +9,7 @@
  * Toán nhẹ (fetch + regex), không DOM parser — cùng triết lý với lib/web-extract.
  */
 
-import { assertFetchableUrl, assertFetchableIp } from '@/lib/web-url-guard';
+import { assertFetchableUrl, assertFetchableIps } from '@/lib/web-url-guard';
 import {
   capText,
   extractReadableText,
@@ -43,14 +43,22 @@ const MAX_REDIRECTS = 4;
 /**
  * PERF: Cache DNS lookup function để tránh dynamic import mỗi lần fetch.
  * Edge runtime không có node:dns → cachedDnsLookup = null, check một lần.
+ *
+ * Kiểu gọi: `lookup(hostname, { all: true })` trả về **mảng** địa chỉ (cần kiểm
+ * TẤT CẢ — xem `guardedFetch`), còn gọi không có `{all}` trả về một địa chỉ.
+ * Vì overload của `node:dns` rười việc này, ta chuẩn hoá về một hình duy nhất.
  */
-let cachedDnsLookup: ((hostname: string) => Promise<{ address: string }>) | null | undefined =
-  undefined;
+type DnsLookupFn = (
+  hostname: string,
+  options?: { all?: boolean },
+) => Promise<{ address: string }[] | { address: string }>;
+
+let cachedDnsLookup: DnsLookupFn | null | undefined = undefined;
 async function getDnsLookup() {
   if (cachedDnsLookup !== undefined) return cachedDnsLookup;
   try {
     const dns = await import('node:dns/promises');
-    cachedDnsLookup = dns.lookup;
+    cachedDnsLookup = dns.lookup as unknown as DnsLookupFn;
   } catch {
     cachedDnsLookup = null; // Edge runtime hoặc môi trường không hỗ trợ
   }
@@ -152,16 +160,29 @@ export async function guardedFetch(
     if (!trusted) {
       const check = assertFetchableUrl(current);
       if (!check.ok) throw new WebOpError(check.error, 400, 'WEB_URL_BLOCKED');
-      // FIX #1: Chặn DNS rebinding - hostname public nhưng DNS trả về IP private.
-      // assertFetchableUrl chỉ kiểm tra hostname string; fetch() resolve DNS độc lập
-      // nên evil.example.com có thể trỏ về 127.0.0.1/169.254.x.x lúc TCP connect.
+      // Chặn hostname resolve về IP RIÊNG — kiểm **TOÀN BỘ** địa chỉ.
+      //
+      // `assertFetchableUrl` chỉ soi hostname string; `fetch()` resolve DNS
+      // độc lập nên hostname public vẫn có thể trỏ về 127.0.0.1/169.254.x.x
+      // lúc TCP connect.
+      //
+      // Trước đây chỉ kiểm MỘT địa chỉ (`dns.lookup` không có `{all:true}`) ⇒
+      // domain có cả A record công khai lẫn A record riêng lọt nếu resolver
+      // trả bản công khai trước. Nay kiểm tất cả ⇒ chặn được phần xác định.
+      //
+      // RỦI RO CÒN LẠI (không che): đổi DNS giữa lúc kiểm và lúc nối
+      // (rebinding) vẫn lọt, vì `fetch` tự resolve lần hai. Cần ghim IP thì
+      // phải dùng dispatcher của undici — nằm ngoài phạm vi lượt này.
       // PERF: Dùng cached DNS lookup thay vì dynamic import mỗi lần fetch.
       try {
         const dnsLookup = await getDnsLookup();
         if (dnsLookup) {
           const hostname = new URL(current).hostname;
-          const resolved = await dnsLookup(hostname);
-          const ipCheck = assertFetchableIp(resolved.address);
+          const resolved = await dnsLookup(hostname, { all: true });
+          const addresses = Array.isArray(resolved)
+            ? resolved.map((r) => r.address)
+            : [resolved.address];
+          const ipCheck = assertFetchableIps(addresses);
           if (!ipCheck.ok) throw new WebOpError(ipCheck.error, 400, 'WEB_URL_BLOCKED');
         }
         // dnsLookup === null → Edge runtime, bỏ qua gracefully (đã cache)
