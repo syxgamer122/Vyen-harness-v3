@@ -31,7 +31,14 @@
  * hụt. Quét cả cây, bỏ qua thư mục phụ thuộc và thư mục sinh ra.
  */
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { CORE_ENTRIES } from '@/scripts/cli-migration/import-graph';
 
@@ -80,6 +87,24 @@ const TS_EXPECT = '@ts-expect' + '-error';
  */
 const NHAN_BOM = 'nguồn có BOM';
 
+/**
+ * Tiền tố của file TẠM mà test khác sinh ra rồi xoá ngay.
+ *
+ * ============ VÌ SAO PHẢI CÓ ============
+ *
+ * `tests/cli-migration-scan.test.ts` tạo `cli/.probe-import-db.ts` để chứng minh
+ * quét thật sự soi file trong `cli/`, rồi xoá trong `finally`. Nhưng file đó
+ * **tồn tại trong lúc** test khác chạy — còn guard này liệt kê `cli/` ở một
+ * thời điểm bất kỳ. Đo 2026-10-20: chạy cả suite (246 file) ⇒ ĐỎ 1 test với lý
+ * do `cli/.probe-import-db.ts` chưa khai trong CORE_ENTRIES; chạy riêng file này
+ * ⇒ xanh. ⇒ **race theo thời gian**, và nó làm nền đỏ trước mỗi lượt làm việc.
+ *
+ * Cách sửa: file tạm phải có tên riêng để guard bỏ qua — `.probe-`. Không nới
+ * rộng hơn (mọi tên bắt đầu bằng `.`) vì khi đó chỉ cần đặt tên file là né
+ * được guard.
+ */
+const TIEN_THO_FILE_TAM = '.probe-';
+
 /** Duyệt cây, bỏ qua thư mục phụ thuộc. */
 function duyet(d: string, ra: string[] = []): string[] {
   let entries: { name: string; isDirectory(): boolean }[];
@@ -92,7 +117,7 @@ function duyet(d: string, ra: string[] = []): string[] {
     if (e.isDirectory()) {
       if (e.name === 'node_modules' || e.name === '.git' || e.name === '.next') continue;
       duyet(path.join(d, e.name), ra);
-    } else if (PHU_MOI.test(e.name)) {
+    } else if (PHU_MOI.test(e.name) && !e.name.startsWith(TIEN_THO_FILE_TAM)) {
       ra.push(path.join(d, e.name));
     }
   }
@@ -310,7 +335,7 @@ describe('CORE_ENTRIES', () => {
     for (const e of CORE_ENTRIES) {
       try {
         if (!statSync(e).isFile()) sai.push(`${e} (không phải file)`);
-        else if (!e.endsWith('.ts')) sai.push(`${e} (không phải .ts)`);
+        else if (!/\.(ts|tsx)$/.test(e)) sai.push(`${e} (không phải .ts/.tsx)`);
       } catch {
         sai.push(`${e} (không tồn tại)`);
       }
@@ -336,5 +361,43 @@ describe('CORE_ENTRIES', () => {
       chuaKhai,
       `file cli/ chưa khai trong CORE_ENTRIES nên nằm ngoài mọi guard: ${chuaKhai.join(', ')}`,
     ).toEqual([]);
+  });
+});
+
+describe('file tạm của test khác (.probe-)', () => {
+  const taoVaXoa = (ten: string, kiem: () => void): void => {
+    const f = path.join(process.cwd(), 'cli', ten);
+    writeFileSync(f, 'export const x = 1;\n', 'utf8');
+    try {
+      kiem();
+    } finally {
+      rmSync(f, { force: true });
+    }
+  };
+
+  /* `duyet` trả đường dẫn theo HĐỆ HÀNH CỦA HỆ ĐIỀU HÀNH (Windows: `\`), còn
+     `CORE_ENTRIES` dùng `/` ⇒ phải chuẩn hoá trước khi so. Không chuẩn hoá thì
+     assert "không chứa" **luôn xanh** vì hai chuỗi khác nhau — tức test xanh vì
+     lý do sai. Đo 2026-10-21 (lúc gộp với bản `duyet` mới). */
+  const duyetChuanHoa = (): string[] => duyet('cli').map((f) => f.replace(/\\/g, '/'));
+  const trongCli = (ten: string): string => `cli/${ten}`;
+
+  it('BỎ QUA file tạm `.probe-` — nó không phải mã nguồn, đừng đòi khai', () => {
+    taoVaXoa('.probe-tam-thu.ts', () => {
+      expect(duyetChuanHoa()).not.toContain(trongCli('.probe-tam-thu.ts'));
+    });
+  });
+
+  it('KHÔNG bỏ qua file chấm-đầu khác `.probe-` — không nới guard rộng hơn', () => {
+    taoVaXoa('.an-me-thu.ts', () => {
+      expect(duyetChuanHoa()).toContain(trongCli('.an-me-thu.ts'));
+    });
+  });
+
+  it('file thường trong `cli/` vẫn bị đòi khai — guard còn răng', () => {
+    taoVaXoa('probe-thuong.ts', () => {
+      const chuaKhai = duyetChuanHoa().filter((f) => !CORE_ENTRIES.includes(f));
+      expect(chuaKhai).toContain(trongCli('probe-thuong.ts'));
+    });
   });
 });
