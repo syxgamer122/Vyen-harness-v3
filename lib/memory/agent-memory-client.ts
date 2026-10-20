@@ -225,11 +225,3 @@ export function parseMemoryMarkdown(text: string): Array<{ id: string | null; da
   flush();
   return out;
 }
-
-/** Index gửi lên server mỗi lượt — scope-aware. */
-export async function buildInjectableIndex(workspaceKey: string): Promise<string> {
-  const all = await listAgentMemories();
-  const scoped = memoriesForWorkspace(all, workspaceKey);
-  const { buildMemoryIndexBlock } = await import('@/lib/memory/agent-memory');
-  return buildMemoryIndexBlock(scoped).block;
-}

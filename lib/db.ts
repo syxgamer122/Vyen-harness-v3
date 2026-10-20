@@ -1013,14 +1013,6 @@ export async function addMemory(rawText: string): Promise<StoredMemory | null> {
   return record;
 }
 
-export async function deleteMemory(id: string): Promise<void> {
-  await db.memories.delete(id);
-}
-
-export async function clearMemories(): Promise<void> {
-  await db.memories.clear();
-}
-
 /* ------------------------------------------------------------------ */
 /* Allocator ATOMIC — mọi lệnh chèn message PHẢI đi qua đây            */
 /* ------------------------------------------------------------------ */

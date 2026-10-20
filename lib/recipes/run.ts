@@ -149,13 +149,6 @@ export function pickSettings(s: RecipeSettings | undefined): Partial<RecipeSetti
   return out;
 }
 
-/** Danh sách tham số cần hỏi theo thứ tự khai báo — cho form UI. */
-export function parametersNeedingInput(
-  parameters: readonly RecipeParameter[] | undefined,
-): RecipeParameter[] {
-  return (parameters ?? []).filter((p) => p.requirement !== 'optional' || p.default === undefined);
-}
-
 /**
  * Bọc giá trị tham số vào user message khi requirement = user_prompt —
  * người dùng nhập lúc Run, giá trị được dán rõ ràng vào tin nhắn để agent

@@ -59,23 +59,6 @@ export async function listMcpTools(): Promise<VyenMcpToolInfo[]> {
   }
 }
 
-export async function getMcpStatus(): Promise<{
-  servers: VyenMcpServerStatus[];
-  tools: number;
-}> {
-  const bridge = mcp();
-  if (!bridge) return { servers: [], tools: 0 };
-  try {
-    const status = await bridge.getStatus();
-    return {
-      servers: Array.isArray(status?.servers) ? status.servers : [],
-      tools: typeof status?.tools === 'number' ? status.tools : 0,
-    };
-  } catch {
-    return { servers: [], tools: 0 };
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* Ghi / thực thi (ném lỗi có thông điệp)                              */
 /* ------------------------------------------------------------------ */
@@ -102,10 +85,6 @@ export async function removeMcpServer(id: string): Promise<void> {
 
 export async function reconnectMcpServer(id: string): Promise<VyenMcpServerStatus> {
   return requireMcp().reconnect(id);
-}
-
-export async function updateMcpConfig(servers: VyenMcpServerConfig[]): Promise<void> {
-  await requireMcp().updateConfig(servers);
 }
 
 export async function setMcpExposeMode(id: string, mode: 'full' | 'proxy'): Promise<void> {

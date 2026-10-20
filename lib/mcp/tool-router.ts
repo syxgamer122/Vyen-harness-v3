@@ -340,8 +340,6 @@ export function selectActiveTools(
 /* Meta-tools Defs (AI SDK format)                                    */
 /* ------------------------------------------------------------------ */
 
-export const META_TOOL_NAMES = new Set(['tools_search', 'tools_load']);
-
 export const TOOLS_SEARCH_DEF = tool({
   description:
     'Tìm kiếm công cụ trong danh mục đầy đủ (native tools + tất cả MCP servers). ' +
