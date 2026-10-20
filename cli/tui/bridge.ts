@@ -37,6 +37,21 @@ export interface KeyInputLike {
   off(event: 'keypress', cb: (k: { name?: string }) => void): unknown;
 }
 
+/**
+ * Kết quả tool có phải LỖI không?
+ *
+ * Wrapper của CLI đổi lỗi thành `{ok:false,error}` để **model** đọc được lý do
+ * ⇒ lỗi vẫn đi qua part `tool-result` như thành công. Không kiểm `ok` thì dòng
+ * tool lỗi hiện dấu tick — người dùng tưởng đã ghi được file.
+ */
+function ketQuaLoi(resultado: unknown): boolean {
+  return (
+    typeof resultado === 'object' &&
+    resultado !== null &&
+    (resultado as { ok?: unknown }).ok === false
+  );
+}
+
 export interface TuiStoreOptions {
   /** Lịch sử nạp lại từ đĩa — dựng thành block ngay từ đầu. */
   messages: CoreMessage[];
@@ -158,21 +173,37 @@ export function createTuiStore(opts: TuiStoreOptions): TuiStore {
     },
 
     onToolResult(result: ToolResultEvent): void {
+      /* Kết quả lỗi vẫn đi qua `tool-result` (wrapper đổi lỗi thành
+       * `{ok:false,error}` để model đọc được lý do) ⇒ nếu cứ đánh 'ok' thì
+       * dòng tool lỗi sẽ hiện dấu TICK. Bắt được nhờ test kịch bản
+       * end-to-end: từ chối duyệt ⇒ dòng hiện ✓ trong khi thực tế tool đã
+       * hỏng. */
+      const loi = ketQuaLoi(result.result);
       const blocks = state.blocks.map((b) =>
-        b.kind === 'tool' && b.id === result.id ? { ...b, status: 'ok' as const } : b,
+        b.kind === 'tool' && b.id === result.id ? { ...b, status: loi ? ('error' as const) : ('ok' as const) } : b,
       );
       capNhat({ blocks });
     },
 
     onToolError(name: string, message: string): void {
       /* Không có id trong sự kiện lỗi ⇒ đánh dấu khối `running` gần nhất cùng
-       * tên (đúng như lời gọi đó vừa hỏng). */
+       * tên (đúng như lời gọi đó vừa hỏng); nếu không có (lỗi tới sau khi
+       * kết quả đã về) thì lấy khối cùng tên gần nhất. */
       let viTri = -1;
       for (let i = state.blocks.length - 1; i >= 0; i--) {
         const b = state.blocks[i];
         if (b.kind === 'tool' && b.name === name && b.status === 'running') {
           viTri = i;
           break;
+        }
+      }
+      if (viTri < 0) {
+        for (let i = state.blocks.length - 1; i >= 0; i--) {
+          const b = state.blocks[i];
+          if (b.kind === 'tool' && b.name === name) {
+            viTri = i;
+            break;
+          }
         }
       }
       const blocks = [...state.blocks];

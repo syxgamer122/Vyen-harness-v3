@@ -19,7 +19,7 @@
  * được gọi trực tiếp ⇒ tầng nối test được.
  */
 import { describe, expect, it } from 'vitest';
-import { buildReplOptions, docCauHinhGiaLap } from '@/cli/index';
+import { buildReplCore, buildReplOptions, docCauHinhGiaLap } from '@/cli/index';
 import { TaoLichSu } from '@/cli/history';
 
 function deps() {
@@ -45,6 +45,35 @@ describe('buildReplOptions — tầng nối của CLI', () => {
   it('truyền watchInterrupt cho REPL — nếu không thì Esc không làm gì', () => {
     const opts = buildReplOptions(deps());
     expect(typeof opts.watchInterrupt, 'REPL phai nhan watchInterrupt de bat Esc').toBe('function');
+  });
+
+  /* TUI dùng CÙNG cấu hình lõi, chỉ khác adapter đọc/ghi. Nếu hai bên tự chép
+   * danh sách option thì một bên quên một option là hành vi lệch mà không ai
+   * thấy — nên phần lõi phải dựng ở MỘT hàm và test được. */
+  it('buildReplCore không kéo adapter giao diện vào, và giữ đủ phần lõi', () => {
+    /* Một lần `deps()` rồi so — gọi hai lần tạo hai object khác nhau nên `toBe`
+     * (so tham chiếu) sẽ đỏ dù code đúng. */
+    const d = deps();
+    const core = buildReplCore(d);
+    expect('ask' in core).toBe(false);
+    expect('out' in core).toBe(false);
+    expect('note' in core).toBe(false);
+    expect('watchInterrupt' in core).toBe(false);
+    expect('lichSu' in core).toBe(false);
+    expect(core.modelNen).toBe(d.modelNen);
+    expect(core.maxTokens).toBe(2048);
+    expect(core.system).toBe('SYSTEM');
+  });
+
+  it('buildReplOptions = phần lõi + adapter terminal', () => {
+    const d = deps();
+    const opts = buildReplOptions(d);
+    const core = buildReplCore(d);
+    expect(opts.model).toBe(core.model);
+    expect(opts.session).toBe(core.session);
+    expect(typeof opts.ask).toBe('function');
+    expect(typeof opts.out).toBe('function');
+    expect(typeof opts.note).toBe('function');
   });
 
   it('truyền modelNen riêng cho lượt tóm tắt', () => {

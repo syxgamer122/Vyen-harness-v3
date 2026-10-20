@@ -3,45 +3,55 @@
  *
  * ============ VÌ SAO MỘT THƯ MỤC RIÊNG CÓ `package.json` ============
  *
- * `@opentui/core` chỉ nạp được bằng **ESM** (đo 2026-10-20: `require` vào thì
+ * `@opentui/core` chỉ nạp được bằng **ESM** (`require` vào thì
  * `ERR_PACKAGE_PATH_NOT_EXPORTED`; và "Top-level await is currently not supported
  * with the cjs output format"). Mà cả repo này là CommonJS. Nên thư mục này có
  * `package.json` riêng với `{"type":"module"}` — đó là ranh giới duy nhất giữa
  * hai thế giới. Từ CJS, ta gọi vào đây bằng `await import('./tui/entry.tsx')`
  * (chạy động, không phải lúc nạp).
- *
- * ============ TẠI SAO CHỈ CÓ PLACEHOLDER ============
- *
- * Task 2 của plan chỉ cần một cái **thật** để kiểm cổng: TUI mở full-screen
- * trên Windows Terminal thật, bấm Esc thì thoát sạch. Nội dung thật (vòng lặp
- * hội thoại, transcript, cổng duyệt) thay ở Task 8 — và placeholder này sẽ bị
- * xoá hẳn, không giữ lại làm "phần dùng được một phần".
  */
 /** @jsxImportSource @opentui/react */
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
-import { theme } from './theme.ts';
-
-declare global {
-  interface ImportMeta {
-    /**
-     * Node ≥ 24.2: `true` khi module này là **điểm vào của tiến trình**.
-     *
-     * `@types/node` của repo là bản 20 nên chưa khai báo thuộc tính này, mà
-     * runtime là Node 26 ⇒ khai báo tại chỗ, thay vì ép kiểu ở nơi dùng.
-     */
-    readonly main?: boolean;
-  }
-}
+import { useSyncExternalStore } from 'react';
+import type { ReactNode } from 'react';
+import { runRepl } from '../repl.ts';
+import type { ReplOptions } from '../repl.ts';
+import type { ApprovalBroker } from '../approval-broker.ts';
+import { createTuiStore, type TuiStore } from './bridge.ts';
+import { App } from './app.tsx';
 
 export interface TuiCreateOptions {
+  /** Tên thư mục làm việc (đã rút gọn). */
   workspace: string;
+  /** Tên model, hiện ở dòng trạng thái. */
   modelLabel: string;
+  /** Cửa sổ ngữ cảnh — header hiện phần trăm còn lại. */
   windowTokens: number;
+  /** Cổng duyệt tool. */
+  approval: ApprovalBroker;
 }
 
+/** Cấu hình lõi của vòng lặp + ghi chú khởi động. */
+export type TuiRunOptions = Omit<
+  ReplOptions,
+  'ask' | 'out' | 'note' | 'watchInterrupt' | 'lichSu'
+> & {
+  startupNotes: string[];
+};
+
 export interface TuiSession {
-  run(): Promise<void>;
+  /** Chạy vòng lặp hội thoại trên màn hình này. */
+  run(opts: TuiRunOptions): Promise<void>;
+  /**
+   * Dựng màn hình **tĩnh** (không chạy vòng lặp) và chờ Esc.
+   *
+   * Dùng để soi giao diện mà **không cần API key** — lúc đó mới kiểm được
+   * "màu có đúng brand không, layout có vỡ không" mà không tốn một lượt gọi
+   * provider nào.
+   */
+  preview(): Promise<void>;
+  /** Đóng renderer và trả terminal về trạng thái cũ. */
   close(): void;
 }
 
@@ -53,42 +63,109 @@ export interface TuiSession {
  */
 export async function createTui(opts: TuiCreateOptions): Promise<TuiSession> {
   const renderer = await createCliRenderer({ exitOnCtrlC: true });
-  const root = createRoot(renderer);
-  root.render(
-    <box flexDirection="column" width="100%" height="100%" backgroundColor={theme.bg} padding={2}>
-      <text fg={theme.text}>Vyen TUI — {opts.workspace}</text>
-      <text fg={theme.muted}>esc de thoat</text>
-    </box>,
-  );
-
   let daDong = false;
+
   const close = (): void => {
     if (daDong) return;
     daDong = true;
     renderer.destroy();
   };
 
+  const mount = (store: TuiStore): void => {
+    const root = createRoot(renderer);
+    root.render(
+      <AppRoot
+        store={store}
+        workspace={opts.workspace}
+        modelLabel={opts.modelLabel}
+        windowTokens={opts.windowTokens}
+        approval={opts.approval}
+      />,
+    );
+  };
+
   return {
-    /* PLACEHOLDER: chờ Esc rồi thoát. Task 8 thay bằng vòng lặp hội thoại thật. */
-    run: () =>
-      new Promise<void>((resolve) => {
+    async run(core: TuiRunOptions): Promise<void> {
+      const store = createTuiStore({
+        messages: core.session.messages,
+        approval: opts.approval,
+        startupNotes: core.startupNotes,
+        keyInput: renderer.keyInput,
+      });
+      mount(store);
+
+      try {
+        await runRepl({
+          ...core,
+          ask: store.ask,
+          out: store.out,
+          note: store.note,
+          watchInterrupt: store.watchInterrupt,
+          onToolCall: store.onToolCall,
+          onToolResult: store.onToolResult,
+          onToolError: store.onToolError,
+          onUsage: store.onUsage,
+        });
+      } finally {
+        store.close();
+      }
+    },
+
+    async preview(): Promise<void> {
+      const store = createTuiStore({
+        messages: [],
+        approval: opts.approval,
+        startupNotes: ['> day la ban xem truoc (khong co API key)'],
+        keyInput: renderer.keyInput,
+      });
+      mount(store);
+      await new Promise<void>((resolve) => {
         const h = (k: { name?: string }): void => {
-          if (k.name === 'escape') {
-            renderer.keyInput.off('keypress', h);
-            resolve();
-          }
+          if (k.name !== 'escape') return;
+          renderer.keyInput.off('keypress', h);
+          resolve();
         };
         renderer.keyInput.on('keypress', h);
-      }),
+      });
+      store.close();
+    },
+
     close,
   };
 }
 
-/* Chạy trực tiếp để kiểm cổng: `npx tsx cli/tui/entry.tsx` */
-if (import.meta.main) {
-  void (async () => {
-    const t = await createTui({ workspace: 'dev', modelLabel: 'dev', windowTokens: 200_000 });
-    await t.run();
-    t.close();
-  })();
+/**
+ * Gốc React: đọc state của store và vẽ lại khi nó đổi.
+ *
+ * `useSyncExternalStore` là đúng ở đây vì store là nguồn sự thật **bên ngoài**
+ * React (vòng lặp hội thoại ghi vào nó từ lúc này), không phải state của
+ * component.
+ */
+function AppRoot({
+  store,
+  workspace,
+  modelLabel,
+  windowTokens,
+  approval,
+}: {
+  store: TuiStore;
+  workspace: string;
+  modelLabel: string;
+  windowTokens: number;
+  approval: ApprovalBroker;
+}): ReactNode {
+  const state = useSyncExternalStore(store.subscribe, store.snapshot);
+  return (
+    <App
+      workspace={workspace}
+      modelLabel={modelLabel}
+      windowTokens={windowTokens}
+      tokens={state.tokens}
+      blocks={state.blocks}
+      running={state.running}
+      {...(state.approval ? { approval: state.approval } : {})}
+      onSubmit={(line) => store.submit(line)}
+      onApproval={(id, dongY) => approval.traLoi(id, dongY)}
+    />
+  );
 }

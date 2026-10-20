@@ -98,6 +98,16 @@ describe('store TUI', () => {
     ]);
   });
 
+  it('kết quả lỗi (`{ok:false}`) ⇒ khối tool là LỖI, không phải xong', () => {
+    const s = storeGia();
+    s.onToolCall({ id: 'a', name: 'fs_write', args: {} });
+    /* Lỗi tool vẫn đi qua part `tool-result` (wrapper đổi thành `{ok:false}`),
+     * nên nếu cứ đánh 'ok' thì dòng lỗi sẽ hiện dấu tick. */
+    s.onToolResult({ id: 'a', name: 'fs_write', result: { ok: false, error: 'tu choi' } });
+    const tool = s.snapshot().blocks.find((x) => x.kind === 'tool') as { status: string };
+    expect(tool.status).toBe('error');
+  });
+
   it('tool lỗi ⇒ khối đang chạy thành lỗi, kèm note mức "error"', () => {
     const s = storeGia();
     s.onToolCall({ id: 'a', name: 'fs_read', args: {} });

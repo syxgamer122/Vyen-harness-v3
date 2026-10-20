@@ -70,7 +70,7 @@ export function App(props: AppProps): React.ReactNode {
       />
       {/* Hộp duyệt đứng NGAY DƯỚI header — không phải overlay tuyệt đối.
           *
-          * Lý do (đo 2026-10-20): bố cục cột của terminal không cắt hộp con theo
+          * Lý do : bố cục cột của terminal không cắt hộp con theo
           * kiểu web — hộp duyệt nằm cuối cột bị **bóp** mất dòng tiêu đề khi
           * transcript chiếm chỗ. Đặt nó lên trên thì nó luôn hiện đủ, còn
           * transcript là phần co giãn (flexShrink + minHeight 0) nên nhường chỗ

@@ -160,7 +160,12 @@ import { isContextOverflowError } from '@/lib/context-budget';
 import { getKeyLabel } from '@/lib/api-keys';
 import { createNodeHost, buildIpcTools } from '@/lib/tools/ipc-node';
 import { createConsoleApprover, createAutoApprover } from './approve';
-import { buildModelConfigs, createCompactionRunner, statusCodeOf } from './compaction';
+import {
+  buildModelConfigs,
+  createCompactionRunner,
+  statusCodeOf,
+  CLI_DEFAULT_CONTEXT_WINDOW,
+} from './compaction';
 import { runAgentTurn, messagesDaHoanThanh } from './agent-turn';
 import { runTurn } from './emulated';
 import { runRepl, type ReplOptions } from './repl';
@@ -168,6 +173,12 @@ import { openSession } from './session';
 import { buildSystemPrompt, INSTRUCTION_FILES } from './instructions';
 import { TaoLichSu } from './history';
 import { createTerminal } from './terminal';
+import { chooseFrontend } from './tui-gate';
+import { createApprovalBroker } from './approval-broker';
+import type { ApprovalBroker } from './approval-broker';
+/* Kiểu của đảo ESM — chỉ để **type**, nên bị xoá lúc build; không phải import
+ * runtime (đảo ESM chỉ nạp được bằng `import()` động). */
+import type { TuiSession } from './tui/entry.tsx';
 
 /**
  * Bọc trong hàm async thay vì dùng top-level `await`.
@@ -331,8 +342,8 @@ export async function chayMotLuot(opts: {
   }
 }
 
-/** Thứ REPL cần để chạy. */
-export interface ReplDeps {
+/** Thứ REPL cần để chạy — phần KHÔNG phụ thuộc terminal. */
+export interface ReplCoreDeps {
   model: Parameters<typeof runAgentTurn>[0]['model'];
   /** Instance model RIÊNG cho lượt tóm tắt. */
   modelNen: Parameters<typeof runAgentTurn>[0]['model'];
@@ -342,14 +353,64 @@ export interface ReplDeps {
   maxTokens: number;
   windowTokens?: number;
   initial?: string;
-  terminal: ReturnType<typeof createTerminal>;
-  lichSu: TaoLichSu;
   /** Base URL cua provider — khoa cache "model nay che tools". */
   providerBase?: string;
   /** Id model — khoa cache "model nay che tools". */
   modelId?: string;
   /** Ep dung duong gia lap. */
   forceEmulated?: boolean;
+}
+
+/**
+ * Options **lõi** của REPL — không có adapter giao diện nào.
+ *
+ * ============ VÌ SAO TÁCH ============
+ *
+ * TUI dùng **cùng** cấu hình này, chỉ khác ở chỗ đọc/ghi (ô nhập thay cho
+ * readline, màn hình thay cho stdout). Nếu không có hàm dựng lõi thì mỗi bên
+ * sẽ tự chép danh sách option — và một bên quên một option là hành vi lệch mà
+ * không ai thấy.
+ *
+ * ============ VÌ SAO KHÔNG DÙNG `Omit<ReplOptions, ...>` ============
+ *
+ * `Omit` làm `modelNen` thành **tuỳ chọn**, mà `modelNen` là model riêng cho
+ * lượt tóm tắt: thiếu nó thì không nén được context mà **không ai báo lỗi**.
+ * Khai tường minh ở đây giữ được yêu cầu "bắt buộc có".
+ */
+export type ReplCore = {
+  model: Parameters<typeof runAgentTurn>[0]['model'];
+  modelNen: Parameters<typeof runAgentTurn>[0]['model'];
+  tools: ToolSet | undefined;
+  session: ReturnType<typeof openSession>;
+  system: string;
+  maxTokens: number;
+  windowTokens?: number;
+  initial?: string;
+  providerBase?: string;
+  modelId?: string;
+  forceEmulated?: boolean;
+};
+
+export function buildReplCore(deps: ReplCoreDeps): ReplCore {
+  return {
+    model: deps.model,
+    modelNen: deps.modelNen,
+    tools: deps.tools,
+    session: deps.session,
+    system: deps.system,
+    maxTokens: deps.maxTokens,
+    ...(deps.windowTokens !== undefined ? { windowTokens: deps.windowTokens } : {}),
+    ...(deps.initial ? { initial: deps.initial } : {}),
+    ...(deps.providerBase !== undefined ? { providerBase: deps.providerBase } : {}),
+    ...(deps.modelId !== undefined ? { modelId: deps.modelId } : {}),
+    ...(deps.forceEmulated ? { forceEmulated: true } : {}),
+  };
+}
+
+/** Thứ REPL cần để chạy — thêm phần gắn terminal. */
+export interface ReplDeps extends ReplCoreDeps {
+  terminal: ReturnType<typeof createTerminal>;
+  lichSu: TaoLichSu;
 }
 
 /**
@@ -394,21 +455,11 @@ export function docCauHinhGiaLap(
  */
 export function buildReplOptions(deps: ReplDeps): ReplOptions {
   return {
-    model: deps.model,
-    modelNen: deps.modelNen,
-    tools: deps.tools,
-    session: deps.session,
-    system: deps.system,
-    maxTokens: deps.maxTokens,
-    ...(deps.windowTokens !== undefined ? { windowTokens: deps.windowTokens } : {}),
-    ...(deps.initial ? { initial: deps.initial } : {}),
+    ...buildReplCore(deps),
     ask: async () => deps.terminal.hoiDong(deps.lichSu),
     /* Nối phím Esc. Thiếu mối nối này thì Esc chỉ là lời hứa trong header. */
     watchInterrupt: deps.terminal.watchInterrupt,
     lichSu: deps.lichSu,
-    ...(deps.providerBase !== undefined ? { providerBase: deps.providerBase } : {}),
-    ...(deps.modelId !== undefined ? { modelId: deps.modelId } : {}),
-    ...(deps.forceEmulated ? { forceEmulated: true } : {}),
     out: (s) => process.stdout.write(s),
     note: (s) => console.error(s),
   };
@@ -505,38 +556,122 @@ async function main(): Promise<void> {
    * của guard ("không có `rl` thì trả `null`") mô tả tình huống đã không còn
    * tồn tại: kiểu tài liệu chết theo AGENTS.md §4.
    */
-  const terminal = createTerminal({ stdin: process.stdin as never });
+  /* ---- Context window: đọc Ở ĐÂY, trước khi dựng TUI ----
+   *
+   * Header TUI hiện phần trăm ngữ cảnh còn lại ⇒ số này phải có **trước** khi
+   * TUI mount. Đọc sau thì TUI đã lên rồi mới biết ⇒ phải dựng lại cả màn hình.
+   *
+   * Sai số thì thoát ngay (exit 2) — và lúc này terminal còn sạch, chưa vào
+   * alternate screen, nên thông báo lỗi nhìn thấy được bình thường. */
+  const rawWindow = process.env.VYEN_CONTEXT_WINDOW;
+  let windowTokens: number | undefined;
+  if (rawWindow) {
+    const n = Number(rawWindow);
+    if (!Number.isInteger(n) || n <= 0) {
+      console.error(`VYEN_CONTEXT_WINDOW khong hop le: ${rawWindow} (can la so nguyen duong)`);
+      process.exit(2);
+    }
+    windowTokens = n;
+  }
+
+  /* ---- Chọn giao diện: TUI hay REPL cũ ----
+   *
+   * `chooseFrontend` là hàm thuần (test được ở `tests/tui-gate.test.ts`): `-p`,
+   * pipe, `VYEN_PLAIN=1` và Node quá cũ đều rơi về REPL cũ, y nguyên.
+   */
+  const mode = chooseFrontend({
+    print: args.print,
+    stdinIsTTY: process.stdin.isTTY,
+    stdoutIsTTY: process.stdout.isTTY,
+    env: { VYEN_PLAIN: process.env.VYEN_PLAIN },
+    nodeVersion: process.versions.node,
+  });
+
+  /* Ghi chú lúc khởi động. Ở TUI, chúng hiện **trong transcript** (vào
+   * alternate screen thì in ra stderr sẽ bị nuốt, và người dùng sẽ không biết
+   * vì sao tool không bật được); ở REPL cũ thì in ra stderr như cũ. */
+  const startupNotes: string[] = [];
+
+  let tui: TuiSession | undefined;
+  let broker: ApprovalBroker | undefined;
+  if (mode.kind === 'tui') {
+    broker = createApprovalBroker();
+    try {
+      /* Import ĐỘNG — vì `@opentui/core` chỉ nạp được bằng ESM, mà repo này là
+       * CommonJS. Đảo ESM nằm ở `cli/tui/` (có `package.json` riêng). */
+      const mod = await import('./tui/entry.tsx');
+      tui = await mod.createTui({
+        workspace: path.basename(workspace),
+        modelLabel: model,
+        windowTokens: windowTokens ?? CLI_DEFAULT_CONTEXT_WINDOW,
+        approval: broker,
+      });
+    } catch (e) {
+      /* Chưa dựng tool ⇒ rơi về REPL cũ được trọn vẹn. */
+      console.error(
+        `> khong mo duoc TUI: ${e instanceof Error ? e.message : String(e)} — dung REPL thuong.`,
+      );
+      tui = undefined;
+      broker = undefined;
+    }
+  }
+  const dungTui = tui !== undefined;
+
+  const ghiChu = (s: string): void => {
+    if (dungTui) startupNotes.push(s);
+    else console.error(s);
+  };
+
+  /* Terminal readline chỉ tồn tại ở đường PLAIN. Ở TUI, OpenTUI đang giữ stdin
+   * — hai bên cùng đọc stdin là hai bên cùng tranh, và `ask` của REPL sẽ nuốt
+   * phím của TUI. */
+  let terminal: ReturnType<typeof createTerminal> | undefined;
+  let lichSu: TaoLichSu | undefined;
+  if (!dungTui) {
+    terminal = createTerminal({ stdin: process.stdin as never });
+    lichSu = new TaoLichSu();
+  }
   // Readline giữ stdin mở, nên nếu không đóng thì tiến trình không thoát dù đã
   // in xong. Đóng quá sớm thì lượt hỏi duyệt sau sẽ treo — nên đóng ở `finally`.
-  const closeStdin = (): void => terminal.close();
-  const lichSu = new TaoLichSu();
+  const closeStdin = (): void => {
+    terminal?.close();
+  };
   try {
     const host = createNodeHost({ workspaceRoot: workspace, userDataDir });
     disposeHost = host.dispose;
 
-    // Cổng duyệt: hỏi trên console, trừ khi người dùng tự bật YOLO — và khi
-    // bật thì PHẢI in ra, vì đó là lúc bỏ hết lớp bảo vệ giữa người và máy.
-    const approve = yolo
-      ? (() => {
-          console.error('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
-          return createAutoApprover(true);
-        })()
-      : createConsoleApprover((q) => terminal.hoi(q), {
-          /* Lý do từ chối phải ra cho người dùng thấy — đặc biệt khi CLI chạy
-           * headless (stdin là pipe): lúc đó không đọc được câu trả lời, và báo
-           * "người dùng không duyệt" là đổ lỗi oan. */
-          note: (s) => console.error(s),
-        });
+    // Cổng duyệt: ở TUI thì hỏi qua hộp duyệt (broker), ở REPL cũ thì hỏi
+    // trên console — trừ khi người dùng tự bật YOLO, và khi bật thì PHẢI in ra,
+    // vì đó là lúc bỏ hết lớp bảo vệ giữa người và máy.
+    let approve: (tool: string, args: Record<string, unknown>) => Promise<boolean>;
+    if (yolo) {
+      ghiChu('\n!!! VYEN_YOLO=1 — TU DONG DUYET MOI LENH GHI/XOA, KHONG HOI !!!');
+      approve = createAutoApprover(true);
+    } else if (broker) {
+      approve = (tool, args) => broker.approve(tool, args);
+    } else if (terminal) {
+      const t = terminal;
+      approve = createConsoleApprover((q) => t.hoi(q), {
+        /* Lý do từ chối phải ra cho người dùng thấy — đặc biệt khi CLI chạy
+         * headless (stdin là pipe): lúc đó không đọc được câu trả lời, và báo
+         * "người dùng không duyệt" là đổ lỗi oan. */
+        note: (s) => ghiChu(s),
+      });
+    } else {
+      /* Không có terminal để hỏi ⇒ mặc định KHÔNG (an toàn), không phải "cho
+       * phép" — cùng luật với broker khi không có listener. */
+      approve = async () => false;
+    }
     const built = buildIpcTools(host, { approve });
     // `buildIpcTools` trả `Record<string, unknown>` vì hình dạng tool của AI SDK
     // rộng hơn thứ lớp cầu biết. Ép kiểu ở đây là ranh giới duy nhất; nếu để
     // rò vào trong thì mọi call site lại phải tự ép, và lệch kiểu là im lặng.
     tools = built as ToolSet;
-    console.error(`> cong cu: ${Object.keys(built).length} (workspace: ${workspace})`);
-    if (yolo) console.error('> YOLO BAT — moi thay doi deu khong hoi xac nhan');
+    ghiChu(`> cong cu: ${Object.keys(built).length} (workspace: ${workspace})`);
+    if (yolo) ghiChu('> YOLO BAT — moi thay doi deu khong hoi xac nhan');
   } catch (e) {
-    console.error(`> KHONG bat cong cu: ${e instanceof Error ? e.message : String(e)}`);
-    console.error('> van chat binh thuong, chi khong dung duoc cong cu.');
+    ghiChu(`> KHONG bat cong cu: ${e instanceof Error ? e.message : String(e)}`);
+    ghiChu('> van chat binh thuong, chi khong dung duoc cong cu.');
   }
 
   /* ---- System prompt: dựng SAU khi biết đã bật được tool nào ----
@@ -561,7 +696,7 @@ async function main(): Promise<void> {
     }
   });
   if (coHuongDan.length > 0) {
-    console.error(`> huong dan du an: ${coHuongDan.join(', ')}`);
+    ghiChu(`> huong dan du an: ${coHuongDan.join(', ')}`);
   }
 
   /* ---- Session transcript: thứ làm "đóng terminal rồi mở lại còn nhớ" ----
@@ -576,35 +711,24 @@ async function main(): Promise<void> {
     session = openSession(userDataDir, workspace);
     const soMessage = session.messages.length;
     if (soMessage > 0) {
-      console.error(`> lich su: ${soMessage} message o "${session.header.directory}"`);
-      console.error('> gõ /new neu muon bat dau moi. /exit de thoat.');
+      ghiChu(`> lich su: ${soMessage} message o "${session.header.directory}"`);
+      ghiChu('> gõ /new neu muon bat dau moi. /exit de thoat.');
     }
   } catch (e) {
     console.error(`> KHONG doc duoc transcript: ${e instanceof Error ? e.message : String(e)}`);
     console.error('> chay tiep, chi khong nho duoc.');
   }
 
-  console.error(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
-  console.error(`> toi da ${maxTokens} token`);
-  console.error('> (ket qua se do la day)\n');
+  ghiChu(`> ${kind} / ${model}${cfg.baseUrl ? ` / ${cfg.baseUrl}` : ''}`);
+  ghiChu(`> toi da ${maxTokens} token`);
+  ghiChu('> (ket qua se do la day)\n');
 
   /* HAI instance model: chat khong dung `fetch` ep `stream:false`, con luot tom
    * tat co. Dung chung mot instance se lam MOI luot chat hong — xem
    * `buildModelConfigs`. */
   const { chat: cfgChat, nen: cfgNen } = buildModelConfigs(cfg);
 
-  /* Context window cua model BYOK. CLI khong biet cua so gateway nao nen nguoi
-   * dung khai bang bien moi truong; bo trong thi dung mac dinh cua CLI. */
-  const rawWindow = process.env.VYEN_CONTEXT_WINDOW;
-  let windowTokens: number | undefined;
-  if (rawWindow) {
-    const n = Number(rawWindow);
-    if (!Number.isInteger(n) || n <= 0) {
-      console.error(`VYEN_CONTEXT_WINDOW khong hop le: ${rawWindow} (can la so nguyen duong)`);
-      process.exit(2);
-    }
-    windowTokens = n;
-  }
+  /* Context window đã đọc ở trên (trước khi dựng TUI) — xem chỗ đó. */
 
   try {
     const lm = kind === 'anthropic' ? resolveAnthropicModel(cfgChat) : resolveOpenAIModel(cfgChat);
@@ -640,27 +764,40 @@ async function main(): Promise<void> {
       return;
     }
 
-    await runRepl(
-      buildReplOptions({
-        model: lm,
-        modelNen: lmNen,
-        tools,
-        session,
-        system: systemPrompt,
-        maxTokens,
-        ...(windowTokens !== undefined ? { windowTokens } : {}),
-        ...(prompt ? { initial: prompt } : {}),
-        terminal,
-        lichSu,
-        ...docCauHinhGiaLap(),
-      }),
-    );
+    /* Cấu hình LÕI của vòng lặp — dùng chung cho cả hai giao diện, khác nhau
+     * ở chỗ đọc/ghi. Không chép tay danh sách option ở hai nơi. */
+    const core = buildReplCore({
+      model: lm,
+      modelNen: lmNen,
+      tools,
+      session,
+      system: systemPrompt,
+      maxTokens,
+      ...(windowTokens !== undefined ? { windowTokens } : {}),
+      ...(prompt ? { initial: prompt } : {}),
+      ...docCauHinhGiaLap(),
+    });
+
+    if (dungTui && tui) {
+      /* TUI: chạy CÙNG vòng lặp, chỉ khác adapter đọc/ghi. */
+      await tui.run({ ...core, startupNotes });
+    } else if (terminal && lichSu) {
+      await runRepl(buildReplOptions({ ...core, terminal, lichSu }));
+    } else {
+      /* Không có TUI mà cũng không có terminal ⇒ không chạy được gì. */
+      console.error('> khong co terminal de chay REPL. Thoat.');
+      process.exitCode = 1;
+    }
   } catch (err) {
     /* Chỉ bắt được lỗi CỐ Ý ném ra (ví dụ config sai lúc dựng model). Lỗi từ
      * provider đã được bắt và chẩn đoán ở `catch` bên trên. */
     console.error(`\n> LOI: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   } finally {
+    /* Đóng TUI TRƯỚC: nó phải trả terminal về trạng thái cũ (thoát alternate
+     * screen, bàn phím) — nếu đóng sau thì thông báo lỗi ở trên sẽ bị in
+     * trong màn hình đang chiếm. */
+    tui?.close();
     // `process.exit()` sẽ bỏ qua `finally` và cắt cụt stdout khi đang stream —
     // nên dùng `process.exitCode` và để tiến trình tự thoát sau khi dọn xong.
     closeStdin?.();
