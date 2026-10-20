@@ -69,3 +69,5 @@ Chay lai `build-inventory.ts` (ruling pre-flight #6) khong chi them 3 entry TUI 
 con **va** so dong `lib/db.ts` trong bang (29 -> 32, 503 -> 532...) - tuc bang tren
 dia da cu tu truoc, ma test chi so TAP ten dong nen khong bat. Ruling: commit bang
 sinh lai. Chi phi neu sai: bang kiem ke noi doi ve vi tri API trinh duyet.
+Task 2: complete (commits fcd1dac..1b13263, tests: npx vitest run tests/tui-gate.test.ts tests/tui-theme.test.ts tests/tui-node-load.test.ts tests/tui-terminal-gate.test.ts tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
+Task 3: complete (commits 1b13263..3cf751c, tests: npx vitest run tests/cli-approval-broker.test.ts tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
