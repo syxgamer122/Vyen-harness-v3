@@ -744,3 +744,121 @@ cho đúng phạm vi đã đo. Mở rộng mẫu = đoán, mà `AGENTS.md` §6 n
 | `npm run test` | **233/234 file, 3673 pass**; 2 fail = flaky `secret-registry` |
 | `npm run build` | exit 0 |
 | `npm run docs:check` | OK — 10 tài liệu, 596 file |
+
+
+---
+
+# LƯỢT 6 — SỬA PHÁT HIỆN CỦA REVIEWER (1 Critical + 6 Important)
+
+Reviewer: subagent độc lập (model minimax), review `f250d23..380dae3` (4 commit của lượt 5).
+Kết quả: **0 Critical** ở lượt 5 trước review… nhưng khi tôi **tự kiểm chứng lại bằng probe**
+thì tìm ra **1 Critical thật** mà reviewer đã chỉ ra đúng. Bài học: đừng tin lời "gate xanh"
+là đủ — phải đo hành vi thật.
+
+Plan: `docs/superpowers/plans/2026-10-20-cli-emulated-fixes.md` (6 task).
+
+## Tôi tự kiểm chứng từng phát hiện (không tin lời reviewer)
+
+| Phát hiện | Cách tôi kiểm chứng | Kết quả |
+|---|---|---|
+| **C1** câu trả lời không vào transcript | Đọc `lib/emulated-agent.ts:385-395` + **probe end-to-end** (chạy `runRepl`, đọc file JSONL trên đĩa) | **ĐÚNG** — JSONL chỉ có message `user` |
+| **I1** `-p` không có fallback | Đọc `cli/index.ts:227` (`chayMotLuot` gọi thẳng `runAgentTurn`) | **ĐÚNG** |
+| **I2** không test wiring | grep `tests/` cho `forceEmulated\|VYEN_EMULATED` | **ĐÚNG** — 0 kết quả |
+| **I3** mẫu thiếu/khớp oan | **ĐO bằng chính mẫu đang ship** (17 chuỗi) | **ĐÚNG** — 4 chuỗi thiếu, 2 khớp oan |
+| **I4** lỗi tool bị nuốt | Đọc `lib/emulated-agent.ts:444-446, 554-556` | **ĐÚNG** |
+| **I5** mất phần đã hoàn thành | Đọc WeakMap `messagesHoanThanh` (chỉ `runAgentTurn` ghi) | **ĐÚNG** |
+| **I6** usage = null | Đọc `cli/repl.ts:232` + `lib/context-budget.ts:278` (`promptTokens <= 0` ⇒ `'skip'`) | **ĐÚNG** — lưới tràn ngầm chết |
+
+**Một phát hiện của tôi sai**: script đo đầu tiên báo "does not support tools or function
+calling" KHÔNG khớp — nhưng test lại đơn lẻ báo khớp. Hoá ra tôi **đọc lệch dòng** output
+(đánh số thứ tự case khác với thứ tự in). Đã đo lại bằng script có **đánh số case + kỳ vọng
+tường minh** ⇒ 17/17 đúng. ⇒ Bài học: phải kiểm lại **phép đo**, không chỉ kết quả
+(`AGENTS.md` §2.4).
+
+## 6 task
+
+| Task | Nội dung | File |
+|---|---|---|
+| A (C1) | push câu trả lời cuối vào transcript giả lập | `lib/emulated-agent.ts` |
+| B (I5+I6) | phần đã hoàn thành khi lượt hỏng + `finishReason` + usage round cuối | `lib/emulated-agent.ts`, `cli/emulated.ts`, `cli/agent-turn.ts` |
+| C (I1+I4) | **MỘT** cơ chế `runTurn` cho cả REPL và `-p`; bọc tool bằng `wrapTools` | `cli/emulated.ts`, `cli/repl.ts`, `cli/index.ts` |
+| D (I2) | test wiring `VYEN_EMULATED` / `providerBase` / `modelId` + `docCauHinhGiaLap` | `cli/index.ts`, `tests/cli-repl-wiring.test.ts` |
+| E (I3) | bổ sung 3 cách diễn đạt còn thiếu vào mẫu | `lib/tool-support-cache.ts` |
+| F | gate cuối + ledger + M4 (web dùng chung một cửa vào) | `app/api/chat/route.ts` |
+
+## Quy trình — LẦT NÀY TEST ĐỎ TRƯỚC (khác lượt 5)
+
+Lượt 5 tôi viết implementation trước test ở 2 task ⇒ không có bằng chứng RED. Lượt này
+**mọi task** đều: viết test → thấy ĐỎ → sửa → XANH → mutation.
+
+| Task | Bằng chứng RED | Mutation | Kết quả mutation |
+|---|---|---|---|
+| A | 2 test đỏ (1 cái đọc JSONL trên đĩa) | bỏ dòng `messages.push` | 3 test đỏ ✓ |
+| B | 3 test đỏ | bỏ `messagesHoanThanh.set` | 2 đỏ ✓ |
+| B | (cùng trên) | bỏ `onUsage` | 1 đỏ ✓ |
+| C | 2 test đỏ (`chayMotLuot` chưa export; lỗi tool bị nuốt) | bỏ `wrapTools` + bỏ nhánh chuyển đường | 6 đỏ ✓ |
+| D | 3 test đỏ (`docCauHinhGiaLap` chưa có) | `'1'`→`'true'` + rơi `forceEmulated` | 2 đỏ ✓ |
+| E | 3 test đỏ | bỏ 3 mẫu vừa thêm | 3 đỏ ✓ |
+
+**Mutation của tôi phải là mutation THẬT**: ở lượt trước tôi đã "bỏ lời gọi" bằng cách
+thêm comment vào dòng lệnh gọi (lệnh gọi vẫn còn) ⇒ test vẫn xanh ⇒ tưởng test rỗng
+(`AGENTS.md` §2.2). Lượt này mọi mutation đều **xoá hẳn** hành vi và được xác nhận bằng
+`Select-String` trước khi chạy test.
+
+## Ruling
+
+- **Ruling: đường giả lập gửi tool dạng VĂN BẢN ⇒ lỗi "Invalid schema for function" và
+  "unknown tool name" KHÔNG phải khớp oan vô hại.** Đường native gửi JSON schema (gateway
+  chê ⇒ lỗi), đường giả lập gửi mô tả chữ ⇒ lỗi đó có thể **không** xảy ra. Nên hạ cấp
+  10 phút là CỨU, không phải tổn thất. ⇒ **KHÔNG siết** mẫu dùng chung (siết thì rủi ro
+  làm hỏng hành vi web đang chạy). Chỉ BỔ SUNG.
+- **Ruling: usage của đường giả lập lấy ROUND CUỐI, không phải TỔNG.** Ở đường native,
+  `promptTokens` là kích thước MỘT request ⇒ đúng bằng kích thước ngữ cảnh. Ở đường giả
+  lập có N round, mỗi vòng gửi lại toàn bộ lịch sử ⇒ TỔNG vượt cửa sổ ngay cả khi ngữ cảnh
+  thật còn nhỏ ⇒ báo nén oan. Web làm đúng thế này (`lastStepUsage`).
+- **Ruling: bọc tool TRONG `runEmulatedTurn`, không phải trong `runTurn`.** Bọc ở hàm lượt
+  giả lập ⇒ mọi caller đều được, không phụ thuộc ai nhớ gọi. (Tôi viết sai lần đầu — đặt
+  ở `runTurn` — test bắt được ngay ⇒ dời vào.)
+- **Ruling: một cơ chế `runTurn` cho cả REPL và `-p`.** Trước đó quyết định "native trước,
+  giả lập khi bị chê" nằm rời ở REPL ⇒ `-p` không có ⇒ `-p` vẫn chết. Viết lại quyết định
+  ở hai nơi là "hai nguồn sự thật" (`AGENTS.md` §6).
+
+## Cảnh báo: `package.json` bị npm làm bẩn ⇒ **BUILD VỠ**
+
+Trong lúc chạy gate, `package.json` bị npm **tự thêm** các field (`description`, `main`,
+`type: "commonjs"`, …) ⇒ `npm run build` **HỎNG**:
+`Specified module format (CommonJs) is not matching the module format of the source code`.
+
+Đã `git checkout -- package.json` ⇒ build xanh lại (exit 0).
+
+⇒ Bài học cho mọi lượt: **kiểm `git status` sau mỗi lệnh npm**, và **luôn chạy `npm run build`
+trong gate** — typecheck/test/lint đều xanh với package.json hỏng.
+
+## Minor của reviewer — XỬ LÝ / KHÔNG XỬ LÝ
+
+| M | Nội dung | Quyết định |
+|---|---|---|
+| M1 | `opts.tools` là điều kiện thừa của nhánh fallback | **Giữ** — đúng logic: không có tool thì không thể bị "chê tools"; và `force` + 0 tool vẫn chat bình thường |
+| M2 | `force` không ép được khi thiếu `modelNen` | **Giữ** — CLI thật luôn có `modelNen`; thêm nhánh báo lỗi to là đội hình thừa |
+| M3 | in trùng khi chuyển giữa chừng | **Giữ** — lỗi "không hỗ trợ tools" luôn ở request ĐẦU (gateway chê trước khi sinh nội dung) ⇒ không có chữ đã stream để in trùng |
+| M4 | web dùng regex thô, CLI dùng helper | **ĐÃ SỬA** — `route.ts` dùng `isToolsUnsupportedMessage` ⇒ một cửa vào |
+| M5 | `runEmulatedTurn` trả `text`/`roundsUsed`/`totalCalls` mà REPL không dùng | **Giữ** — hợp đồng của hàm lượt, hữu ích cho `-p` và test |
+| M6 | `envEmulated` dựng lại mỗi lượt | **Giữ** — nằm NGOÀI vòng lặp rồi; chi phí không đáng kể |
+
+## Test thêm được
+
+- `tests/cli-emulated.test.ts`: +17 test (C1 transcript, I5 phần đã hoàn thành, I6 usage,
+  I1 `-p`, I4 lỗi tool tới model, I2 ép đường giả lập).
+- `tests/cli-repl-wiring.test.ts`: +5 test (wiring + `docCauHinhGiaLap`).
+- `tests/tool-support-cache.test.ts`: +4 test (cách diễn đạt còn thiếu + KHÔNG khớp lỗi
+  tham số khác).
+
+## Gate lượt 6
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm run typecheck` | 0 lỗi |
+| `npm run lint` | 0 lỗi / 8 warning (baseline) |
+| `npm run test` | xem bên dưới |
+| `npm run build` | exit 0 (sau khi trả `package.json`) |
+| `npm run docs:check` | OK |

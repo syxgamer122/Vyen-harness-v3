@@ -50,8 +50,8 @@ import { formatWebContextBlock, type WebContextPayload } from '@/lib/web-context
 import { markModelUnsupported } from '@/lib/model-negative-cache';
 import {
   isToolUnsupported,
+  isToolsUnsupportedMessage,
   markToolsUnsupported,
-  TOOLS_UNSUPPORTED_RE,
 } from '@/lib/tool-support-cache';
 import {
   summarizeToolArgs,
@@ -2315,7 +2315,7 @@ export async function POST(req: Request) {
                   allowAgentTools &&
                   !retriedWithoutTools &&
                   textCharsThisRequest() === 0 &&
-                  TOOLS_UNSUPPORTED_RE.test(msg)
+                  isToolsUnsupportedMessage(msg)
                 ) {
                   allowAgentTools = false;
                   retriedWithoutTools = true;
