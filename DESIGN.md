@@ -4,7 +4,7 @@
 >
 > **Lưu ý kỹ thuật khi đổi Token:** Hiện tại bảng màu khai báo ở cả `app/globals.css` và `tailwind.config.ts`, được kiểm tra bởi `tests/design-system.test.ts`. Khi thêm hoặc đổi giá trị một token cốt lõi (màu, thang chữ, shadow), hãy cập nhật đồng bộ cả 3 file này trong cùng một lượt.
 >
-> **Phạm vi của tài liệu này:** các quy tắc dưới đây là **định hướng**, không phải luật cưỡng chế. Chỗ ràng buộc thật là **test** — test kiểm CODE, không đọc tài liệu này. Nếu tài liệu và test lệch nhau, **test đúng**. Lý do thiết kế chi tiết của hệ cũ (bản 1410 dòng, chạy tới 2026-10-18) nằm ở `docs/DESIGN-2026-10-06.md` — đọc để hiểu vì sao, đừng tuân thủ.
+> **Phạm vi của tài liệu này:** các quy tắc dưới đây là **định hướng**, không phải luật cưỡng chế. Chỗ ràng buộc thật là **test** — test kiểm CODE, không đọc tài liệu này. Nếu tài liệu và test lệch nhau, **test đúng**. Lý do thiết kế chi tiết của hệ cũ (bản 1410 dòng, chạy tới 2026-10-18) đã **xoá 2026-10-20** — lịch sử nằm trong git (`git log --diff-filter=D --name-only`).
 
 ---
 

@@ -160,8 +160,10 @@ thẳng**, không có biến `--brand` trong `globals.css`.
 test" mới có.
 
 - `DESIGN.md` — định hướng ngắn, không phải hợp đồng.
-- `PLAN.md`, `PLAN-ui-audit.md` — **lịch sử**, đã dán nhãn.
-- `docs/DESIGN-2026-10-06.md` — bản `DESIGN.md` cũ, lưu trữ.
+- `PLAN.md` — **còn sống**: code và test trỏ tới các mục của nó (`PLAN.md §17`,
+  `PLAN.md 10.6`) ⇒ đừng xoá, và đừng sửa mục đó mà không cập nhật chỗ trỏ.
+- Bản `DESIGN.md` cũ (1410 dòng) + file audit-UI + các plan/ledger đã xong —
+  **đã XOÁ 2026-10-20** (lịch sử nằm trong git). Đừng tạo lại; đừng trỏ tới.
 
 `npm run docs:check` dùng `git ls-files` ⇒ **file mới phải `git add` trước** thì nó mới
 được theo dõi.

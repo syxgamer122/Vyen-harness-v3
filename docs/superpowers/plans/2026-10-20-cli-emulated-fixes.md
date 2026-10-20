@@ -11,7 +11,7 @@
 **Tech Stack:** TypeScript, AI SDK v4, vitest.
 
 **Spec:** `docs/superpowers/specs/2026-10-18-cli-core-design.md` §91 +
-`docs/superpowers/plans/2026-10-19-cli-emulated.md`.
+`docs/superpowers/specs/2026-10-18-cli-core-design.md` §91.
 
 ## Global Constraints
 

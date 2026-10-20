@@ -5,7 +5,7 @@
  * dự phòng `{ model, effort }` mà người dùng khai ở Cài đặt. Toàn bộ phần đó đã
  * bị gỡ 2026-10-16 — `customChains` không bao giờ được client gửi lên server, và
  * ngay cả khi gửi thì `model` luôn khác rỗng nên nhánh route theo chuỗi không
- * bao giờ chạy. Xem `docs/superpowers/plans/2026-10-16-settings-dead-code-phase2.md`.
+ * bao giờ chạy.
  *
  * CÒN LẠI và vẫn dùng: hệ hạng mục là hợp đồng dữ liệu cho badge ở
  * `components/hud/agent-hud.tsx` (nhãn tiếng Việt + mô tả) và cho `scoreRequest`

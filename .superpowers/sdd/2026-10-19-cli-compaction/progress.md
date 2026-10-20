@@ -1,4 +1,7 @@
-# SDD ledger — plan: docs/superpowers/plans/2026-10-19-cli-compaction.md
+# SDD ledger — plan: docs/superpowers/plans/2026-10-20-cli-emulated-fixes.md
+
+> Plan của lượt đó và các plan cũ khác đã **xoá 2026-10-20** (lịch sử nằm trong git)
+> ⇒ lời giải thích bên dưới là lịch sử, đọc để hiểu vì sao.
 
 Spec: docs/superpowers/specs/2026-10-19-cli-compaction-design.md (bản 2)
 Workspace: `.superpowers/sdd/2026-10-19-cli-compaction/`
@@ -16,7 +19,7 @@ Workspace: `.superpowers/sdd/2026-10-19-cli-compaction/`
 - Nhánh: `feat/provider-layer`, base `2712e79`. Working tree sạch trừ:
   - `docs/cli-migration-inventory.md` — sinh lại (thiếu `cli/index.ts` trong CORE_ENTRIES).
   - `docs/superpowers/specs/2026-10-19-cli-compaction-design.md` — mới, đã `git add`.
-  - `docs/superpowers/plans/2026-10-19-cli-compaction.md` — mới, đã `git add`.
+  - Plan của lượt đó (đã xoá 2026-10-20).
 - `npm run docs:check` OK (10 tài liệu, 583 file theo dõi) — đã chạy sau khi add 2 file.
 
 ## Pre-flight: giao diện dùng chung giữa các task
@@ -987,3 +990,51 @@ lượt đang làm + spec liên quan.
 
 **Không di dời file lịch sử** (repo theo quy ước §4: giữ tại chỗ + dán nhãn; nhiều test
 trỏ tới đường dẫn plan cũ trong comment).
+
+
+### Lượt 7c — xoá file docs thừa (12 file, 7.462 dòng)
+
+Chủ repo: *"xóa các file docs thừa đi"*. Theo tiền lệ chính của repo (checker
+`scripts/check-docs-sync.cjs`: *"lịch sử nằm trong git, không mô tả code đang chạy nên
+**gỡ khỏi cả danh sách lẫn repo"*) ⇒ xoá hẳn, không lưu trữ.
+
+**Đã xoá** (không ai trỏ tới, hoặc chỉ doc-trời-doc):
+
+| File | Dòng |
+|---|---|
+| `docs/DESIGN-2026-10-06.md` (bản `DESIGN.md` cũ) | 1.733 |
+| `PLAN-ui-audit.md` | 627 |
+| `docs/superpowers/plans/2026-10-16-settings-audit-fixes.md` | 638 |
+| `docs/superpowers/plans/2026-10-16-settings-dead-code-phase2.md` | 238 |
+| `docs/superpowers/plans/2026-10-17-declarative-agent-definitions.md` | 829 |
+| `docs/superpowers/plans/2026-10-18-tool-result-spill.md` | 506 |
+| `docs/superpowers/plans/2026-10-18-tool-result-spill-fix.md` | 447 |
+| `docs/superpowers/plans/2026-10-19-cli-compaction.md` | 909 |
+| `docs/superpowers/plans/2026-10-19-cli-emulated.md` | 185 |
+| ledger `2026-10-18-provider-layer` + `2026-10-18-tool-result-spill` + `2026-10-18-cli-migration-inventory` | 1.350 |
+
+**GIỮ** — có **code/test** trỏ tới, xoá là để lại tham chiếu gãy:
+
+| File | Ai trỏ |
+|---|---|
+| `PLAN.md` | `lib/zeromem/auto-ingest.ts`, `components/chat/message-item.tsx`, `components/settings/zeromem-section.tsx` + 3 test ⇒ **nhãn "lịch sử" trong §4 là SAI, đã sửa** |
+| `docs/superpowers/plans/2026-10-18-provider-layer.md` | 4 file `lib/provider/*` + 2 test |
+| `docs/superpowers/plans/2026-10-18-cli-migration-inventory.md` | `tests/cli-migration-scan.test.ts` |
+| `docs/superpowers/specs/2026-10-18-cli-core-design.md` | `cli/emulated.ts`, `lib/provider/adapter.ts` + 2 test |
+| `docs/superpowers/specs/2026-10-18-tool-result-spill-design.md` | `tests/shell-tool.test.ts` |
+| `docs/superpowers/specs/2026-10-17-declarative-agent-definitions-design.md` | `lib/shell-policy.ts` |
+| `docs/design-qa/*` | `lib/db.ts`, `lib/turns.ts` + 3 test |
+
+**Sửa theo sau khi xoá** (12 tham chiếu gãy — quét lại bằng script trên TOÀN BỘ file
+tracked ⇒ còn **0**):
+`scripts/check-docs-sync.cjs` (gỡ khỏi `RECORD_DOCS`) · `AGENTS.md` §4 · `DESIGN.md` ·
+`PLAN.md` (4 chỗ) · `docs/superpowers/plans/2026-10-20-cli-emulated-fixes.md` (spec trỏ tới) ·
+`lib/routing/categories.ts` (bỏ con trỏ plan) · ledger (2 chỗ).
+
+**Bẫy đo được**: `docs:check` đỏ vì AGENTS.md **nhắc tên file đã xoá trong backtick** ⇒
+checker coi là đường dẫn hỏng. ⇒ Trong AGENTS.md, tên file đã xoá phải viết **trần**
+(không backtick).
+
+Còn lại: `PLAN.md` (1.016 dòng, còn sống) · ledger lượt hiện tại (989) · README · DESIGN ·
+AGENTS · 4 spec/plan còn sống · `docs/MCP_INTEGRATION_DESIGN.md` (việc tương lai) ·
+`.vyen/agents/*` + `.vyen/skills/*` (**CLI nạp vào prompt — không bao giờ xoá**).

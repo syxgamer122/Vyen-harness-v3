@@ -92,7 +92,7 @@ Vậy đây là **phân tách có chủ đích**, không phải trùng lặp. Ch
 | `border-default` | `#949494` (**3.03:1**) | `rgba(0,0,0,0.12)` | Xem §4 — đây là quyết định lớn nhất |
 | `border-strong` | `#525252` | `rgba(0,0,0,0.20)` | |
 
-**Luật bất di bất dịch:** sửa token ⇒ sửa **cùng một lượt** `tailwind.config.ts` + `app/globals.css` + `tests/design-system.test.ts` (xem `docs/DESIGN-2026-10-06.md`).
+**Luật bất di bất dịch:** sửa token ⇒ sửa **cùng một lượt** `tailwind.config.ts` + `app/globals.css` + `tests/design-system.test.ts`.
 
 ### 3.3 `components/ui/` — làm, nhưng vì lý do khác
 
@@ -659,7 +659,7 @@ Bối cảnh: `task.md` (audit ngoài, chỉ đọc cấu trúc zip, không đ�
   `tests/fixtures/mcp-demo-server.mjs` (`tests/mcp-live-stdio.test.ts` spawn).
 - `docs/design-qa/`: bỏ 28 PNG khỏi git, giữ 3 `README.md` + `measurements.json`.
   Lưu ý: 3 README còn liệt kê tên PNG đã bị gỡ.
-- Chờ chốt riêng: `PLAN-ui-audit.md`, `core/agent-runtime/index.ts` (barrel 0
+- Chờ chốt riêng: `core/agent-runtime/index.ts` (barrel 0
   importer), `docs/superpowers/plans/2026-10-13-first-run-and-tab-lock.md`,
   `react/use-streaming-text.ts` (0 tham chiếu).
   ~~`scripts/generate-png-icons.cjs`~~ → đã xoá ở đợt dọn dead-code.
@@ -700,8 +700,8 @@ Kết quả (2026-10-15):
 
 - Xóa `core/agent-runtime/index.ts` + `react/use-streaming-text.ts` (0 tham chiếu) — commit `b1b9e8e`.
 - Bỏ 28 PNG `docs/design-qa/` (giữ README + measurements) + gỡ plan superpowers đã xong — commit `1339329`.
-- Khôi phục (giữ lại): `PLAN-ui-audit.md` (còn mục chưa nghiệm thu + Lô G chưa quét) và
-  `scripts/generate-png-icons.cjs` (tool tái sinh icon; PLAN §2 từng đề xuất khai `sharp` — để sau).
+- Khôi phục (giữ lại): `scripts/generate-png-icons.cjs` (tool tái sinh icon; PLAN §2 từng đề
+  xuất khai `sharp` — để sau).
   *(Ghi chú 2026-10-17: `scripts/generate-png-icons.cjs` sau đó đã bị xoá ở đợt dọn dead-code; mục §2 tương ứng đã đóng.)*
 - Lint chạy lại sau khôi phục: vẫn 0 lỗi / 8 warning.
 - Vá nốt mục 1a của `task.md`: xóa `public/vyen-logo-mono.svg` (bản sót của `907b29a`,
@@ -748,7 +748,7 @@ Audit reverse-dependency (3 subagent, mọi claim chính đã tự grep lại) t
 | A4 | `formatRecallBanner` | grep chỉ `tests/memory-reviewer.test.ts` | typecheck · `memory-reviewer.test.ts` xanh |
 | A5 | import `PointInTimeReplayEngine` không dùng ở `lib/teamwork/cli.ts` | `--ledger-replay` chạy vòng `ledger.query` nội tuyến; class vẫn sống cho tests | typecheck · lint |
 
-Tài liệu sửa cùng lượt — `npm run docs:check` đỏ nếu doc còn nhắc file đã xoá: `README.md:159` (bullet orchestrator), `docs/DESIGN-2026-10-06.md` (bản lưu trữ) (nhắc `orchestrator-badge.tsx`). Comment trong `lib/db.ts:452` liệt kê annotation không còn ai ghi.
+Tài liệu sửa cùng lượt — `npm run docs:check` đỏ nếu doc còn nhắc file đã xoá: `README.md:159` (bullet orchestrator). Comment trong `lib/db.ts:452` liệt kê annotation không còn ai ghi.
 
 **Không xoá test nào còn khoá hành vi đang chạy**: `tests/skills.test.ts` và `tests/orchestrator-badge.test.ts` xoá cùng mã chết; `annotation-persist-cap.test.ts` chỉ bỏ đúng một phần tử fixture.
 
