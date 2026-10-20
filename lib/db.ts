@@ -4,7 +4,7 @@ import type { MemoryRecord, MemoryReviewEntry } from '@/lib/memory/types';
 import type { AgentMemoryRecord } from '@/lib/memory/agent-memory';
 import type { ZeroMemTrace, ZeroMemEntity, ZeroMemRelation } from '@/lib/zeromem/types';
 import { resetTurnTaint } from '@/lib/taint-tracker';
-import { redactSecretText } from '@/lib/secret-registry';
+import { redactSecretText, redactSecretsDeep } from '@/lib/secret-registry';
 import { ROOT_KEY, toParentKey, fromParentKey } from '@/lib/parent-keys';
 
 /* `ROOT_KEY` / `toParentKey` / `fromParentKey` đã chuyển sang `@/lib/parent-keys`.
@@ -368,6 +368,19 @@ export function sanitizeToolInvocations(
 
     let result = inv.result;
     try {
+      /* Che bí mật TRƯỚC khi ghi — không chỉ lúc gửi lên model.
+       *
+       * Trước đây chỉ che ở đường GỬI (`attachToolResultParts` ở
+       * `app/api/chat/route.ts` gọi `redactSecretsDeep`), còn bản ghi trong
+       * IndexedDB giữ **giá trị thô**. Hệ quả đo được: khoá đọc được từ
+       * `.env`/`~/.aws/credentials` nằm trong DB và — tệ hơn — trong FILE SAO
+       * LƯU `.json` mà người dùng xuất ra để chia sẻ. Người dùng không thấy
+       * khoá trong chat (đã che ở tầng gửi) ⇒ rò rỉ không có dấu vết.
+       *
+       * Che ở tầng lưu ⇒ mọi đường đọc kết quả tool về sau (kể cả export)
+       * đều đã sạch. Chi phí: một lần redact sâu mỗi invocation khi ghi.
+       */
+      result = redactSecretsDeep(inv.result);
       /* Redact TRƯỚC khi cắt: cắt trước thì một khoá nằm vắt qua ranh giới cắt
          sẽ chỉ còn nửa chuỗi và không khớp rule nào nữa → lọt bí mật vào DB (và
          từ đó vào ngữ cảnh lượt sau). Đúng thứ tự serializeToolResult dùng ở

@@ -102,12 +102,22 @@ describe('cắt trần tool result', () => {
     expect(result.note).toMatch(/bị cắt khi lưu/);
   });
 
-  it('kết quả dưới trần giữ nguyên object gốc (redact chỉ áp cho ranh giới cắt)', () => {
+  /* HỢP ĐỒNG ĐÃ ĐỔI (2026-10-20): trước đây kết quả dưới trần được giữ
+   * **nguyên object gốc** ("redact chỉ áp cho ranh giới cắt"). Hợp đồng đó là
+   * chỗ RÒ RỈ: khoá đọc được từ `.env` nằm nguyên trong IndexedDB và trong
+   * file sao lưu `.json` xuất ra, dù ngữ cảnh model đã che.
+   *
+   * Nay mọi kết quả đều được che TRƯỚC khi ghi (`redactSecretsDeep`), nên:
+   *   - NỘI DUNG không phải bí mật thì giữ nguyên (dưới đây);
+   *   - giá trị bí mật thì bị che (xem `tests/tool-secret-persistence.test.ts`).
+   */
+  it('kết quả dưới trần giữ nguyên NỘI DUNG (được che bí mật, không bị cắt)', () => {
     const original = { content: 'ngắn gọn' };
     const out = sanitizeToolInvocations([
       { toolCallId: 't1', toolName: 'fs_read', state: 'result', result: original },
     ])!;
-    expect(out[0].result).toBe(original);
+    expect(out[0].result).toEqual(original);
+    expect((out[0].result as { truncated?: boolean }).truncated).toBeUndefined();
   });
 
   it('kết quả không serialize được vẫn không làm hỏng lượt ghi', () => {
