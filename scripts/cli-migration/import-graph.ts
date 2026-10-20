@@ -16,24 +16,49 @@ import ts from 'typescript';
 const BOILERPLATE_DIRS = new Set(['node_modules', '.next', 'dist', 'build', 'coverage']);
 
 /**
- * Liệt kê mọi file `.ts` dưới `root`, quy về đường dẫn repo dùng `/`.
+ * Liệt kê file nguồn dưới `root`, quy về đường dẫn repo dùng `/`.
  *
  * Một chỗ duyệt FS duy nhất cho cả máy đo: `countTsFiles` của build-inventory
  * đếm bằng chính hàm này. Hai vòng duyệt riêng là hai nơi lệch nhau âm thầm —
  * số đếm một bên, danh sách một bên, rồi bảng "không lệch" trong khi thực ra lệch.
  */
-export function listTsFiles(root: string): string[] {
+function listFiles(root: string, duoi: readonly string[]): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       if (BOILERPLATE_DIRS.has(name)) continue;
       const abs = path.join(dir, name);
       if (statSync(abs).isDirectory()) walk(abs);
-      else if (name.endsWith('.ts')) out.push(abs.split(path.sep).join('/'));
+      else if (duoi.some((d) => name.endsWith(d))) out.push(abs.split(path.sep).join('/'));
     }
   };
   walk(root);
   return out.sort();
+}
+
+/**
+ * Chỉ file `.ts` — bảng kiểm kê đếm bằng hàm này, nên nó **cố ý** không đổi:
+ * thêm `.tsx` vào đây là bảng kiểm kê lệch với generator, và người đọc bảng
+ * phải tin bảng.
+ */
+export function listTsFiles(root: string): string[] {
+  return listFiles(root, ['.ts']);
+}
+
+/**
+ * Mọi file nguồn: `.ts` **+** `.tsx`.
+ *
+ * ============ VÌ SAO CẦN ============
+ *
+ * Đảo TUI của CLI là file `.tsx`. Danh sách quét chỉ lấy `.ts` thì các file
+ * đó **không hề được soi** ⇒ một file TUI import `@/lib/db` (Dexie) sẽ không
+ * bị báo, và `lib/db` rơi vào đồ thị lõi mà không ai thấy — đúng loại lỗi
+ * review 2026-10-19 bắt ở `cli/repl.ts`.
+ *
+ * Dùng cho QUÉT, không dùng cho ĐẾM: bảng kiểm kê vẫn đếm bằng `listTsFiles`.
+ */
+export function listSourceFiles(root: string): string[] {
+  return listFiles(root, ['.ts', '.tsx']);
 }
 
 /**
@@ -99,6 +124,13 @@ export const CORE_ENTRIES = [
   'cli/compaction.ts',
   // Lượt GIẢ LẬP cho model không hỗ trợ function calling (spec §7).
   'cli/emulated.ts',
+  // Đảo TUI của CLI. Đây là thư mục ESM (có `package.json` riêng) vì
+  // `@opentui/core` chỉ nạp được bằng ESM — nhưng nó vẫn là **nguồn** của CLI,
+  // nên vẫn phải nằm trong đồ thị lõi: file không khai ở đây thì nằm ngoài mọi
+  // guard (xem `tests/repo-hygiene.test.ts`).
+  'cli/tui-gate.ts',
+  'cli/tui/theme.ts',
+  'cli/tui/entry.tsx',
 ];
 
 
@@ -150,7 +182,17 @@ export function resolveInternal(spec: string, fromFile: string): string | null {
  * đó. Gặp trường hợp thật thì thêm vào đây, đừng thêm cơ chế thứ hai.
  */
 export function runtimeImportSpecs(src: string, file: string): string[] {
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  /* Đảo TUI là file `.tsx`. Parse bằng `ScriptKind.TS` thì JSX bị hiểu nhầm
+   * thành type-assertion, và TypeScript phải "bơm" lỗi để tìm ra phần còn lại
+   * của file — tức cạnh runtime có thể biến mất. Parse đúng kiểu (TSX) thì
+   * không còn chỗ nào phải bơm.
+   *
+   * Lưu ý: đo 2026-10-20 trên 3 hình dạng `.tsx` thực tế thì `ScriptKind.TS`
+   * **vẫn** tìm thấy import ⇒ thay đổi này là PHÒNG THỦ, chưa có test canh
+   * bắt được khác biệt. Nếu sau này tìm ra hình dạng mà TS bơm lỗi mất cạnh,
+   * hãy thêm test ở đây. */
+  const kind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kind);
   const out: string[] = [];
   for (const st of sf.statements) {
     if (!ts.isImportDeclaration(st)) continue;

@@ -16,11 +16,11 @@
  */
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { BROWSER_APIS, scanBrowserApis, scanFile } from '@/scripts/cli-migration/scan-browser-apis';
 import { countTsFiles } from '@/scripts/cli-migration/build-inventory';
 import { FORCE_LABEL } from '@/scripts/cli-migration/ly-do';
-import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached, runtimeImportSpecs, browserBoundIn, listTsFiles } from '@/scripts/cli-migration/import-graph';
+import { CORE_ENTRIES, reachableFrom, resolveInternal, unreached, runtimeImportSpecs, browserBoundIn, listTsFiles, listSourceFiles } from '@/scripts/cli-migration/import-graph';
 
 describe('scanFile', () => {
   it('dò đúng API trình duyệt và trả về số dòng', () => {
@@ -135,6 +135,23 @@ describe('import-graph', () => {
     const core = reachableFrom();
     expect(core.has('lib/zeromem/tools.ts')).toBe(true);
     expect(core.has('lib/zeromem/store.ts')).toBe(true);
+  });
+
+  /* Đảo TUI của CLI là file `.tsx`. Test này khoá: một entry `.tsx` phải được
+   * đi qua trong đồ thị lõi, và cạnh runtime của nó phải được thấy.
+   *
+   * ============ ĐO ĐƯỢC, VÀ GIỚI HẠN CỦA NÓ ============
+   *
+   * Đo 2026-10-20 trên 3 hình dạng `.tsx` thực tế (JSX rồi import, JSX lồng
+   * nhau có so sánh, JSX có thuộc tính) ⇒ `runtimeImportSpecs` với
+   * `ScriptKind.TS` **vẫn tìm thấy import**. Nghĩa là thay đổi sang
+   * `ScriptKind.TSX` là phòng thủ, KHÔNG phải thứ test này bắt được.
+   *
+   * Fixture cố tình đặt import SAU JSX: nếu sau này tìm ra hình dạng mà
+   * TypeScript bơm lỗi mất cạnh, test này đỏ đúng chỗ đó. */
+  it('đi được qua file .tsx — entry .tsx và cạnh runtime của nó', () => {
+    const core = reachableFrom(['tests/fixtures/tui-graph/a.tsx']);
+    expect(core.has('tests/fixtures/tui-graph/b.tsx')).toBe(true);
   });
 
   /* Đo thật thì lõi hiện KHÔNG có dynamic import nội bộ nào: quét cả đồ thị chỉ ra
@@ -285,7 +302,9 @@ describe('GUỐ — lõi CLI không được kéo trình duyệt vào', () => {
    */
   const boundCore = () => {
     const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
-    const tatCa = [...listTsFiles('lib'), ...listTsFiles('cli')];
+    /* `listSourceFiles` (không phải `listTsFiles`): đảo TUI là file `.tsx`, và
+     * danh sách chỉ lấy `.ts` thì các file đó không bao giờ được soi. */
+    const tatCa = [...listSourceFiles('lib'), ...listSourceFiles('cli')];
     return browserBoundIn(tatCa, touchers);
   };
 
@@ -311,11 +330,32 @@ describe('GUỐ — lõi CLI không được kéo trình duyệt vào', () => {
     writeFileSync(gia, "import { db } from '@/lib/db';\nexport const x = db;\n", 'utf8');
     try {
       const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
-      const tatCa = [...listTsFiles('lib'), ...listTsFiles('cli')];
+      const tatCa = [...listSourceFiles('lib'), ...listSourceFiles('cli')];
       const bound2 = browserBoundIn(tatCa, touchers);
       expect(
         bound2.has('cli/.probe-import-db.ts'),
         'file cli/ import db ma khong bi danh dau — guard mau co lam gi',
+      ).toBe(true);
+    } finally {
+      rmSync(gia, { force: true });
+    }
+  });
+
+  /* Đảo TUI của CLI là `.tsx`. Nếu danh sách quét chỉ lấy `.ts` thì file TUI
+   * không hề được soi ⇒ một file TUI import `@/lib/db` (Dexie) sẽ không bị báo,
+   * và `lib/db` rơi vào đồ thị lõi mà không ai thấy — đúng loại lỗi review
+   * 2026-10-19 bắt ở `cli/repl.ts`. */
+  it('quét THẬT sự thấy file .tsx trong cli/ — đảo TUI không lọt qua guard', () => {
+    const gia = path.join(process.cwd(), 'cli', 'tui', '.probe-import-db.tsx');
+    mkdirSync(path.dirname(gia), { recursive: true });
+    writeFileSync(gia, "import { db } from '@/lib/db';\nexport const x = db;\n", 'utf8');
+    try {
+      const touchers = new Set(scanBrowserApis('lib').map((h) => h.file));
+      const tatCa = [...listSourceFiles('lib'), ...listSourceFiles('cli')];
+      const bound2 = browserBoundIn(tatCa, touchers);
+      expect(
+        bound2.has('cli/tui/.probe-import-db.tsx'),
+        'file .tsx trong cli/ import db ma khong bi danh dau — guard mau co lam gi',
       ).toBe(true);
     } finally {
       rmSync(gia, { force: true });

@@ -134,10 +134,17 @@ thấy — đúng loại lỗi review 2026-10-19 đã bắt ở `cli/repl.ts`. V
 `ScriptKind.TSX` còn phải có một cách liệt kê **nguồn** (`.ts` + `.tsx`) cho
 quét, mà **không** đổi `listTsFiles` (bảng kiểm kê đếm bằng nó).
 
-**Đo thêm (probe ngoài repo):** `runtimeImportSpecs` với `ScriptKind.TS` thấy
-import đứng trước JSX nhưng **không thấy** import đứng sau JSX. Nên `ScriptKind.TSX`
-không phải phòng thủ mà là **load-bearing**, và fixture test phải đặt import sau
-JSX thì mutation mới đỏ.
+**ĐO LẠI 2026-10-20 (trong repo, đo đúng):** lần đo đầu tiên nói "`ScriptKind.TS`
+không thấy import đứng sau JSX" là **sai** — nó là artefact của việc viết file
+bằng PowerShell với `\n` (PowerShell không hiểu `\n` là xuống dòng), nên file
+probe sai cú pháp và parser báo hỏng cả file. Đo lại bằng newline thật trên 3
+hình dạng `.tsx` thực tế (JSX rồi import; JSX lồng nhau có so sánh; JSX có thuộc
+tính) ⇒ `ScriptKind.TS` **vẫn tìm thấy import**. Vậy `ScriptKind.TSX` là
+**phòng thủ**, không phải thứ gì test bắt được.
+
+Phần **thật sự load-bearing** là `listSourceFiles` (`.ts` + `.tsx`): không có nó
+thì guard browser-bound không soi file `.tsx` nào — mutation đổi về chỉ `.ts` thì
+test `quét THẬT sự thấy file .tsx trong cli/` đỏ đúng chỗ.
 
 ## 4. Quyết định thiết kế
 

@@ -43,6 +43,9 @@ Sinh bằng `node scripts/cli-migration/build-inventory.ts`. Cột **LÝ DO** l�
 - `cli/context-adapter.ts`
 - `cli/compaction.ts`
 - `cli/emulated.ts`
+- `cli/tui-gate.ts`
+- `cli/tui/theme.ts`
+- `cli/tui/entry.tsx`
 
 ## Bằng chứng dòng
 
@@ -90,4 +93,4 @@ rơi vào danh sách này. Thêm `CORE_ENTRIES` mà kéo theo Dexie thì test đ
 
 ## File chạm API trình duyệt
 
-`lib/auto-backup.ts`:29,32,59,59,77,87,88,97,132,133<br>`lib/chat-broadcast.ts`:48,57<br>`lib/client-identity.ts`:37,37,45<br>`lib/db.ts`:1,503,1034,1035,1041,1041<br>`lib/fs-access.ts`:79,91
+`lib/auto-backup.ts`:29,32,59,59,77,87,88,97,132,133<br>`lib/chat-broadcast.ts`:48,57<br>`lib/client-identity.ts`:37,37,45<br>`lib/db.ts`:1,532,1055,1056,1062,1062<br>`lib/fs-access.ts`:80,92

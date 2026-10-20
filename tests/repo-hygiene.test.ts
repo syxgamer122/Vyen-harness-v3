@@ -330,11 +330,14 @@ function coMarker(noiDung: string, dau: string): boolean {
 }
 
 describe('CORE_ENTRIES', () => {
-  it('mọi entry tồn tại và là file .ts', () => {
+  it('mọi entry tồn tại và là file nguồn (.ts hoặc .tsx)', () => {
     const sai: string[] = [];
     for (const e of CORE_ENTRIES) {
       try {
         if (!statSync(e).isFile()) sai.push(`${e} (không phải file)`);
+        /* `.tsx` được chấp nhận từ 2026-10-20: đảo TUI của CLI là file `.tsx`
+           (OpenTUI + React). Trước đó chỉ `.ts` ⇒ không khai được đảo TUI, mà
+           không khai thì file đó nằm ngoài mọi guard. */
         else if (!/\.(ts|tsx)$/.test(e)) sai.push(`${e} (không phải .ts/.tsx)`);
       } catch {
         sai.push(`${e} (không tồn tại)`);

@@ -34,3 +34,38 @@ PowerShell** — backtick trong chuỗi là ký tự escape, nó nuốt ký tự
 `tests/plan-traceability.test.ts` đòi **file test trong bảng phải tồn tại**; 9 file
 test của plan chưa có ⇒ để plan ở `plans/` làm suite đỏ trong lúc làm việc. Task 9
 chuyển lên `plans/` khi đã đủ 9 file. Chi phí nếu sai: một lần `git mv`.
+Task 0: complete (commits 29529c6..ee56e56, tests: npx vitest run tests/repo-hygiene.test.ts tests/cli-migration-scan.test.ts -> pass)
+Task 1: complete (commits ee56e56..fcd1dac, tests: npx vitest run tests/tui-smoke.test.ts -> pass)
+
+## Task 2 - Ruling: do dac cu SAI, da sua o ca spec lan plan
+
+Lần đo trước ("ScriptKind.TS khong thay import sau JSX") la **artefact**: file probe
+duoc viet bang PowerShell voi `\n` (PowerShell KHONG hieu `\n` la xuong dong) => file
+sai cu phap => parser hong ca file. Do lai bang newline that tren 3 hinh dang `.tsx`
+thuc te => `ScriptKind.TS` **van** thay import. Ruling: `ScriptKind.TSX` la PHONG
+THU (khong co test bat duoc khac biet) - ghi ro trong `import-graph.ts`; phan
+load-bearing la `listSourceFiles` (mutation ve chi `.ts` => test `.tsx` DO, da kiem).
+Chi phi neu sai: mot dong chu sai trong spec/plan doc lai (da sua ca hai).
+
+## Task 2 - Ruling: cong terminal tu dong hoa duoc
+
+Ke hoach ghi "kiem tay". Do thay may lo duoc: spawn `node --import tsx
+cli/tui/entry.tsx`, kiem alt-screen bat / Esc => exit 0 / alt-screen tat. Ruling:
+viet thanh `tests/tui-terminal-gate.test.ts` (cong may) + giu phan mat thay o Task 8
+buoc 8. Chi phi neu sai: them mot file test (re). Neu giu "kiem tay" thi khong co
+gi chan lan sau no hong.
+
+## Task 2 - Ruling: `import.meta.main` can khai bao types tai cho
+
+Runtime Node 26 co `import.meta.main` (cong terminal xanh => chay dung), nhung
+`@types/node` cua repo la ban 20 => `tsc` bao TS2339. Ruling: khai
+`declare global { interface ImportMeta { readonly main?: boolean } }` trong
+`cli/tui/entry.tsx`, thay vi ep kieu hay nang `@types/node` (nang la thay doi lan
+man ca repo). Chi phi neu sai: mot khai bao 5 dong.
+
+## Task 2 - phat hien them: bang kiem ke bi CU so dong
+
+Chay lai `build-inventory.ts` (ruling pre-flight #6) khong chi them 3 entry TUI ma
+con **va** so dong `lib/db.ts` trong bang (29 -> 32, 503 -> 532...) - tuc bang tren
+dia da cu tu truoc, ma test chi so TAP ten dong nen khong bat. Ruling: commit bang
+sinh lai. Chi phi neu sai: bang kiem ke noi doi ve vi tri API trinh duyet.
