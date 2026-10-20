@@ -32,3 +32,32 @@ describe('isToolsUnsupportedMessage', () => {
     expect(isToolsUnsupportedMessage('fetch failed')).toBe(false);
   });
 });
+
+
+/* ============ E: CÁCH DIỄN ĐẠT CÒN THIẾU ============
+ *
+ * Đo 2026-10-20 (bằng chính mẫu đang ship, không suy đoán): 4 cách diễn đạt mà
+ * gateway thật dùng KHÔNG khớp mẫu cũ ⇒ tính năng không bật được đúng lúc cần.
+ */
+describe('isToolsUnsupportedMessage — cách diễn đạt còn thiếu', () => {
+  it('khớp "function calling is not supported"', () => {
+    expect(isToolsUnsupportedMessage('function calling is not supported')).toBe(true);
+    expect(isToolsUnsupportedMessage('Function calling is not supported for this model')).toBe(true);
+  });
+
+  it('khớp "Unsupported parameter: tools"', () => {
+    expect(isToolsUnsupportedMessage('Unsupported parameter: tools')).toBe(true);
+    expect(
+      isToolsUnsupportedMessage("Unsupported parameter: 'tools' is not supported with this model"),
+    ).toBe(true);
+  });
+
+  it('khớp "tools parameter is not supported"', () => {
+    expect(isToolsUnsupportedMessage('tools parameter is not supported')).toBe(true);
+  });
+
+  it('KHÔNG khớp lỗi tham số KHÁC (sai số/giá trị thường)', () => {
+    expect(isToolsUnsupportedMessage('invalid parameter: temperature')).toBe(false);
+    expect(isToolsUnsupportedMessage('invalid parameter: max_tokens')).toBe(false);
+  });
+});
