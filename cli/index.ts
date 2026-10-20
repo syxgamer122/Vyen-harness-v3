@@ -218,6 +218,7 @@ export async function chayMotLuot(opts: {
   const { lm, lmNen, session, question, tools, maxTokens, apiKey, model, system } = opts;
   const ghiChu = opts.note ?? ((s: string) => console.error(s));
   const ghiRa = opts.out ?? ((s: string) => process.stdout.write(s));
+  const cauHinhGiaLap = docCauHinhGiaLap();
   const nen = createCompactionRunner({
     session,
     model: lmNen,
@@ -239,8 +240,8 @@ export async function chayMotLuot(opts: {
         system: nen.system(),
         maxTokens,
         env: {
-          providerBase: process.env.VYEN_BASE_URL ?? '',
-          modelId: process.env.VYEN_MODEL ?? '',
+          providerBase: cauHinhGiaLap.providerBase,
+          modelId: cauHinhGiaLap.modelId,
         },
         onText: (delta) => {
           ghiRa(delta);
@@ -311,6 +312,35 @@ export interface ReplDeps {
   modelId?: string;
   /** Ep dung duong gia lap. */
   forceEmulated?: boolean;
+}
+
+/**
+ * Cấu hình đường giả lập đọc từ biến môi trường.
+ *
+ * ============ VÌ SAO TÁCH RA HÀM ============
+ *
+ * Đo 2026-10-20 (reviewer độc lập): không test nào chạm tới `VYEN_EMULATED` ⇒
+ * một lỗi gõ 1 ký tự (`'1'` → `'true'`) làm tính năng chết âm thầm, mọi test vẫn
+ * xanh. Đọc thẳng trong `main()` thì không test được ⇒ tách ra đây.
+ *
+ * `providerBase`/`modelId` là KHOÁ cache "model này chê tools" ⇒ thiếu thì dùng
+ * chuỗi rỗng (khoá `default::model`), KHÔNG dùng `undefined`.
+ */
+export function docCauHinhGiaLap(
+  env: Record<string, string | undefined> = process.env,
+): {
+  providerBase: string;
+  modelId: string;
+  forceEmulated: boolean;
+  
+}
+  
+{
+  return {
+    providerBase: env.VYEN_BASE_URL ?? '',
+    modelId: env.VYEN_MODEL ?? '',
+    forceEmulated: env.VYEN_EMULATED === '1',
+  };
 }
 
 /**
@@ -579,9 +609,7 @@ async function main(): Promise<void> {
         ...(prompt ? { initial: prompt } : {}),
         terminal,
         lichSu,
-        providerBase: process.env.VYEN_BASE_URL ?? '',
-        modelId: process.env.VYEN_MODEL ?? '',
-        forceEmulated: process.env.VYEN_EMULATED === '1',
+        ...docCauHinhGiaLap(),
       }),
     );
   } catch (err) {

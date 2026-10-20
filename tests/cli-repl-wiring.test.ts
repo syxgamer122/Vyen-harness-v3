@@ -19,7 +19,7 @@
  * được gọi trực tiếp ⇒ tầng nối test được.
  */
 import { describe, expect, it } from 'vitest';
-import { buildReplOptions } from '@/cli/index';
+import { buildReplOptions, docCauHinhGiaLap } from '@/cli/index';
 import { TaoLichSu } from '@/cli/history';
 
 function deps() {
@@ -57,5 +57,54 @@ describe('buildReplOptions — tầng nối của CLI', () => {
   it('truyền windowTokens khi có, và KHÔNG truyền khi không', () => {
     expect(buildReplOptions({ ...deps(), windowTokens: 32_000 }).windowTokens).toBe(32_000);
     expect('windowTokens' in buildReplOptions(deps())).toBe(false);
+  });
+});
+
+
+/* ============ D: WIRING `VYEN_EMULATED` / providerBase / modelId ============
+ *
+ * Đo 2026-10-20 (reviewer độc lập): không test nào chạm tới 3 field này ⇒ một lỗi
+ * gõ 1 ký tự (`'1'` → `'true'`) hoặc rơi `forceEmulated` trong `buildReplOptions`
+ * làm tính năng chết âm thầm, mọi test vẫn xanh.
+ */
+describe('buildReplOptions — wiring đường giả lập', () => {
+  it('truyền providerBase / modelId / forceEmulated xuống REPL nguyên vẹn', () => {
+    const opts = buildReplOptions({
+      ...deps(),
+      providerBase: 'https://gw.test/v1',
+      modelId: 'model-x',
+      forceEmulated: true,
+    });
+    expect(opts.providerBase).toBe('https://gw.test/v1');
+    expect(opts.modelId).toBe('model-x');
+    expect(opts.forceEmulated).toBe(true);
+  });
+
+  it('KHÔNG truyền forceEmulated khi không ép (để REPL tự quyết định theo cache)', () => {
+    const opts = buildReplOptions(deps());
+    expect('forceEmulated' in opts).toBe(false);
+  });
+});
+
+describe('docCauHinhGiaLap — đọc biến môi trường', () => {
+  it('VYEN_EMULATED=1 thì ép đường giả lập; giá trị khác thì không', () => {
+    expect(docCauHinhGiaLap({ VYEN_EMULATED: '1' }).forceEmulated).toBe(true);
+    expect(docCauHinhGiaLap({ VYEN_EMULATED: 'true' }).forceEmulated).toBe(false);
+    expect(docCauHinhGiaLap({}).forceEmulated).toBe(false);
+  });
+
+  it('lấy providerBase và modelId từ biến môi trường', () => {
+    const cfg = docCauHinhGiaLap({
+      VYEN_BASE_URL: 'https://gw.test/v1',
+      VYEN_MODEL: 'model-x',
+    });
+    expect(cfg.providerBase).toBe('https://gw.test/v1');
+    expect(cfg.modelId).toBe('model-x');
+  });
+
+  it('thiếu biến thì dùng chuỗi rỗng, không phải undefined (khoá cache cần chuỗi)', () => {
+    const cfg = docCauHinhGiaLap({});
+    expect(cfg.providerBase).toBe('');
+    expect(cfg.modelId).toBe('');
   });
 });

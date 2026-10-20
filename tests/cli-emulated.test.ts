@@ -589,3 +589,53 @@ describe('C — lỗi tool phải TỚI ĐƯỢC MODEL trên đường giả l�
     );
   });
 });
+
+
+/* ============ D: `VYEN_EMULATED=1` ⇒ NATIVE KHÔNG ĐƯỢC GỌI ============ */
+describe('D — ép đường giả lập', () => {
+  it('forceEmulated ⇒ native không được gọi lần nào', async () => {
+    const { state, dir, cleanup } = mk();
+    try {
+      let soLanNative = 0;
+      const model = {
+        specificationVersion: 'v1',
+        provider: 'stub',
+        modelId: 'stub-1',
+        defaultObjectGenerationMode: 'tool',
+        doGenerate: async () => ({
+          text: 'Trả lời qua đường giả lập.',
+          finishReason: 'stop',
+          usage: { promptTokens: 1, completionTokens: 1 },
+          rawCall: { rawPrompt: null, rawSettings: {} },
+        }),
+        doStream: () => {
+          soLanNative += 1;
+          throw new Error('native KHONG duoc goi khi ep duong gia lap');
+        },
+      } as unknown as LanguageModelV1;
+
+      const session = openSession(state, dir);
+      const out: string[] = [];
+      await runRepl({
+        model,
+        modelNen: model,
+        tools: {
+          fs_read: {
+            description: 'doc file',
+            parameters: z.object({ path: z.string().optional() }),
+            execute: async () => ({ content: 'x' }),
+          },
+        } as unknown as ToolSet,
+        session,
+        forceEmulated: true,
+        ask: reader('xin chào', '/exit'),
+        out: (s) => out.push(s),
+      });
+
+      expect(soLanNative, 'native phai CHUA duoc goi').toBe(0);
+      expect(out.join('')).toContain('Trả lời qua đường giả lập.');
+    } finally {
+      cleanup();
+    }
+  });
+});
