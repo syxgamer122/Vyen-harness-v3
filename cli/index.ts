@@ -14,13 +14,15 @@
  *   `lib/tools/ipc-node.ts` lớp cầu tới `lib/ipc.cjs`: đọc/ghi file, shell, git,
  *                       có path-guard, chống TOCTOU và audit.
  *
- * ============ CỐ Ý KHÔNG CÓ (trạng thái 2026-10-19) ============
+ * ============ CỐ Ý KHÔNG CÓ (trạng thái 2026-10-20) ============
  *
  * - Tìm kiếm hội thoại: transcript là JSONL, không có chỉ mục. Đủ dùng một buổi;
  *   cần tìm thì phải đổi sang SQLite.
- * - Rút gọn context: càng nói nhiều lượt thì lượt sau gửi lên càng nhiều token.
- *   Không có compaction. Claude Code mất nhiều phiên bản mới chịu được vùng
- *   "resume × compaction" — xem CHANGELOG của họ, có ít nhất 9 mục lỗi.
+ * - Rút gọn context: **ĐÃ CÓ** (xem `cli/compaction.ts`) — khi ngân sách cửa sổ
+ *   sắp tràn, CLI nén phần cũ thành tóm tắt rồi thử lại đúng một lần; phần đã
+ *   nén được ghi thành marker trong transcript nên lượt sau nối tiếp được.
+ *   Claude Code mất nhiều phiên bản mới chịu được vùng "resume × compaction" —
+ *   xem CHANGELOG của họ, có ít nhất 9 mục lỗi.
  * - Agent nhớ sở thích bạn qua các phiên (`agentMemories`) — cần kho riêng.
  *
  * ============ CÁCH CHẠY ============
