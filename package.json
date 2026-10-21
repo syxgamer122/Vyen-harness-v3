@@ -9,6 +9,7 @@
     "start": "next start",
     "app": "node scripts/launch-desktop.cjs",
     "cli": "tsx cli/index.ts",
+    "cli:tui": "tsx cli/tui/entry.tsx",
     "lint": "eslint . --cache",
     "typecheck": "tsc --noEmit",
     "check": "node scripts/check-supply-chain.cjs",
