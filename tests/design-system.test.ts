@@ -2,7 +2,18 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-describe('DESIGN.md — Vyen design-system contract', () => {
+/**
+ * Tên hợp đồng design-system — tách ra hằng số vì tripwire ở
+ * `tests/repo-hygiene.test.ts` neo vào **định danh** này.
+ *
+ * Đo 2026-10-21 (review độc lập): neo vào câu chữ trong `describe(...)` quá
+ * gắt — người sau viết lại tiêu đề cho rõ hơn là cả repo đỏ. Đổi tên hằng
+ * số thì tripwire báo (đúng ý nghĩa: hợp đồng đổi mạch), còn đổi câu chữ thì
+ * không.
+ */
+const TEN_DESIGN = 'DESIGN.md — Vyen design-system contract';
+
+describe(TEN_DESIGN, () => {
   const root = path.resolve(__dirname, '..');
   const globalsCssPath = path.join(root, 'app/globals.css');
   const sidebarPath = path.join(root, 'components/sidebar.tsx');

@@ -1,6 +1,12 @@
 # AGENTS.md — quy ước làm việc trong repo này
 
-Next.js 16 + React 19 + Tailwind 3. Giao diện và mã nguồn viết bằng **tiếng Việt**.
+Next.js 16 + React 19 + Tailwind 3, trên **Windows + PowerShell** (không phải bash).
+Giao diện và mã nguồn viết bằng **tiếng Việt**.
+
+- **Next 16 / React 19:** `params`, `searchParams`, `cookies()`, `headers()` là
+  Promise ⇒ bắt buộc `await params` (await cả `await searchParams`). React 19 nhận
+  `ref` như prop thường, không bọc `forwardRef`. Gặp API lạ thì đọc guide trong
+  `node_modules/next/dist/docs/` (block ở cuối file) — đừng đoán.
 
 > **File này nằm trong prompt của MỌI lượt gọi model** (`cli/instructions.ts` nạp nó, cắt
 > ở 20.000 ký tự) ⇒ viết **luật**, đừng viết truyện. Bằng chứng và hậu quả của từng
@@ -28,6 +34,58 @@ Lint 0 lỗi. Warning là baseline — đừng sửa, đừng báo hồi quy.
 `tests/secret-registry.test.ts` · `tests/redteam-picker.test.ts` ·
 `tests/code-mode-escape.test.ts` · `tests/launch-desktop.test.ts` (cần cổng 3000 rảnh).
 Phân biệt hồi quy thật: **nhìn tên test đỏ**, không chỉ tên file.
+
+**Checklist báo xong** — mỗi dòng là điều kiện phải đúng, không phải gợi ý:
+
+- [ ] `npm run typecheck` exit 0 · `npm run test` không đỏ (trừ 4 flaky ở trên) · `npm run lint` không có lỗi mới · `npm run docs:check` OK · `npm run build` exit 0
+- [ ] Test mới đã được chứng minh **ĐỎ** trước khi sửa (mục 2) và **mutation đã được xác nhận là thật sự thay đổi hành vi** (mục 2.2)
+- [ ] **Mọi lời hứa trong comment mới đều có test đỏ khi bỏ lớp bảo vệ** (mục 2.1)
+- [ ] **Kỳ vọng lấy từ yêu cầu, không lấy từ code** (mục 2.5 — Luật 2, *tự khai*)
+- [ ] **Có ≥ 1 test kịch bản end-to-end** ở ranh giới quan sát được (mục 2.5 — Luật 3, *tự khai*)
+- [ ] **Đã gọi skill `requesting-code-review` trước khi push** (mục 2.5 — Luật 4, *tự khai*)
+- [ ] Plan có mục `## Kịch bản & Test`; mọi tiêu chí trong `Review Focus` đều có dòng (mục 2.5 — Luật 1, *có test canh*)
+- [ ] File mới đã `git add`; file nguồn không có BOM (mục 8)
+
+### 1.1. Cấm lách cổng & lệnh phá huỷ
+
+Cổng ở trên chỉ có giá trị khi agent **không tự hạ chuẩn** nó.
+
+- **Không hạ chuẩn cổng.** Cấm bỏ qua lỗi kiểu (`@ts-ignore` vô điều kiện;
+  `@ts-expect-error` chỉ khi kèm lý do ngay cùng dòng), cấm ép kiểu `as any` để
+  qua `tsc`, cấm tắt lint, cấm `--no-verify` khi commit. Lỗi thật thì sửa code,
+  không sửa luật. Hai luật về **ép kiểu `as any`** và **tắt lint** áp cho code
+  **mới** — không phải để đi dọn kho cũ (mục 6 cấm refactor ngoài phạm vi).
+- **Không sửa người canh cổng.** Cấm sửa `tests/plan-traceability.test.ts`,
+  `tests/design-system.test.ts`, `tests/repo-hygiene.test.ts`,
+  `tests/brand-placement.test.ts` để làm test xanh. Sửa người canh là tự khai
+  "tiêu chí sai", không phải sửa tiêu chí. *Ngoại lệ:* khi **luật** ở đây thay
+  đổi thì sửa file canh kèm theo, có chủ đích và nói rõ trong commit.
+- **Bẻ cong bằng chứng.** Không ghi "đã kiểm" / "đã xong" cho việc chưa chạy. Nêu
+  lệnh và kết quả thật (ví dụ `npm run test` → 248/249 file xanh, 1 file flaky).
+- **Lệnh phá huỷ.** Cấm `git reset --hard`, `git checkout -- .`, `git restore .`,
+  `git clean -fd`, `git push --force` khi chưa hỏi; không đụng thay đổi uncommitted
+  không thuộc phạm vi task.
+- **Bí mật.** Không in khoá ra transcript, không commit file khoá hay `.env`; khoá
+  đi qua kho bí mật của hệ thống (biến môi trường), không hardcode trong code.
+  `lib/secret-registry.ts` là nơi **che** khoá khi log, không phải nơi lấy khoá.
+
+> **Phần nào CÓ test, phần nào không** (mục 4: văn xuôi không có hiệu lực).
+> `@ts-ignore` vô điều kiện ⇒ **ĐỎ**; `@ts-expect-error` không lý do ⇒ **ĐỎ**
+> (`tests/repo-hygiene.test.ts`). File test canh cổng mất marker canh ⇒ **ĐỎ**
+> (tripwire, cùng file; hai file canh nhau để không ai xoá được file của nhau).
+> Còn lại: ép kiểu `as any`, tắt lint, `--no-verify`, lệnh phá huỷ, bẻ cong
+> bằng chứng — **chưa** có cổng đo (đo được thì repo đã có kiểu cổng đếm ở
+> `tests/dead-export-scan.test.ts`) ⇒ *tự khai* như Luật 2/3/4.
+>
+> Đo 2026-10-21: `git grep -c "as any" -- ':!AGENTS.md'` → 186 dòng / 28 file;
+> 14 chỗ tắt lint (5 file) ⇒ luật "code mới" áp cho hai luật đó, không phải để
+> đi dọn kho cũ.
+> Đo 2026-10-21: `lib/shell-policy.cjs` đã chặn `reset`/`clean`/`restore`/`push`
+> (allowlist subcommand), nhưng `git checkout -- .` và `git commit --no-verify` thì
+> **lọt** ⇒ luật trên bắt đúng phần lọt.
+> Giới hạn của tripwire: nó bảo vệ **4 file** trên; file test khác (ví dụ
+> `tests/dead-export-scan.test.ts`) nằm ngoài tripwire ⇒ việc nới chúng phải để
+> reviewer bắt (mục 2.5 Luật 4).
 
 ## 2. Test mới phải chứng minh đỎ trước khi sửa
 
@@ -180,8 +238,9 @@ Commit theo `type(scope): mô tả`, scope là vùng code (`agents`, `brand`, `u
 ## 6. Code chết thì xoá hẳn
 
 *"Cái nào không cần thì xoá hết, không giữ lại"*. Đừng giữ lại vì "có thể sau này cần",
-và đừng refactor code không liên quan. Xoá rồi để lại comment giải thích **vì sao**
-xoá, để người sau không thêm lại.
+và đừng refactor code không liên quan. Xoá thì xoá **sạch trong code** — lý do để ở
+commit message hoặc ledger, đừng để lại comment "bia mộ" trong file nguồn. Chỉ giữ
+comment ở chỗ mà người sau rất dễ vô tình viết lại (bẫy kiến trúc).
 
 **Trước khi viết cái mới: dùng lại cái đang có.** Viết thêm cơ chế thứ hai cho một việc
 đã có cơ chế là **chắt vá**. Trước khi tạo file/hằng/hàm mới, trả lời bằng grep: việc này
@@ -250,23 +309,7 @@ dùng chung, một lần** — đừng vá lặp ở từng caller để "cho xo
 | **CLI — system prompt** | `cli/instructions.ts` (nạp `AGENTS.md`, cắt ở 20.000 ký tự) |
 | **CLI — cầu nối tool** | `lib/tools/ipc-node.ts` (cầu `lib/ipc.cjs`) |
 | **CLI — bảng kiểm kê** | `docs/cli-migration-inventory.md` + `scripts/cli-migration/` |
-
-## 10. Trước khi báo xong
-
-- [ ] `npm run typecheck` exit 0
-- [ ] `npm run test` — không đỏ (trừ 4 flaky ở mục 1)
-- [ ] `npm run lint` — không có lỗi mới
-- [ ] `npm run docs:check` OK
-- [ ] `npm run build` exit 0
-- [ ] Test mới đã được chứng minh ĐỎ (mục 2)
-- [ ] **Mutation đã được xác nhận là thật sự thay đổi hành vi** (mục 2.2)
-- [ ] **Mọi lời hứa trong comment mới đều có test đỏ khi bỏ lớp bảo vệ** (mục 2.1)
-- [ ] **Kỳ vọng lấy từ yêu cầu, không lấy từ code** (mục 2.5 — Luật 2, *tự khai*)
-- [ ] **Có ≥ 1 test kịch bản end-to-end** ở ranh giới quan sát được (mục 2.5 — Luật 3, *tự khai*)
-- [ ] **Đã gọi skill `requesting-code-review` trước khi push** (mục 2.5 — Luật 4, *tự khai*)
-- [ ] Plan có mục `## Kịch bản & Test`; mọi tiêu chí trong `Review Focus` đều có dòng (mục 2.5 — Luật 1, *có test canh*)
-- [ ] File mới đã `git add`
-- [ ] File nguồn không có BOM (mục 8)
+| Cổng chống hạ chuẩn (mục 1.1) | `tests/repo-hygiene.test.ts` |
 
 <!-- BEGIN:nextjs-agent-rules -->
 

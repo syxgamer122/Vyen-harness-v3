@@ -219,4 +219,65 @@ describe('luật trong AGENTS.md phải còn sống', () => {
   it('AGENTS.md nêu rõ review độc lập là bắt buộc trước khi push', () => {
     expect(ag).toContain('requesting-code-review');
   });
+
+  it('AGENTS.md nêu luật cấm lách cổng', () => {
+    /* So khớp theo ý nghĩa, không khoá cứng câu chữ: diễn đạt lại vẫn xanh,
+     * **xoá hẳn luật** thì đỏ. */
+    expect(ag, 'AGENTS.md thiếu luật cấm lách cổng').toMatch(
+      /Cấm\s+lách\s+cổng|Cấm\s+hạ\s+chuẩn\s+cổng/i,
+    );
+  });
+
+  it('AGENTS.md liệt kê ĐỦ lệnh phá huỷ cây làm việc', () => {
+    /* Đủ 5 lệnh. Đo 2026-10-21 (review độc lập): assert chỉ ghim 1/5 lệnh
+     * thì xoá 4 lệnh còn lại vẫn xanh — luật còn câu chữ nhưng đã hụt. */
+    const canh = [
+      'git reset --hard',
+      'git checkout -- .',
+      'git restore .',
+      'git clean -fd',
+      'git push --force',
+    ];
+    const thieu = canh.filter((c) => !ag.includes(c));
+    expect(thieu, `AGENTS.md thiếu lệnh phá huỷ: ${thieu.join(', ')}`).toEqual([]);
+  });
+
+  it('AGENTS.md khai báo môi trường làm việc NGAY ĐẦU FILE (Windows/PowerShell)', () => {
+    /* Môi trường phải ở đầu: đọc AGENTS.md là thấy ngay, không phải lật tới
+     * §2 mới biết mình đang gõ lệnh trên shell nào. */
+    const dau = ag.split('\n').slice(0, 10).join('\n');
+    expect(dau, '10 dòng đầu AGENTS.md không nói Windows').toContain('Windows');
+    expect(dau, '10 dòng đầu AGENTS.md không nói PowerShell').toContain('PowerShell');
+  });
+
+  it('AGENTS.md nêu bẫy Next 16: `params` phải await', () => {
+    expect(ag, 'AGENTS.md thiếu cảnh báo async request API của Next 16').toMatch(
+      /await[^\n]{0,40}params/i,
+    );
+  });
+
+  it('file canh cổng "hạ chuẩn" còn tồn tại và còn logic quét', () => {
+    /* Tripwire trong `tests/repo-hygiene.test.ts` **không tự bảo vệ được chính
+     * nó**: xoá cả file thì không còn test nào chạy để báo. Đo 2026-10-21
+     * (review độc lập): xoá file ⇒ 3 file canh còn lại vẫn xanh. ⇒ file này
+     * canh NGƯỢC LẠI: hai bên canh nhau.
+     *
+     * Giới hạn đã đo: xoá **cả hai** file thì không còn ai canh — cổng bảo vệ
+     * cổng không thay được việc review độc lập (§2.5 Luật 4). */
+    const p = path.join(process.cwd(), 'tests/repo-hygiene.test.ts');
+    expect(existsSync(p), 'file canh cổng bị xoá — không còn ai chặn hạ chuẩn').toBe(true);
+    const nd = readFileSync(p, 'utf8');
+    expect(nd, 'logic quét chú thích bỏ qua lỗi kiểu đã bị xoá').toContain('TS_' + 'IGNORE');
+    expect(nd, 'gate "type sai ở đây" đã bị xoá').toContain('TS_' + 'EXPECT');
+    expect(nd, 'tripwire trong file canh cổng đã bị xoá').toContain('CANH_' + 'CONG');
+    expect(nd, 'cổng vệ sinh file nguồn đã bị xoá').toContain('NHAN_' + 'BOM');
+    /*
+     * Xoá RIÊNG một test case (không xoá cả file) thì các hằng số trên vẫn
+     * còn ⇒ phải đếm số test case. Đo 2026-10-21 (review độc lập): xoá riêng
+     * gate "@ts-expect-error" ⇒ **không ai báo** — lớp lỗi M1/M2 tái diễn ở
+     * mức test case.
+     */
+    const soTest = (nd.match(/\bit\(/g) ?? []).length;
+    expect(soTest, 'repo-hygiene mất test case (số it() giảm)').toBeGreaterThanOrEqual(6);
+  });
 });
