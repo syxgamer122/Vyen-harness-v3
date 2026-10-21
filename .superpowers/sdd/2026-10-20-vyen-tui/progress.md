@@ -128,3 +128,28 @@ createTui -> run" chi duoc kiem bang **kiem tay** (Task 8 buoc 8). Phan co test:
 `chooseFrontend` (pure), `buildReplCore` (tang noi), va kich ban E2E (store + App +
 runRepl that). Ruling: ghi ro khoang trong nay, khong coi la da canh xong.
 Chi phi neu sai: mot lan kiem tay lai sau moi thay doi `cli/index.ts`.
+
+## Final: vong fix sau review doc lap (3 Critical + 4 Important)
+
+| Finding | Fix | Bang chung |
+|---|---|---|
+| C1 Esc trong hop duyet vua tu choi vua CAT LUOT | Store lam chu phim (mot listener duy nhất, dang ky luc khoi tao store); App bo `useKeyboard`; co co "vua tra loi duyet" cho duong cat luot | test "Esc trong hop duyet => tu choi tool, KHONG cat luot" (tests/tui-scenario.test.tsx) RED -> GREEN |
+| C2 Cau nguoi dung khong bao gio hien; hai luot bi gop | `submit()` tao block `user`; `out()` chi gop voi block assistant lien truoc | test "cau nguoi dung phai hien tren man hinh ngay khi go" (tests/tui-bridge.test.ts) RED -> GREEN |
+| C3 Dong trang thai bi textarea che | `Composer` co `flexShrink={0}` (transcript moi la phan co lai duoc), dong trang thai co `height={1}` | test "hien dong trang thai khi khong co hop duyet" (tests/tui-app.test.tsx) RED -> GREEN |
+| I1 Nap lai lich su: tool LOI bi danh `tick` | `ketQuaLoi()` move vao `blocks.ts`, dung CHUNG cho ca hai duong | test "tool loi (ket qua {ok:false})" (tests/tui-blocks.test.ts) RED -> GREEN |
+| I2 4 loi in thang stderr bi nuot trong TUI | `baoLoi()` -> ghi vao transcript dang chay (`TuiSession.note`); chi co `main()` khong import duoc nen khong co test (kiem tay) | - |
+| I4 `mode.reason` la code chet + loi hua trong comment | In ly do "Node qua cu" (truong hop moi, khong doi hanh vi duong plain cu) + sua comment `cli/tui-gate.ts` | - |
+
+Sau vong fix: `npm run test` -> 255/256 file xanh (1 file doi la `tests/secret-registry.test.ts` — flaky da bi trong AGENTS.md §1) · `npm run typecheck` exit 0 · `npm run lint` 0 loi · `npm run docs:check` OK · `npm run build` compiled.
+
+## Final: minor (deferred)
+
+- M2 `submit()` khi chua co ai hoi (luot `initial` tu argv) => dong nguoi dung bi bo am tham.
+- M3 Dong tool 1 dong: `label` + `detail` co the vuot 60 cot.
+- M4 `import.meta.main` can Node >= 24.2 => tren Node cu, preview im lang khong bao loi.
+- M5 Thu tu byte cua duong plain khi `VYEN_CONTEXT_WINDOW` sai (kiem tra chuyen len truoc).
+- M6 `out()` copy ca mang block moi delta => O(n^2) khi transcript dai.
+
+## Final: minor (da sua cung hanh)
+
+- M1 `out('\n')` cua REPL tao dong rong trong TUI => bo qua trong `out()` (sua cung ham voi C2).
