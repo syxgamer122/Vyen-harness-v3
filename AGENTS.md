@@ -328,7 +328,6 @@ dùng chung, một lần** — đừng vá lặp ở từng caller để "cho xo
 - [ ] Plan có mục `## Kịch bản & Test`; mọi tiêu chí trong `Review Focus` đều có dòng (mục 2.5 — Luật 1, *có test canh*)
 - [ ] File mới đã `git add`
 - [ ] File nguồn không có BOM (mục 8)
->>>>>>> c3edcb8 (docs(cli): cap nhat ban do va huong dan tui)
 
 <!-- BEGIN:nextjs-agent-rules -->
 
